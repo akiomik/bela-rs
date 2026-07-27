@@ -19,6 +19,26 @@ To move the pin (e.g. to the exact version shipped on the board):
 scripts/update-vendor.sh <branch|tag|commit>
 ```
 
+### Why vendored files instead of a git submodule
+
+- The include closure is three files (~70 KB); a submodule would drag
+  in the whole upstream repository (IDE, examples, PRU firmware,
+  history) for every clone and CI run.
+- `src/bindings.rs` is committed, and vendoring keeps "these headers"
+  and "the bindings generated from them" atomic in one commit — a
+  submodule can drift ahead of the generated code, and its bumps show
+  up as opaque hash changes instead of reviewable header diffs.
+- The pin will eventually move to the exact Bela version shipped on
+  the board, which may not correspond to any published upstream
+  commit (e.g. headers synced from the device image). File copies can
+  come from anywhere; a submodule can only point at upstream commits.
+- A plain `git clone` always builds — no `--recursive`, no submodule
+  initialisation failure modes.
+
+The trade-off is that provenance rests on `scripts/update-vendor.sh`
+recording the resolved commit in `vendor/bela/COMMIT`, rather than on
+git itself.
+
 [BelaPlatform/Bela]: https://github.com/BelaPlatform/Bela
 
 ## Regenerating the bindings
