@@ -6,6 +6,10 @@
 //! cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example sine
 //! ```
 
+// On non-device targets only the fallback main is reachable; keep the
+// application code compiling (and linted) without dead-code noise.
+#![cfg_attr(not(bela_device), allow(dead_code))]
+
 use core::f32::consts::TAU;
 
 use bela_rs::{BelaApplication, Context};
@@ -13,14 +17,12 @@ use bela_rs::{BelaApplication, Context};
 const FREQUENCY: f32 = 440.0;
 const AMPLITUDE: f32 = 0.3;
 
-#[cfg_attr(not(bela_device), allow(dead_code))]
 struct Sine {
     phase: f32,
     phase_increment: f32,
 }
 
 impl Sine {
-    #[cfg_attr(not(bela_device), allow(dead_code))]
     fn new() -> Self {
         Sine {
             phase: 0.0,

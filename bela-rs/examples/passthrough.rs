@@ -6,9 +6,12 @@
 //! cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example passthrough
 //! ```
 
+// On non-device targets only the fallback main is reachable; keep the
+// application code compiling (and linted) without dead-code noise.
+#![cfg_attr(not(bela_device), allow(dead_code))]
+
 use bela_rs::{BelaApplication, Context};
 
-#[cfg_attr(not(bela_device), allow(dead_code))]
 struct Passthrough;
 
 // Safety: render only touches the context buffers — no allocation,
