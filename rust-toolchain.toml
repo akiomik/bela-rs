@@ -1,4 +1,7 @@
+# Pinned so that a moving `stable` cannot break local or CI builds;
+# upgrades are deliberate edits to this file. The MSRV lives separately
+# in the workspace `rust-version` and is verified by its own CI job.
 [toolchain]
-channel = "stable"
+channel = "1.91.1"
 targets = ["aarch64-unknown-linux-gnu"]
 components = ["rustfmt", "clippy"]

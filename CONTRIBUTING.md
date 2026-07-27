@@ -27,6 +27,14 @@ the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 Add entries to the `[Unreleased]` section in the same commit as the
 change itself.
 
+## Toolchain and MSRV
+
+The development toolchain is pinned in `rust-toolchain.toml` so that a
+moving `stable` cannot break builds; upgrading it is a deliberate edit
+to that file. The MSRV is declared as `rust-version` in the workspace
+`Cargo.toml` and verified by a dedicated CI job — raise it consciously
+and mention the change in the changelog.
+
 ## Checks
 
 Before pushing, make sure the same checks as CI pass:

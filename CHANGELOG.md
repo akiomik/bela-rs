@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- CI job verifying the MSRV (`rust-version` in Cargo.toml), and a
+  pinned development toolchain in `rust-toolchain.toml` so that a
+  moving `stable` cannot break builds
 - Workspace-wide Clippy configuration (pedantic, nursery, cargo and
   selected restriction lints) with the codebase cleaned up to pass it;
   CI now also lints the device-only code for the aarch64 target

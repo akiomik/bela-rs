@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # Installs the pinned toolchain from rust-toolchain.toml, including
+      # its declared targets and components.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -27,12 +27,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-          components: clippy
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       # clippy subsumes `cargo check` and does not link, so no sysroot or
       # cross-linker is needed. This also lints the device-only code
       # (`bela_device` cfg) that the host job never compiles.
       - run: cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
+
+  msrv:
+    name: Check MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Single source of truth for the MSRV: the workspace rust-version
+      # in Cargo.toml.
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml, which would
+      # otherwise re-pin to the development toolchain.
+      - run: cargo check --workspace --all-targets
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
