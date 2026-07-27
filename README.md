@@ -30,6 +30,7 @@ cross-compiled on a host machine and copied to the board.
 
 - [Cross-compilation setup](docs/cross-compile.md)
 - [Board facts](docs/board-facts.md) — measured values from the actual board
+- [Release procedure](docs/release.md)
 - [Changelog](CHANGELOG.md) / [Contributing](CONTRIBUTING.md)
 
 ## License

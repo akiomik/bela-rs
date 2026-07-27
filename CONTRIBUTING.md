@@ -27,6 +27,12 @@ the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 Add entries to the `[Unreleased]` section in the same commit as the
 change itself.
 
+## Releases
+
+See [docs/release.md](docs/release.md). The two crates are versioned
+in lockstep and published from GitHub Actions by pushing a version
+tag.
+
 ## Toolchain and MSRV
 
 The development toolchain is pinned in `rust-toolchain.toml` so that a
