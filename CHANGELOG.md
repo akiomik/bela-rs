@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- `bela-rs`: safe `Context` accessors following Bela Gem semantics —
+  frame/channel/sample-rate metadata, interleaved buffer slices, indexed
+  audio/analog/digital I/O with bounds checking (Rust ports of the
+  `Bela.h` inline helpers, including within-block persistence of
+  `analog_write` / `digital_write` and the digital direction/value bit
+  layout), plus the `map` and `constrain` utilities
 - `bela-rs`: safe wrapper core — the `unsafe` real-time trait
   `BelaApplication` (setup/render/cleanup), `extern "C"` trampolines
   bridging the C callbacks via `userData`, the `Settings` builder

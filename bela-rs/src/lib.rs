@@ -38,12 +38,14 @@ mod error;
 mod settings;
 #[cfg(bela_device)]
 mod system;
+mod util;
 
 pub use application::BelaApplication;
-pub use context::Context;
+pub use context::{Context, PinMode};
 pub use error::Error;
 pub use settings::Settings;
 #[cfg(bela_device)]
 pub use system::Bela;
+pub use util::{constrain, map};
 
 pub use bela_sys;
