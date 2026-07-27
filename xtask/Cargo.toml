@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone on purpose: keeps bindgen (and its libclang requirement) out of
+# the main workspace so `cargo check`/`cargo test` stay lightweight.
+[workspace]
+
+[dependencies]
+bindgen = "0.72"

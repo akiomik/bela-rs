@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["bela-sys", "bela-rs"]
+# xtask is a standalone package (not a member) so that bindgen and its
+# libclang requirement stay out of ordinary builds. Run it via `cargo xtask`.
+exclude = ["xtask"]
 
 [workspace.package]
 version = "0.1.0"
