@@ -1,0 +1,13 @@
+[package]
+name = "bela-rs"
+description = "Safe Rust API for real-time audio on Bela Gem"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bela-sys = { path = "../bela-sys" }
