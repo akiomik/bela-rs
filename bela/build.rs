@@ -1,3 +1,5 @@
+//! Emits the `bela_device` cfg for device targets.
+
 use std::env;
 
 // The parts of the crate that call into libbela can only link on the board.

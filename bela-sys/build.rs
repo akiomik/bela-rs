@@ -1,4 +1,4 @@
-// Placeholder build script.
+//! Placeholder build script.
 //
 // Planned responsibilities (see the v0.1.0 milestone issues):
 // - run bindgen on wrapper.h (Bela.h and required core headers), with the

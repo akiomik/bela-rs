@@ -5,7 +5,9 @@ use bela_sys::BelaContext;
 /// Direction of a digital (GPIO) pin. All pins begin as inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinMode {
+    /// The pin reads external logic levels (the default).
     Input,
+    /// The pin drives the value set with the `digital_write` family.
     Output,
 }
 
@@ -81,11 +83,14 @@ impl Context {
         self.0.audioFrames as usize
     }
 
+    /// Number of audio input channels.
     #[must_use]
     pub const fn audio_in_channels(&self) -> usize {
         self.0.audioInChannels as usize
     }
 
+    /// Number of audio output channels. On Bela Gem this includes the
+    /// analog outputs.
     #[must_use]
     pub const fn audio_out_channels(&self) -> usize {
         self.0.audioOutChannels as usize
@@ -103,11 +108,13 @@ impl Context {
         self.0.analogFrames as usize
     }
 
+    /// Number of analog input channels; 0 if analog I/O is disabled.
     #[must_use]
     pub const fn analog_in_channels(&self) -> usize {
         self.0.analogInChannels as usize
     }
 
+    /// Number of analog output channels; 0 if analog I/O is disabled.
     #[must_use]
     pub const fn analog_out_channels(&self) -> usize {
         self.0.analogOutChannels as usize
@@ -125,6 +132,7 @@ impl Context {
         self.0.digitalFrames as usize
     }
 
+    /// Number of digital (GPIO) channels; 0 if digital I/O is disabled.
     #[must_use]
     pub const fn digital_channels(&self) -> usize {
         self.0.digitalChannels as usize
@@ -204,6 +212,9 @@ impl Context {
         unsafe { shared(self.0.digital, self.digital_frames()) }
     }
 
+    /// Mutable access to the digital I/O words. Prefer the
+    /// `digital_write*` / `pin_mode*` accessors, which encapsulate the
+    /// bit layout.
     pub const fn digital_mut(&mut self) -> &mut [u32] {
         unsafe { exclusive(self.0.digital, self.digital_frames()) }
     }

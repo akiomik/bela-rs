@@ -29,6 +29,7 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Creates an empty set of overrides.
     #[must_use]
     pub fn new() -> Self {
         Self::default()

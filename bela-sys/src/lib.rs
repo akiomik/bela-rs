@@ -20,6 +20,7 @@
 #![no_std]
 
 #[allow(
+    missing_docs,
     nonstandard_style,
     unsafe_op_in_unsafe_fn,
     unused,
