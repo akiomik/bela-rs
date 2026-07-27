@@ -34,6 +34,22 @@ jobs:
       # (`bela_device` cfg) that the host job never compiles.
       - run: cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
 
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # Documented for the device target: it includes the device-only API
+      # (`bela_device` cfg) that crate-level intra-doc links point to,
+      # which would be unresolved on a host-target doc build.
+      - run: cargo doc --workspace --no-deps --target aarch64-unknown-linux-gnu
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # Doc tests execute on the host (device binaries cannot run in CI).
+      - run: cargo test --workspace --doc
+
   msrv:
     name: Check MSRV
     runs-on: ubuntu-latest
