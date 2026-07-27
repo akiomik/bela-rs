@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- `bela-rs`: safe wrapper core — the `unsafe` real-time trait
+  `BelaApplication` (setup/render/cleanup), `extern "C"` trampolines
+  bridging the C callbacks via `userData`, the `Settings` builder
+  applying overrides on top of `Bela_defaultSettings()`, and the `Bela`
+  RAII lifecycle (init/start/stop/cleanup, device target only behind
+  the `bela_device` cfg)
 - `bela-sys`: FFI bindings to the Bela core C API (`BelaContext`,
   `BelaInitSettings`, `Bela_*` lifecycle and auxiliary-task functions,
   `rt_printf`), generated with bindgen from vendored headers and
