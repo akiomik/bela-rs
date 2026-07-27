@@ -8,6 +8,12 @@ pub fn map(x: f32, in_min: f32, in_max: f32, out_min: f32, out_max: f32) -> f32 
 }
 
 /// Clips `x` to the range `min_val..max_val`.
+///
+/// Deliberately not `f32::clamp`: `clamp` panics when
+/// `min_val > max_val` (or when a bound is NaN), while the C original
+/// returns a value for any input. This port keeps the C semantics and
+/// stays panic-free, which matters on the real-time render path where
+/// a panic aborts the whole process.
 #[must_use]
 pub fn constrain(x: f32, min_val: f32, max_val: f32) -> f32 {
     if x < min_val {
