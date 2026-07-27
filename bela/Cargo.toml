@@ -3,6 +3,7 @@ name = "bela"
 description = "Safe Rust API for real-time audio on Bela Gem"
 readme = "README.md"
 version.workspace = true
+authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

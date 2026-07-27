@@ -3,6 +3,7 @@ name = "bela-sys"
 description = "Raw FFI bindings to the Bela core API (libbela) for Bela Gem"
 links = "bela"
 version.workspace = true
+authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

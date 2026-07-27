@@ -43,6 +43,7 @@ similar_names = "allow"
 
 [workspace.package]
 version = "0.1.0"
+authors = ["Akiomi Kamakura <akiomik@gmail.com>"]
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
