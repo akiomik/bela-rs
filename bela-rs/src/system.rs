@@ -89,8 +89,16 @@ impl<T: BelaApplication> Bela<T> {
 
     /// Initialises and starts the audio system, blocks until a stop is
     /// requested, then shuts down.
+    ///
+    /// Installs SIGINT/SIGTERM handlers that request a stop, so Ctrl-C
+    /// over ssh shuts down cleanly (mirroring the C example templates).
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
         let mut bela = Self::new(application, settings)?;
+        let handler = request_stop_on_signal as extern "C" fn(core::ffi::c_int);
+        unsafe {
+            libc::signal(libc::SIGINT, handler as libc::sighandler_t);
+            libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
+        }
         bela.start()?;
         while !Self::stop_requested() {
             std::thread::sleep(Duration::from_millis(10));
@@ -98,6 +106,11 @@ impl<T: BelaApplication> Bela<T> {
         bela.stop();
         Ok(())
     }
+}
+
+// Async-signal-safe: Bela_requestStop only sets a flag.
+extern "C" fn request_stop_on_signal(_signal: core::ffi::c_int) {
+    unsafe { bela_sys::Bela_requestStop() }
 }
 
 impl<T: BelaApplication> Drop for Bela<T> {

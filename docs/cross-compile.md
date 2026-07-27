@@ -55,7 +55,7 @@ rsync -avz --delete \
 Rust バイナリは Bela IDE ではビルドできないため、scp + ssh で運用する:
 
 ```sh
-cargo build --release --target aarch64-unknown-linux-gnu --example sine
+cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example sine
 scp target/aarch64-unknown-linux-gnu/release/examples/sine root@bela.local:
 ssh root@bela.local ./sine
 ```

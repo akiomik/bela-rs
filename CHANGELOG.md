@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- `bela-rs`: `passthrough` and `sine` examples written against the safe
+  API only, with `panic = "abort"` in the workspace release profile;
+  `Bela::run` now installs SIGINT/SIGTERM handlers that request a clean
+  stop, mirroring the C example templates
 - `bela-rs`: safe `Context` accessors following Bela Gem semantics —
   frame/channel/sample-rate metadata, interleaved buffer slices, indexed
   audio/analog/digital I/O with bounds checking (Rust ports of the

@@ -32,4 +32,5 @@ jobs:
           targets: aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       # `cargo check` does not link, so no sysroot or cross-linker is needed.
-      - run: cargo check --workspace --target aarch64-unknown-linux-gnu
+      # --all-targets covers the examples, which are device-only binaries.
+      - run: cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu

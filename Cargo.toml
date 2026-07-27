@@ -5,6 +5,11 @@ members = ["bela-sys", "bela-rs"]
 # libclang requirement stay out of ordinary builds. Run it via `cargo xtask`.
 exclude = ["xtask"]
 
+# Device binaries must not unwind across the audio callback boundary; abort
+# is what would happen anyway, and this avoids shipping unwinding machinery.
+[profile.release]
+panic = "abort"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
