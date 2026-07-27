@@ -42,8 +42,14 @@ pub unsafe trait BelaApplication: Send {
 /// Safety contract shared by all three: `context` must satisfy
 /// [`Context::from_mut_ptr`], and `user_data` must point to a live `T`
 /// not accessed through any other reference during the call.
-#[cfg_attr(not(bela_device), allow(dead_code))]
-pub(crate) mod trampoline {
+#[cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only called by the device-gated system module; still unit-tested on the host"
+    )
+)]
+pub mod trampoline {
     use core::ffi::c_void;
 
     use bela_sys::BelaContext;
@@ -51,7 +57,7 @@ pub(crate) mod trampoline {
     use super::BelaApplication;
     use crate::context::Context;
 
-    pub(crate) unsafe extern "C" fn setup<T: BelaApplication>(
+    pub unsafe extern "C" fn setup<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) -> bool {
@@ -60,7 +66,7 @@ pub(crate) mod trampoline {
         app.setup(context)
     }
 
-    pub(crate) unsafe extern "C" fn render<T: BelaApplication>(
+    pub unsafe extern "C" fn render<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) {
@@ -69,7 +75,7 @@ pub(crate) mod trampoline {
         app.render(context);
     }
 
-    pub(crate) unsafe extern "C" fn cleanup<T: BelaApplication>(
+    pub unsafe extern "C" fn cleanup<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) {
@@ -82,6 +88,7 @@ pub(crate) mod trampoline {
 #[cfg(test)]
 mod tests {
     use core::ffi::c_void;
+    use core::mem;
 
     use bela_sys::BelaContext;
 
@@ -114,7 +121,7 @@ mod tests {
 
     fn test_context() -> BelaContext {
         // A hand-built context standing in for the one libbela provides.
-        let mut context: BelaContext = unsafe { core::mem::zeroed() };
+        let mut context: BelaContext = unsafe { mem::zeroed() };
         context.audioFrames = 64;
         context
     }

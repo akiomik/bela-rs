@@ -22,15 +22,17 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
-  check-aarch64:
-    name: Check (aarch64-unknown-linux-gnu)
+  clippy-aarch64:
+    name: Clippy (aarch64-unknown-linux-gnu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      # `cargo check` does not link, so no sysroot or cross-linker is needed.
-      # --all-targets covers the examples, which are device-only binaries.
-      - run: cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu
+      # clippy subsumes `cargo check` and does not link, so no sysroot or
+      # cross-linker is needed. This also lints the device-only code
+      # (`bela_device` cfg) that the host job never compiles.
+      - run: cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings

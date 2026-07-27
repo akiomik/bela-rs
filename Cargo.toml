@@ -10,6 +10,37 @@ exclude = ["xtask"]
 [profile.release]
 panic = "abort"
 
+[workspace.lints.clippy]
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+
+# Restriction lints
+absolute_paths = "warn"
+allow_attributes_without_reason = "warn"
+cognitive_complexity = "warn"
+exit = "warn"
+expect_used = "allow"
+missing_assert_message = "warn"
+mod_module_files = "warn"
+panic = "warn"
+str_to_string = "warn"
+string_add = "warn"
+unwrap_used = "warn"
+
+# Project adaptations:
+# - allow_attributes stays off: the generated FFI bindings and the
+#   cfg-conditional allows (host vs device) cannot use #[expect];
+#   allow_attributes_without_reason still enforces a reason everywhere.
+allow_attributes = "allow"
+module_name_repetitions = "allow"
+multiple_crate_versions = "allow"
+similar_names = "allow"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

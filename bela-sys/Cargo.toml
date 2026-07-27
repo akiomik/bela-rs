@@ -10,5 +10,8 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lints]
+workspace = true
+
 [build-dependencies]
 # bindgen will be added when the binding generation lands.

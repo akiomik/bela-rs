@@ -29,30 +29,35 @@ pub struct Settings {
 }
 
 impl Settings {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Number of audio frames per period ("block size").
-    pub fn period_size(mut self, frames: u32) -> Self {
+    #[must_use]
+    pub const fn period_size(mut self, frames: u32) -> Self {
         self.period_size = Some(frames);
         self
     }
 
     /// Whether to use the analog input and output.
-    pub fn use_analog(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn use_analog(mut self, enabled: bool) -> Self {
         self.use_analog = Some(enabled);
         self
     }
 
     /// Whether to use the programmable GPIOs.
-    pub fn use_digital(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn use_digital(mut self, enabled: bool) -> Self {
         self.use_digital = Some(enabled);
         self
     }
 
     /// How many analog input channels to use.
-    pub fn num_analog_in_channels(mut self, channels: u32) -> Self {
+    #[must_use]
+    pub const fn num_analog_in_channels(mut self, channels: u32) -> Self {
         self.num_analog_in_channels = Some(channels);
         self
     }
@@ -61,46 +66,53 @@ impl Settings {
     ///
     /// Note that on Bela Gem the analog outputs are part of the audio
     /// outputs.
-    pub fn num_analog_out_channels(mut self, channels: u32) -> Self {
+    #[must_use]
+    pub const fn num_analog_out_channels(mut self, channels: u32) -> Self {
         self.num_analog_out_channels = Some(channels);
         self
     }
 
     /// How many digital (GPIO) channels to use.
-    pub fn num_digital_channels(mut self, channels: u32) -> Self {
+    #[must_use]
+    pub const fn num_digital_channels(mut self, channels: u32) -> Self {
         self.num_digital_channels = Some(channels);
         self
     }
 
     /// Whether to detect and log underruns.
-    pub fn detect_underruns(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn detect_underruns(mut self, enabled: bool) -> Self {
         self.detect_underruns = Some(enabled);
         self
     }
 
     /// Whether to use verbose logging.
-    pub fn verbose(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn verbose(mut self, enabled: bool) -> Self {
         self.verbose = Some(enabled);
         self
     }
 
     /// Whether to give more CPU to the audio task. The Linux side of
     /// the board may freeze while the program is running.
-    pub fn high_performance_mode(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn high_performance_mode(mut self, enabled: bool) -> Self {
         self.high_performance_mode = Some(enabled);
         self
     }
 
     /// Whether analog channels should be resampled to the audio sample
     /// rate. Enabled by default on Bela Gem.
-    pub fn uniform_sample_rate(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn uniform_sample_rate(mut self, enabled: bool) -> Self {
         self.uniform_sample_rate = Some(enabled);
         self
     }
 
     /// GPIO pin monitored for stopping the program; pass `-1` to
     /// disable monitoring.
-    pub fn stop_button_pin(mut self, pin: i32) -> Self {
+    #[must_use]
+    pub const fn stop_button_pin(mut self, pin: i32) -> Self {
         self.stop_button_pin = Some(pin);
         self
     }
@@ -113,7 +125,7 @@ impl Settings {
     /// `Bela_defaultSettings()`.
     pub fn apply_to(&self, raw: &mut BelaInitSettings) {
         if let Some(v) = self.period_size {
-            raw.periodSize = v as c_int;
+            raw.periodSize = to_c_int(v);
         }
         if let Some(v) = self.use_analog {
             raw.useAnalog = c_int::from(v);
@@ -122,13 +134,13 @@ impl Settings {
             raw.useDigital = c_int::from(v);
         }
         if let Some(v) = self.num_analog_in_channels {
-            raw.numAnalogInChannels = v as c_int;
+            raw.numAnalogInChannels = to_c_int(v);
         }
         if let Some(v) = self.num_analog_out_channels {
-            raw.numAnalogOutChannels = v as c_int;
+            raw.numAnalogOutChannels = to_c_int(v);
         }
         if let Some(v) = self.num_digital_channels {
-            raw.numDigitalChannels = v as c_int;
+            raw.numDigitalChannels = to_c_int(v);
         }
         if let Some(v) = self.detect_underruns {
             raw.detectUnderruns = c_int::from(v);
@@ -148,14 +160,22 @@ impl Settings {
     }
 }
 
+// Settings values far exceed c_int::MAX in no realistic configuration;
+// saturate instead of wrapping if one ever does.
+fn to_c_int(value: u32) -> c_int {
+    c_int::try_from(value).unwrap_or(c_int::MAX)
+}
+
 #[cfg(test)]
 mod tests {
+    use core::mem;
+
     use super::*;
 
     // Stands in for the output of `Bela_defaultSettings()`, which needs
     // libbela and therefore the board.
     fn fake_defaults() -> BelaInitSettings {
-        let mut raw: BelaInitSettings = unsafe { core::mem::zeroed() };
+        let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
         raw.periodSize = 16;
         raw.useAnalog = 1;
         raw.uniformSampleRate = 1;

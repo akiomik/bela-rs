@@ -6,11 +6,17 @@
 //! cargo build -p bela --release --target aarch64-unknown-linux-gnu --example sine
 //! ```
 
-// On non-device targets only the fallback main is reachable; keep the
-// application code compiling (and linted) without dead-code noise.
-#![cfg_attr(not(bela_device), allow(dead_code))]
+#![cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only the fallback main is reachable off-device; the application code should still compile and lint"
+    )
+)]
 
 use core::f32::consts::TAU;
+#[cfg(not(bela_device))]
+use std::process::ExitCode;
 
 use bela::{BelaApplication, Context};
 
@@ -23,8 +29,8 @@ struct Sine {
 }
 
 impl Sine {
-    fn new() -> Self {
-        Sine {
+    const fn new() -> Self {
+        Self {
             phase: 0.0,
             phase_increment: 0.0,
         }
@@ -60,7 +66,7 @@ fn main() -> Result<(), bela::Error> {
 }
 
 #[cfg(not(bela_device))]
-fn main() {
+fn main() -> ExitCode {
     eprintln!("This example must be cross-compiled for Bela Gem (aarch64-unknown-linux-gnu).");
-    std::process::exit(1);
+    ExitCode::FAILURE
 }

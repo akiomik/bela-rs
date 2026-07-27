@@ -1,3 +1,5 @@
+use core::slice;
+
 use bela_sys::BelaContext;
 
 /// Direction of a digital (GPIO) pin. All pins begin as inputs.
@@ -48,13 +50,14 @@ impl Context {
     /// for the duration of `'a`. The buffer pointers inside must be
     /// either null or valid for the lengths implied by the frame and
     /// channel counts.
-    pub unsafe fn from_mut_ptr<'a>(ptr: *mut BelaContext) -> &'a mut Context {
+    pub unsafe fn from_mut_ptr<'a>(ptr: *mut BelaContext) -> &'a mut Self {
         // repr(transparent) makes the cast sound.
-        unsafe { &mut *ptr.cast::<Context>() }
+        unsafe { &mut *ptr.cast::<Self>() }
     }
 
     /// Read access to the underlying `BelaContext`.
-    pub fn as_sys(&self) -> &BelaContext {
+    #[must_use]
+    pub const fn as_sys(&self) -> &BelaContext {
         &self.0
     }
 
@@ -66,69 +69,82 @@ impl Context {
     /// safe accessors rely on, e.g. by overwriting buffer pointers,
     /// frame counts or channel counts. Writing *through* the output
     /// buffer pointers is fine.
-    pub unsafe fn as_sys_mut(&mut self) -> &mut BelaContext {
+    pub const unsafe fn as_sys_mut(&mut self) -> &mut BelaContext {
         &mut self.0
     }
 
     // --- Frame counts, channel counts and sample rates ---
 
     /// Number of audio frames per block.
-    pub fn audio_frames(&self) -> usize {
+    #[must_use]
+    pub const fn audio_frames(&self) -> usize {
         self.0.audioFrames as usize
     }
 
-    pub fn audio_in_channels(&self) -> usize {
+    #[must_use]
+    pub const fn audio_in_channels(&self) -> usize {
         self.0.audioInChannels as usize
     }
 
-    pub fn audio_out_channels(&self) -> usize {
+    #[must_use]
+    pub const fn audio_out_channels(&self) -> usize {
         self.0.audioOutChannels as usize
     }
 
     /// Audio sample rate in Hz.
-    pub fn audio_sample_rate(&self) -> f32 {
+    #[must_use]
+    pub const fn audio_sample_rate(&self) -> f32 {
         self.0.audioSampleRate
     }
 
     /// Number of analog frames per block; 0 if analog I/O is disabled.
-    pub fn analog_frames(&self) -> usize {
+    #[must_use]
+    pub const fn analog_frames(&self) -> usize {
         self.0.analogFrames as usize
     }
 
-    pub fn analog_in_channels(&self) -> usize {
+    #[must_use]
+    pub const fn analog_in_channels(&self) -> usize {
         self.0.analogInChannels as usize
     }
 
-    pub fn analog_out_channels(&self) -> usize {
+    #[must_use]
+    pub const fn analog_out_channels(&self) -> usize {
         self.0.analogOutChannels as usize
     }
 
     /// Analog sample rate in Hz; 0 if analog I/O is disabled.
-    pub fn analog_sample_rate(&self) -> f32 {
+    #[must_use]
+    pub const fn analog_sample_rate(&self) -> f32 {
         self.0.analogSampleRate
     }
 
     /// Number of digital frames per block; 0 if digital I/O is disabled.
-    pub fn digital_frames(&self) -> usize {
+    #[must_use]
+    pub const fn digital_frames(&self) -> usize {
         self.0.digitalFrames as usize
     }
 
-    pub fn digital_channels(&self) -> usize {
+    #[must_use]
+    pub const fn digital_channels(&self) -> usize {
         self.0.digitalChannels as usize
     }
 
     /// Digital sample rate in Hz.
-    pub fn digital_sample_rate(&self) -> f32 {
+    #[must_use]
+    pub const fn digital_sample_rate(&self) -> f32 {
         self.0.digitalSampleRate
     }
 
     /// Total audio frames elapsed as of the beginning of this block.
-    pub fn audio_frames_elapsed(&self) -> u64 {
+    #[must_use]
+    pub const fn audio_frames_elapsed(&self) -> u64 {
         self.0.audioFramesElapsed
     }
 
     /// Number of detected underruns.
-    pub fn underrun_count(&self) -> u32 {
+    #[must_use]
+    pub const fn underrun_count(&self) -> u32 {
         self.0.underrunCount
     }
 
@@ -136,7 +152,8 @@ impl Context {
 
     /// Audio input samples; empty outside `render` or with audio
     /// disabled. Length is `audio_frames() * audio_in_channels()`.
-    pub fn audio_in(&self) -> &[f32] {
+    #[must_use]
+    pub const fn audio_in(&self) -> &[f32] {
         unsafe {
             shared(
                 self.0.audioIn,
@@ -147,7 +164,7 @@ impl Context {
 
     /// Audio output samples. Length is
     /// `audio_frames() * audio_out_channels()`.
-    pub fn audio_out(&mut self) -> &mut [f32] {
+    pub const fn audio_out(&mut self) -> &mut [f32] {
         unsafe {
             exclusive(
                 self.0.audioOut,
@@ -158,7 +175,8 @@ impl Context {
 
     /// Analog input samples; empty if analog I/O is disabled. Length
     /// is `analog_frames() * analog_in_channels()`.
-    pub fn analog_in(&self) -> &[f32] {
+    #[must_use]
+    pub const fn analog_in(&self) -> &[f32] {
         unsafe {
             shared(
                 self.0.analogIn,
@@ -169,7 +187,7 @@ impl Context {
 
     /// Analog output samples; empty if analog I/O is disabled. Length
     /// is `analog_frames() * analog_out_channels()`.
-    pub fn analog_out(&mut self) -> &mut [f32] {
+    pub const fn analog_out(&mut self) -> &mut [f32] {
         unsafe {
             exclusive(
                 self.0.analogOut,
@@ -181,17 +199,22 @@ impl Context {
     /// Digital I/O words, one per digital frame. Prefer the
     /// `digital_*` / `pin_mode*` accessors, which encapsulate the bit
     /// layout.
-    pub fn digital(&self) -> &[u32] {
+    #[must_use]
+    pub const fn digital(&self) -> &[u32] {
         unsafe { shared(self.0.digital, self.digital_frames()) }
     }
 
-    pub fn digital_mut(&mut self) -> &mut [u32] {
+    pub const fn digital_mut(&mut self) -> &mut [u32] {
         unsafe { exclusive(self.0.digital, self.digital_frames()) }
     }
 
     // --- Indexed access (mirrors the C helpers) ---
 
     /// Audio input sample at `frame` for `channel` (`audioRead`).
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
+    #[must_use]
     pub fn audio_read(&self, frame: usize, channel: usize) -> f32 {
         let channels = self.audio_in_channels();
         assert!(channel < channels, "audio input channel out of range");
@@ -200,6 +223,9 @@ impl Context {
 
     /// Sets the audio output at `frame` for `channel` (`audioWrite`).
     /// Audio outputs never persist.
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
     pub fn audio_write(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.audio_out_channels();
         assert!(channel < channels, "audio output channel out of range");
@@ -207,6 +233,10 @@ impl Context {
     }
 
     /// Analog input sample at `frame` for `channel` (`analogRead`).
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
+    #[must_use]
     pub fn analog_read(&self, frame: usize, channel: usize) -> f32 {
         let channels = self.analog_in_channels();
         assert!(channel < channels, "analog input channel out of range");
@@ -216,6 +246,9 @@ impl Context {
     /// Sets the analog output for `channel` from `frame` to the end of
     /// the block (`analogWrite`). Not the primary path on Bela Gem —
     /// see the type-level documentation.
+    ///
+    /// # Panics
+    /// If `channel` is out of range.
     pub fn analog_write(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
@@ -227,6 +260,9 @@ impl Context {
     }
 
     /// Sets the analog output at `frame` only (`analogWriteOnce`).
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
     pub fn analog_write_once(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
@@ -234,6 +270,10 @@ impl Context {
     }
 
     /// Value of the digital `channel` at `frame` (`digitalRead`).
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
+    #[must_use]
     pub fn digital_read(&self, frame: usize, channel: usize) -> bool {
         let mask = self.digital_value_mask(channel);
         self.digital()[frame] & mask != 0
@@ -241,6 +281,9 @@ impl Context {
 
     /// Sets the digital output `channel` from `frame` to the end of
     /// the block (`digitalWrite`).
+    ///
+    /// # Panics
+    /// If `channel` is out of range.
     pub fn digital_write(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = self.digital_value_mask(channel);
         for word in self.digital_mut().iter_mut().skip(frame) {
@@ -250,6 +293,9 @@ impl Context {
 
     /// Sets the digital output `channel` at `frame` only
     /// (`digitalWriteOnce`).
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
     pub fn digital_write_once(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = self.digital_value_mask(channel);
         set_bits(&mut self.digital_mut()[frame], mask, value);
@@ -257,6 +303,9 @@ impl Context {
 
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of the block (`pinMode`).
+    ///
+    /// # Panics
+    /// If `channel` is out of range.
     pub fn pin_mode(&mut self, frame: usize, channel: usize, mode: PinMode) {
         let mask = self.digital_direction_mask(channel);
         for word in self.digital_mut().iter_mut().skip(frame) {
@@ -266,6 +315,9 @@ impl Context {
 
     /// Sets the direction of digital `channel` at `frame` only
     /// (`pinModeOnce`).
+    ///
+    /// # Panics
+    /// If `frame` or `channel` is out of range.
     pub fn pin_mode_once(&mut self, frame: usize, channel: usize, mode: PinMode) {
         let mask = self.digital_direction_mask(channel);
         set_bits(&mut self.digital_mut()[frame], mask, mode == PinMode::Input);
@@ -291,26 +343,26 @@ impl Context {
 /// # Safety
 /// `ptr` must be null or valid for reads of `len` elements for the
 /// lifetime of the returned slice.
-unsafe fn shared<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+const unsafe fn shared<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     if ptr.is_null() {
         &[]
     } else {
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        unsafe { slice::from_raw_parts(ptr, len) }
     }
 }
 
 /// # Safety
 /// `ptr` must be null or valid for reads and writes of `len` elements,
 /// unaliased for the lifetime of the returned slice.
-unsafe fn exclusive<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
+const unsafe fn exclusive<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
     if ptr.is_null() {
         &mut []
     } else {
-        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        unsafe { slice::from_raw_parts_mut(ptr, len) }
     }
 }
 
-fn set_bits(word: &mut u32, mask: u32, on: bool) {
+const fn set_bits(word: &mut u32, mask: u32, on: bool) {
     if on {
         *word |= mask;
     } else {
@@ -319,7 +371,15 @@ fn set_bits(word: &mut u32, mask: u32, on: bool) {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::float_cmp,
+    reason = "tests use small exact values where these casts and comparisons are lossless"
+)]
 mod tests {
+    use core::mem;
+
     use super::*;
 
     const AUDIO_FRAMES: usize = 4;
@@ -333,16 +393,16 @@ mod tests {
     const DIGITAL_CHANNELS: usize = 16;
 
     struct Fixture {
-        _audio_in: Vec<f32>,
+        audio_in: Vec<f32>,
         audio_out: Vec<f32>,
-        _analog_in: Vec<f32>,
+        analog_in: Vec<f32>,
         analog_out: Vec<f32>,
         digital: Vec<u32>,
         context: BelaContext,
     }
 
     impl Fixture {
-        fn new() -> Box<Fixture> {
+        fn new() -> Box<Self> {
             // Input samples encode their own position as frame*10+channel.
             let audio_in: Vec<f32> = (0..AUDIO_FRAMES * AUDIO_IN_CHANNELS)
                 .map(|i| {
@@ -356,17 +416,17 @@ mod tests {
                     (frame * 10 + channel) as f32
                 })
                 .collect();
-            let mut fixture = Box::new(Fixture {
-                _audio_in: audio_in,
+            let mut fixture = Box::new(Self {
+                audio_in,
                 audio_out: vec![0.0; AUDIO_FRAMES * AUDIO_OUT_CHANNELS],
-                _analog_in: analog_in,
+                analog_in,
                 analog_out: vec![0.0; ANALOG_FRAMES * ANALOG_OUT_CHANNELS],
                 digital: vec![0; DIGITAL_FRAMES],
-                context: unsafe { core::mem::zeroed() },
+                context: unsafe { mem::zeroed() },
             });
-            fixture.context.audioIn = fixture._audio_in.as_ptr();
+            fixture.context.audioIn = fixture.audio_in.as_ptr();
             fixture.context.audioOut = fixture.audio_out.as_mut_ptr();
-            fixture.context.analogIn = fixture._analog_in.as_ptr();
+            fixture.context.analogIn = fixture.analog_in.as_ptr();
             fixture.context.analogOut = fixture.analog_out.as_mut_ptr();
             fixture.context.digital = fixture.digital.as_mut_ptr();
             fixture.context.audioFrames = AUDIO_FRAMES as u32;
@@ -502,7 +562,7 @@ mod tests {
 
     #[test]
     fn disabled_io_yields_empty_slices() {
-        let mut context: BelaContext = unsafe { core::mem::zeroed() };
+        let mut context: BelaContext = unsafe { mem::zeroed() };
         let context = unsafe { Context::from_mut_ptr(&raw mut context) };
 
         assert!(context.audio_in().is_empty());
@@ -516,14 +576,14 @@ mod tests {
     #[should_panic(expected = "audio input channel out of range")]
     fn audio_read_rejects_out_of_range_channels() {
         let mut fixture = Fixture::new();
-        fixture.context().audio_read(0, AUDIO_IN_CHANNELS);
+        let _ = fixture.context().audio_read(0, AUDIO_IN_CHANNELS);
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "index out of bounds")]
     fn audio_read_rejects_out_of_range_frames() {
         let mut fixture = Fixture::new();
-        fixture.context().audio_read(AUDIO_FRAMES, 0);
+        let _ = fixture.context().audio_read(AUDIO_FRAMES, 0);
     }
 
     #[test]

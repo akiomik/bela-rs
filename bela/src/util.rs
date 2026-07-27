@@ -2,11 +2,13 @@
 
 /// Linearly rescales `x` from the range `in_min..in_max` to
 /// `out_min..out_max`. Values outside the input range are extrapolated.
+#[must_use]
 pub fn map(x: f32, in_min: f32, in_max: f32, out_min: f32, out_max: f32) -> f32 {
     (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 }
 
 /// Clips `x` to the range `min_val..max_val`.
+#[must_use]
 pub fn constrain(x: f32, min_val: f32, max_val: f32) -> f32 {
     if x < min_val {
         min_val
@@ -18,6 +20,10 @@ pub fn constrain(x: f32, min_val: f32, max_val: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::float_cmp,
+    reason = "tests compare exactly representable values"
+)]
 mod tests {
     use super::*;
 

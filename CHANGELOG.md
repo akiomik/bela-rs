@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- Workspace-wide Clippy configuration (pedantic, nursery, cargo and
+  selected restriction lints) with the codebase cleaned up to pass it;
+  CI now also lints the device-only code for the aarch64 target
 - `bela`: `passthrough` and `sine` examples written against the safe
   API only, with `panic = "abort"` in the workspace release profile;
   `Bela::run` now installs SIGINT/SIGTERM handlers that request a clean

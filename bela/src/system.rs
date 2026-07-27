@@ -1,6 +1,7 @@
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 use core::marker::PhantomData;
 use core::time::Duration;
+use std::thread;
 
 use crate::application::{BelaApplication, trampoline};
 use crate::error::Error;
@@ -29,6 +30,10 @@ pub struct Bela<T: BelaApplication> {
 impl<T: BelaApplication> Bela<T> {
     /// Initialises the audio system with `application` and `settings`
     /// applied on top of `Bela_defaultSettings()`.
+    ///
+    /// # Errors
+    /// Returns [`Error::Init`] when `Bela_initAudio` fails, e.g. when
+    /// the audio hardware is unavailable or already in use.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         let app = Box::into_raw(Box::new(application));
         let ret = unsafe {
@@ -55,6 +60,9 @@ impl<T: BelaApplication> Bela<T> {
     }
 
     /// Starts the real-time audio thread.
+    ///
+    /// # Errors
+    /// Returns [`Error::Start`] when `Bela_startAudio` fails.
     pub fn start(&mut self) -> Result<(), Error> {
         if self.started {
             return Ok(());
@@ -77,6 +85,7 @@ impl<T: BelaApplication> Bela<T> {
 
     /// Whether a stop has been requested (stop button, IDE, or
     /// [`Bela::request_stop`]).
+    #[must_use]
     pub fn stop_requested() -> bool {
         unsafe { bela_sys::Bela_stopRequested() != 0 }
     }
@@ -92,16 +101,20 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// Installs SIGINT/SIGTERM handlers that request a stop, so Ctrl-C
     /// over ssh shuts down cleanly (mirroring the C example templates).
+    ///
+    /// # Errors
+    /// Returns [`Error::Init`] or [`Error::Start`] when the audio
+    /// system fails to initialise or start.
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
         let mut bela = Self::new(application, settings)?;
-        let handler = request_stop_on_signal as extern "C" fn(core::ffi::c_int);
+        let handler = request_stop_on_signal as extern "C" fn(c_int);
         unsafe {
             libc::signal(libc::SIGINT, handler as libc::sighandler_t);
             libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
         }
         bela.start()?;
         while !Self::stop_requested() {
-            std::thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(10));
         }
         bela.stop();
         Ok(())
@@ -109,7 +122,7 @@ impl<T: BelaApplication> Bela<T> {
 }
 
 // Async-signal-safe: Bela_requestStop only sets a flag.
-extern "C" fn request_stop_on_signal(_signal: core::ffi::c_int) {
+extern "C" fn request_stop_on_signal(_signal: c_int) {
     unsafe { bela_sys::Bela_requestStop() }
 }
 
