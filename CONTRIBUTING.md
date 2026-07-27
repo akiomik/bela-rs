@@ -1,5 +1,12 @@
 # Contributing
 
+## Language
+
+Repository deliverables — documentation, code comments, commit
+messages — are written in English. Local working notes that are not
+meant to be published belong outside the repository (or in paths
+listed in `.gitignore`).
+
 ## Commit messages
 
 This project uses

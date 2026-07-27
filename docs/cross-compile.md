@@ -1,58 +1,63 @@
-# クロスコンパイル環境の構築
+# Cross-compilation setup
 
-ホスト (macOS) から Bela Gem (`aarch64-unknown-linux-gnu`) 向けにビルドするための手順。
+How to build for Bela Gem (`aarch64-unknown-linux-gnu`) from a host
+machine (instructions assume macOS).
 
-> **状態: ドラフト。** ボード未着のため、sysroot 以降は未検証。
-> 確定した値は随時この文書に反映する。
+> **Status: draft.** The board has not arrived yet; everything from the
+> sysroot section onwards is unverified. This document is updated as
+> steps are confirmed on real hardware.
 
-## 1. Rust ターゲット
+## 1. Rust target
 
-リポジトリの `rust-toolchain.toml` が `aarch64-unknown-linux-gnu` ターゲットを
-宣言しているため、rustup 管理下ならリポジトリ内で cargo を実行するだけで
-自動インストールされる。
+`rust-toolchain.toml` declares the `aarch64-unknown-linux-gnu` target,
+so under rustup it is installed automatically the first time cargo runs
+inside the repository.
 
-リンクを伴わないチェックはこれだけで通る:
+Non-linking checks work with nothing else installed:
 
 ```sh
-cargo check --workspace --target aarch64-unknown-linux-gnu
+cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu
 ```
 
-## 2. クロスリンカ (macOS)
+## 2. Cross-linker (macOS)
 
-リンクが必要になった段階で導入する。macOS では
+Needed once binaries are actually linked. On macOS,
 [messense/homebrew-macos-cross-toolchains](https://github.com/messense/homebrew-macos-cross-toolchains)
-が手軽:
+is the easiest route:
 
 ```sh
 brew tap messense/macos-cross-toolchains
 brew install aarch64-unknown-linux-gnu
 ```
 
-導入後、`.cargo/config.toml` の `linker` 設定のコメントを外す。
+Then uncomment the `linker` setting in `.cargo/config.toml`.
 
-## 3. sysroot(ボード到着後)
+## 3. Sysroot (requires the board)
 
-libbela と Xenomai ラッパー lib、および依存ヘッダをボードから同期する
-(Bela 公式クロスビルド環境の `SyncBelaSysroot` 相当)。
+Sync `libbela`, the Xenomai wrapper libraries and their headers from
+the board (the equivalent of `SyncBelaSysroot` in Bela's official
+cross-build environment):
 
 ```sh
-# 例: ボードの IP が bela.local の場合
+# Example, assuming the board is reachable as bela.local
 rsync -avz --delete \
-  --include-from=<採取した必要パスのリスト> \
+  --include-from=<list of required paths> \
   root@bela.local:/ ./bela-sysroot/
 ```
 
-同期対象のパス(`/usr/lib`, `/usr/include`, `/root/Bela` など)は
-フェーズ 0 で採取して `board-facts.md` に記録してから確定する。
+The paths to sync (`/usr/lib`, `/usr/include`, `/root/Bela`, ...) are
+collected during the board fact-finding phase and recorded in
+`board-facts.md` before this list is finalised.
 
-設定箇所:
+Configuration points:
 
-- `.cargo/config.toml` の `rustflags` に `--sysroot`
-- `BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu` に `--sysroot`
+- `rustflags` with `--sysroot` in `.cargo/config.toml`
+- `BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu` with `--sysroot`
 
-## 4. 転送と実行(ボード到着後)
+## 4. Deploy and run (requires the board)
 
-Rust バイナリは Bela IDE ではビルドできないため、scp + ssh で運用する:
+Rust binaries cannot be built by the Bela IDE, so the workflow is
+scp + ssh:
 
 ```sh
 cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example sine
@@ -60,5 +65,5 @@ scp target/aarch64-unknown-linux-gnu/release/examples/sine root@bela.local:
 ssh root@bela.local ./sine
 ```
 
-Bela IDE のデフォルトプログラムの停止方法(`systemctl stop bela` 等)は
-フェーズ 0 で確認して追記する。
+How to stop the Bela IDE's default program (`systemctl stop bela` or
+similar) will be confirmed on the board and documented here.

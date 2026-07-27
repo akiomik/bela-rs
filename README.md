@@ -26,7 +26,6 @@ cross-compiled on a host machine and copied to the board.
 
 ## Documentation
 
-- [Feasibility study and roadmap](docs/bela-rust-bindings-feasibility.md) (Japanese)
 - [Cross-compilation setup](docs/cross-compile.md)
 - [Board facts](docs/board-facts.md) — measured values from the actual board
 - [Changelog](CHANGELOG.md) / [Contributing](CONTRIBUTING.md)

@@ -1,6 +1,6 @@
 // Placeholder build script.
 //
-// Planned responsibilities (see docs/bela-rust-bindings-feasibility.md):
+// Planned responsibilities (see the v0.1.0 milestone issues):
 // - run bindgen on wrapper.h (Bela.h and required core headers), with the
 //   header location overridable via an environment variable so it can be
 //   re-pinned to the Bela version shipped on the board

@@ -1,1 +1,4 @@
 target/
+
+# Local working notes, not repository deliverables
+/docs/bela-rust-bindings-feasibility.md
