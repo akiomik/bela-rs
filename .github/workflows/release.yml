@@ -34,13 +34,17 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         # Versions already on crates.io are skipped so the workflow can
-        # be re-run safely. The retry loop absorbs the index-propagation
-        # delay between publishing bela-sys and publishing bela.
+        # be re-run safely. The check uses the sparse index because the
+        # api/v1 endpoints reject non-browser user agents (403). The
+        # retry loop absorbs the index-propagation delay between
+        # publishing bela-sys and publishing bela.
         run: |
           for crate in bela-sys bela; do
             version="$(cargo metadata --no-deps --format-version 1 \
               | jq -r ".packages[] | select(.name == \"${crate}\") | .version")"
-            if curl -sSf "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null 2>&1; then
+            prefix="${crate:0:2}/${crate:2:2}"
+            if curl -sf "https://index.crates.io/${prefix}/${crate}" \
+              | grep -q "\"vers\":\"${version}\""; then
               echo "${crate}@${version} is already on crates.io, skipping"
               continue
             fi
