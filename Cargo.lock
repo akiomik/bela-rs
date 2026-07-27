@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "bela"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "bela-sys",
  "libc",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "bela-sys"
-version = "0.1.0"
+version = "0.0.1"
 
 [[package]]
 name = "libc"

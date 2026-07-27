@@ -11,11 +11,17 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+# docs.rs builds for x86_64-linux by default, which would hide the
+# device-only API behind the bela_device cfg.
+[package.metadata.docs.rs]
+default-target = "aarch64-unknown-linux-gnu"
+targets = ["aarch64-unknown-linux-gnu"]
+
 [lints]
 workspace = true
 
 [dependencies]
-bela-sys = { path = "../bela-sys" }
+bela-sys = { path = "../bela-sys", version = "0.0.1" }
 
 # Same condition as the `bela_device` cfg emitted by build.rs.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]

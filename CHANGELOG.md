@@ -8,8 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-07-27
+
+Initial release: pre-hardware. Linking against `libbela` is not wired
+up yet, so the crates compile (host and `aarch64-unknown-linux-gnu`)
+but cannot produce a runnable device binary until the board arrives.
+
 ### Added
 
+- Release workflow publishing to crates.io on version tags via Trusted
+  Publishing (the initial 0.0.1 publish is manual, as crates.io
+  requires for new crates)
 - CI job verifying the MSRV (`rust-version` in Cargo.toml), and a
   pinned development toolchain in `rust-toolchain.toml` so that a
   moving `stable` cannot break builds
@@ -48,4 +57,5 @@ and this project adheres to
 - Documentation: cross-compilation setup draft and a board-facts
   template for on-device measurements
 
-[Unreleased]: https://github.com/akiomik/bela-rs/commits/main
+[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/akiomik/bela-rs/releases/tag/v0.0.1
