@@ -13,7 +13,7 @@ Rust bindings for the [Bela](https://bela.io) core API, targeting
 | Crate | Description |
 |-------|-------------|
 | [`bela-sys`](bela-sys) | Raw FFI bindings to `libbela` (bindgen, C core API only) |
-| [`bela-rs`](bela-rs) | Safe API: settings builder, real-time render trait, RAII lifecycle |
+| [`bela`](bela) | Safe API: settings builder, real-time render trait, RAII lifecycle |
 
 The scope is intentionally the C core API (`BelaContext`,
 `setup`/`render`/`cleanup`, `Bela_initAudio`/`Bela_startAudio`/...).

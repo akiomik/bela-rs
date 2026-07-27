@@ -8,7 +8,7 @@ use bela_sys::BelaInitSettings;
 /// the device, so this type never has to replicate the C-side defaults.
 ///
 /// ```
-/// use bela_rs::Settings;
+/// use bela::Settings;
 ///
 /// let settings = Settings::new().period_size(64).use_analog(true);
 /// # let _ = settings;

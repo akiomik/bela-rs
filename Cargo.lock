@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "bela-rs"
+name = "bela"
 version = "0.1.0"
 dependencies = [
  "bela-sys",

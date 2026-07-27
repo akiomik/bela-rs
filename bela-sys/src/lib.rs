@@ -13,7 +13,7 @@
 //! defined as `#[unsafe(no_mangle)]` symbols by the linking crate.
 //!
 //! Target platform is Bela Gem on PocketBeagle 2
-//! (`aarch64-unknown-linux-gnu`). For a safe API, use the `bela-rs`
+//! (`aarch64-unknown-linux-gnu`). For a safe API, use the `bela`
 //! crate instead.
 //!
 //! [Bela Gem]: https://bela.io

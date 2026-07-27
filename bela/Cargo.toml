@@ -1,5 +1,5 @@
 [package]
-name = "bela-rs"
+name = "bela"
 description = "Safe Rust API for real-time audio on Bela Gem"
 version.workspace = true
 edition.workspace = true

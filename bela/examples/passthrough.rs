@@ -3,14 +3,14 @@
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
-//! cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example passthrough
+//! cargo build -p bela --release --target aarch64-unknown-linux-gnu --example passthrough
 //! ```
 
 // On non-device targets only the fallback main is reachable; keep the
 // application code compiling (and linted) without dead-code noise.
 #![cfg_attr(not(bela_device), allow(dead_code))]
 
-use bela_rs::{BelaApplication, Context};
+use bela::{BelaApplication, Context};
 
 struct Passthrough;
 
@@ -31,8 +31,8 @@ unsafe impl BelaApplication for Passthrough {
 }
 
 #[cfg(bela_device)]
-fn main() -> Result<(), bela_rs::Error> {
-    bela_rs::Bela::run(Passthrough, &bela_rs::Settings::new())
+fn main() -> Result<(), bela::Error> {
+    bela::Bela::run(Passthrough, &bela::Settings::new())
 }
 
 #[cfg(not(bela_device))]

@@ -10,17 +10,17 @@ and this project adheres to
 
 ### Added
 
-- `bela-rs`: `passthrough` and `sine` examples written against the safe
+- `bela`: `passthrough` and `sine` examples written against the safe
   API only, with `panic = "abort"` in the workspace release profile;
   `Bela::run` now installs SIGINT/SIGTERM handlers that request a clean
   stop, mirroring the C example templates
-- `bela-rs`: safe `Context` accessors following Bela Gem semantics —
+- `bela`: safe `Context` accessors following Bela Gem semantics —
   frame/channel/sample-rate metadata, interleaved buffer slices, indexed
   audio/analog/digital I/O with bounds checking (Rust ports of the
   `Bela.h` inline helpers, including within-block persistence of
   `analog_write` / `digital_write` and the digital direction/value bit
   layout), plus the `map` and `constrain` utilities
-- `bela-rs`: safe wrapper core — the `unsafe` real-time trait
+- `bela`: safe wrapper core — the `unsafe` real-time trait
   `BelaApplication` (setup/render/cleanup), `extern "C"` trampolines
   bridging the C callbacks via `userData`, the `Settings` builder
   applying overrides on top of `Bela_defaultSettings()`, and the `Bela`
@@ -33,7 +33,7 @@ and this project adheres to
 - Vendored Bela headers pinned to the upstream `dev` branch
   (Gem-era API), with `scripts/update-vendor.sh` to move the pin
 - `cargo xtask bindgen` task for regenerating the bindings
-- Cargo workspace scaffolding with the `bela-sys` (raw FFI) and `bela-rs`
+- Cargo workspace scaffolding with the `bela-sys` (raw FFI) and `bela`
   (safe wrapper) crates, targeting Bela Gem on PocketBeagle 2
   (`aarch64-unknown-linux-gnu`)
 - CI running rustfmt, clippy and tests on the host, plus `cargo check`

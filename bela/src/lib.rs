@@ -6,7 +6,7 @@
 //! hands an instance to [`Bela::run`]:
 //!
 //! ```ignore
-//! use bela_rs::{Bela, BelaApplication, Context, Settings};
+//! use bela::{Bela, BelaApplication, Context, Settings};
 //!
 //! struct Passthrough;
 //!
@@ -16,7 +16,7 @@
 //!     }
 //! }
 //!
-//! fn main() -> Result<(), bela_rs::Error> {
+//! fn main() -> Result<(), bela::Error> {
 //!     Bela::run(Passthrough, &Settings::new().period_size(64))
 //! }
 //! ```

@@ -60,7 +60,7 @@ Rust binaries cannot be built by the Bela IDE, so the workflow is
 scp + ssh:
 
 ```sh
-cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example sine
+cargo build -p bela --release --target aarch64-unknown-linux-gnu --example sine
 scp target/aarch64-unknown-linux-gnu/release/examples/sine root@bela.local:
 ssh root@bela.local ./sine
 ```

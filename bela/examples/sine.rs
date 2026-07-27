@@ -3,7 +3,7 @@
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
-//! cargo build -p bela-rs --release --target aarch64-unknown-linux-gnu --example sine
+//! cargo build -p bela --release --target aarch64-unknown-linux-gnu --example sine
 //! ```
 
 // On non-device targets only the fallback main is reachable; keep the
@@ -12,7 +12,7 @@
 
 use core::f32::consts::TAU;
 
-use bela_rs::{BelaApplication, Context};
+use bela::{BelaApplication, Context};
 
 const FREQUENCY: f32 = 440.0;
 const AMPLITUDE: f32 = 0.3;
@@ -55,8 +55,8 @@ unsafe impl BelaApplication for Sine {
 }
 
 #[cfg(bela_device)]
-fn main() -> Result<(), bela_rs::Error> {
-    bela_rs::Bela::run(Sine::new(), &bela_rs::Settings::new())
+fn main() -> Result<(), bela::Error> {
+    bela::Bela::run(Sine::new(), &bela::Settings::new())
 }
 
 #[cfg(not(bela_device))]
