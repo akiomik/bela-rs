@@ -4,8 +4,9 @@ Rust bindings for the [Bela](https://bela.io) core API, targeting
 **Bela Gem** on PocketBeagle 2 (`aarch64-unknown-linux-gnu`).
 
 > **Status: early development.** The hardware has not arrived yet; the
-> current focus is scaffolding, bindgen against vendored headers, and a
-> host-testable safe wrapper. Nothing here has run on a board yet.
+> current focus is the host-testable safe wrapper on top of the
+> generated FFI bindings. Nothing here has run on a board yet.
+> Roadmap: [milestone v0.1.0 — sound on Bela Gem](https://github.com/akiomik/bela-rs/milestone/1).
 
 ## Crates
 
