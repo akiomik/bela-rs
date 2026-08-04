@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- `scripts/smoke-test.sh`: builds the examples, runs each of them on a
+  board and gives a single pass/fail answer. The checks are numeric
+  rather than "it did not crash" — the reported block count has to
+  match the elapsed frame count exactly and land in the window the
+  sample rate implies for the run, with no underruns — plus a clean
+  exit on SIGINT after `cleanup` ran. `bela_daemon` is stopped for the
+  duration and restarted afterwards, including on failure or Ctrl-C.
+  Needs a board, so it stays outside CI; it is now a step in
+  `docs/release.md`
 - `rt_print!` and `rt_println!` in the `bela` crate: `format!`-style
   printing that is usable from `render`. Arguments are formatted into a
   fixed-size buffer on the stack (`MESSAGE_CAPACITY`, 256 bytes) and

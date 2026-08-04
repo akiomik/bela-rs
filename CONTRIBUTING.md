@@ -52,6 +52,20 @@ cargo test --workspace
 cargo check --workspace --target aarch64-unknown-linux-gnu
 ```
 
+CI stops there, because it has no board. Changes that touch the device
+path — anything under `bela::system`, the settings applied to
+`Bela_initAudio`, the examples, the linking setup — should also pass
+the hardware smoke test:
+
+```sh
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/smoke-test.sh [user@host] [seconds]
+```
+
+It builds the examples, runs each of them on the board, and checks that
+audio ran at the sample rate it reported and shut down cleanly on
+SIGINT. `bela_daemon` is stopped for the duration and restarted
+afterwards.
+
 ## License
 
 Unless you explicitly state otherwise, any contribution intentionally
