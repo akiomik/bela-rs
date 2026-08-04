@@ -23,9 +23,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
-# `print` carries the numeric checks; the other two only have to start,
+# `print` carries the numeric checks; the others only have to start,
 # keep running and stop cleanly.
-EXAMPLES="print sine passthrough"
+EXAMPLES="print sine passthrough aux_task"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5

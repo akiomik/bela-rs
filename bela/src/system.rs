@@ -6,6 +6,7 @@ use std::thread;
 use crate::application::{BelaApplication, trampoline};
 use crate::error::Error;
 use crate::settings::Settings;
+use crate::task;
 
 /// Owns an initialised Bela audio system and the application driven by
 /// it.
@@ -93,6 +94,9 @@ impl<T: BelaApplication> Bela<T> {
     pub fn stop(&mut self) {
         if self.started {
             unsafe { bela_sys::Bela_stopAudio() };
+            // Stopping deletes every auxiliary task, so the handles
+            // applications hold must stop working here.
+            task::invalidate_all();
             self.started = false;
         }
     }

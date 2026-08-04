@@ -16,6 +16,11 @@ pub enum Error {
     /// user data, which would mean several `&mut self` to one
     /// application at once; see `docs/multithreaded-rendering.md`.
     ThreadCountUnsupported(u32),
+    /// An auxiliary task name contained a NUL byte.
+    TaskName,
+    /// `Bela_createAuxiliaryTask` failed, or the crate was built for a
+    /// target with no audio system to create the task in.
+    TaskCreate,
 }
 
 impl fmt::Display for Error {
@@ -28,6 +33,8 @@ impl fmt::Display for Error {
                 "thread_count is {threads}: BelaApplication::render would be called \
                  concurrently on {threads} threads with &mut self"
             ),
+            Self::TaskName => write!(f, "the auxiliary task name contains a NUL byte"),
+            Self::TaskCreate => write!(f, "Bela_createAuxiliaryTask failed"),
         }
     }
 }

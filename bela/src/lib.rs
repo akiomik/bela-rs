@@ -21,6 +21,11 @@
 //! }
 //! ```
 //!
+//! Work that must not happen in `render` — file and network I/O,
+//! expensive calculations, anything that allocates or blocks — belongs
+//! in an [`AuxiliaryTask`], which `render` triggers with a real-time
+//! safe `schedule` call.
+//!
 //! Debugging output from the audio thread goes through
 //! [`rt_println!`], which formats into a fixed-size stack buffer and
 //! hands it to Bela's real-time print function — `println!` allocates
@@ -44,6 +49,7 @@ mod print;
 mod settings;
 #[cfg(bela_device)]
 mod system;
+mod task;
 mod util;
 
 pub use application::BelaApplication;
@@ -53,6 +59,7 @@ pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
 #[cfg(bela_device)]
 pub use system::Bela;
+pub use task::{AUDIO_PRIORITY, AuxiliaryTask};
 pub use util::{constrain, map};
 
 pub use bela_sys;

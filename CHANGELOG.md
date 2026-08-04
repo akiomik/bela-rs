@@ -10,6 +10,25 @@ and this project adheres to
 
 ### Added
 
+- `AuxiliaryTask` in the `bela` crate: a safe wrapper over
+  `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work
+  that must not happen in `render` (I/O, allocation, long
+  calculations) can be moved to a lower-priority thread that `render`
+  triggers with a real-time safe `schedule()`. The callback is a
+  `'static` closure that owns its state — it cannot borrow from the
+  application, which the audio thread holds by `&mut` while the task
+  runs — and shares with `render` through atomics or a lock-free
+  queue. `AUDIO_PRIORITY` is exposed to pick a priority below the
+  audio thread. Handles stop working once the audio system is stopped,
+  since that deletes every task; scheduling from `cleanup` would
+  otherwise have been a use-after-free reachable from safe code.
+  Measured on the board: a request that arrives while the callback is
+  still running is silently lost, and the C return value does not
+  report it, so `schedule()` returns nothing and the documentation
+  says to count invocations in the callback when it matters
+- `bela/examples/aux_task.rs`, reporting from a task scheduled once a
+  second by `render`, including work that allocates
+
 - `scripts/smoke-test.sh`: builds the examples, runs each of them on a
   board and gives a single pass/fail answer. The checks are numeric
   rather than "it did not crash" — the reported block count has to
