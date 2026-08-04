@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `rt_print!` and `rt_println!` in the `bela` crate: `format!`-style
+  printing that is usable from `render`. Arguments are formatted into a
+  fixed-size buffer on the stack (`MESSAGE_CAPACITY`, 256 bytes) and
+  passed to Bela's real-time print function as the argument of a
+  literal `%s`, so nothing allocates and text containing `%` is not
+  treated as a format string. Messages that do not fit are truncated on
+  a `char` boundary and end with `...`. Off-device the same bytes go to
+  stdout, so application code that prints still compiles and behaves on
+  the host. `print_args` / `println_args` are the underlying functions
+  for callers that already have `format_args!`
+- `bela/examples/print.rs`, printing the audio configuration from
+  `setup` and a once-a-second heartbeat from `render`
+
 ### Fixed
 
 - `scripts/sync-sysroot.sh` no longer aborts partway through. `rsync`

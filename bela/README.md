@@ -32,6 +32,15 @@ fn main() -> Result<(), bela::Error> {
 }
 ```
 
+Debugging output from the audio thread goes through `rt_println!`,
+which formats into a fixed-size stack buffer and hands it to Bela's
+real-time print function — `println!` allocates and blocks, and is
+forbidden in `render`:
+
+```rust,ignore
+rt_println!("{} blocks, {} underruns", blocks, context.underrun_count());
+```
+
 See [`examples/`](examples) for runnable versions and the
 [repository README](../README.md) for project status and
 cross-compilation instructions.

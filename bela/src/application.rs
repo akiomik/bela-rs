@@ -13,7 +13,7 @@ use crate::context::Context;
 ///
 /// - allocate or free heap memory,
 /// - block (locks, channels, sleeping) or make system calls (including
-///   I/O; use `rt_printf` from `bela_sys` for debugging),
+///   I/O; use [`rt_println!`](crate::rt_println) for debugging),
 /// - panic in code paths that can actually be hit — a panic crossing
 ///   the callback boundary aborts the whole process.
 ///
