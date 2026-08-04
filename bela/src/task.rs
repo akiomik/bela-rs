@@ -2,9 +2,11 @@
 
 #[cfg(bela_device)]
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::ffi::CString;
+use std::sync::{Mutex, PoisonError};
 
+use crate::context::Context;
 use crate::error::Error;
 
 /// Priority of the audio thread. Auxiliary tasks should run below it,
@@ -15,20 +17,32 @@ use crate::error::Error;
 )]
 pub const AUDIO_PRIORITY: i32 = bela_sys::BELA_AUDIO_PRIORITY as i32;
 
-/// Whether the tasks created so far still exist.
+/// Which set of tasks libbela currently holds.
 ///
-/// `Bela_stopAudio` calls `Bela_deleteAllAuxiliaryTasks`, which joins
-/// and frees every task, leaving the handles dangling. Scheduling one
-/// afterwards — from `cleanup`, say, which runs after the stop — would
-/// be a use-after-free reachable from safe code, so the handles are
-/// invalidated at that point and [`AuxiliaryTask::schedule`] checks
-/// this first. The check is a relaxed atomic load: cheap enough for the
-/// render path.
-static TASKS_ALIVE: AtomicBool = AtomicBool::new(true);
+/// `Bela_stopAudio` ends with `Bela_deleteAllAuxiliaryTasks`, which
+/// frees every task at once and leaves the handles dangling. Each
+/// handle records the generation it was created in, and the counter is
+/// bumped when the audio system is torn down, so a handle from an
+/// earlier audio system stays dead even after a later one creates
+/// tasks of its own. Reading it is a single atomic load, which
+/// [`AuxiliaryTask::schedule`] can afford on the render path.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Marks every existing task handle as dangling.
+/// Serialises creating a task against tearing the audio system down.
 ///
-/// Called after `Bela_stopAudio`, which is what deletes the tasks.
+/// Both sides run outside the real-time context — creating a task
+/// allocates and starts a thread, and stopping joins threads — so an
+/// ordinary mutex is the right tool. Holding it across
+/// `Bela_stopAudio` is what stops a task created concurrently from
+/// being deleted by that same stop while its handle still looks
+/// current.
+static LIFECYCLE: Mutex<()> = Mutex::new(());
+
+/// Runs the audio system teardown with the task handles retired first.
+///
+/// The generation is bumped *before* `stop` deletes the tasks, so no
+/// handle can be seen as live while the memory behind it is being
+/// freed.
 #[cfg_attr(
     not(bela_device),
     allow(
@@ -36,8 +50,13 @@ static TASKS_ALIVE: AtomicBool = AtomicBool::new(true);
         reason = "only the device-gated system module stops the audio system"
     )
 )]
-pub fn invalidate_all() {
-    TASKS_ALIVE.store(false, Ordering::Relaxed);
+pub fn with_teardown<R>(stop: impl FnOnce() -> R) -> R {
+    // A poisoned lock means a panic while creating a task or stopping
+    // audio; the counter is still consistent, so carry on rather than
+    // panicking again on the way down.
+    let _guard = LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner);
+    GENERATION.fetch_add(1, Ordering::Release);
+    stop()
 }
 
 /// A task that runs a callback on a lower-priority thread when the
@@ -67,6 +86,11 @@ pub fn invalidate_all() {
 /// task, and the callback's state stays allocated for the life of the
 /// process.
 ///
+/// Because that teardown frees the tasks behind the handles, a handle
+/// records which audio system it belongs to and scheduling it
+/// afterwards does nothing — including from a handle that outlived one
+/// audio system while a later one is running.
+///
 /// # Example
 ///
 /// ```no_run
@@ -90,11 +114,11 @@ pub fn invalidate_all() {
 ///         self.task.is_some()
 ///     }
 ///
-///     fn render(&mut self, _context: &mut Context) {
+///     fn render(&mut self, context: &mut Context) {
 ///         let blocks = self.blocks.fetch_add(1, Ordering::Relaxed) + 1;
 ///         if blocks % 1000 == 0 {
 ///             if let Some(task) = &self.task {
-///                 task.schedule();
+///                 task.schedule(context);
 ///             }
 ///         }
 ///     }
@@ -110,6 +134,8 @@ pub struct AuxiliaryTask {
         )
     )]
     raw: bela_sys::AuxiliaryTask,
+    /// The value [`GENERATION`] had when the task was created.
+    generation: u64,
 }
 
 // The handle is a plain pointer into libbela's task list, and the C
@@ -148,6 +174,10 @@ impl AuxiliaryTask {
         // as libbela might call it, and libbela offers no per-task
         // delete to hang a free off. See the lifetime note above.
         let state: *mut F = Box::into_raw(Box::new(callback));
+        // Held across the creation so that a teardown running
+        // concurrently either happens entirely before it — and the new
+        // task belongs to the new generation — or entirely after.
+        let _guard = LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner);
         Self::create::<F>(&name, priority, state)
     }
 
@@ -168,13 +198,17 @@ impl AuxiliaryTask {
             drop(unsafe { Box::from_raw(state) });
             return Err(Error::TaskCreate);
         }
-        // A task created after a stop is alive again, along with any
-        // handle that survived; the C side keeps them all in one list.
-        TASKS_ALIVE.store(true, Ordering::Relaxed);
-        Ok(Self { raw })
+        Ok(Self {
+            raw,
+            generation: GENERATION.load(Ordering::Acquire),
+        })
     }
 
     #[cfg(not(bela_device))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "mirrors the device signature, which can succeed"
+    )]
     fn create<F: FnMut()>(_name: &CString, _priority: i32, state: *mut F) -> Result<Self, Error> {
         // Off-device there is no libbela to hand the task to, so the
         // state is reclaimed rather than leaked.
@@ -186,6 +220,17 @@ impl AuxiliaryTask {
     ///
     /// Real-time safe: this is the call `render` makes. It returns
     /// immediately, without waiting for the callback.
+    ///
+    /// # Why it takes a context
+    ///
+    /// The `&Context` is a witness that this is a Bela callback —
+    /// `setup`, `render` or `cleanup` — which is the only place
+    /// scheduling is sound. Stopping the audio system frees every task,
+    /// and libbela joins the render thread before it does so, so a
+    /// schedule made from a callback can never be in flight while the
+    /// task behind it is freed. A handle sent to some other thread
+    /// (the type is [`Send`], since applications are) has no context to
+    /// schedule with, and so cannot race with that teardown.
     ///
     /// # Requests can be lost
     ///
@@ -201,13 +246,19 @@ impl AuxiliaryTask {
     /// the callback count its own invocations and compare that with the
     /// number of requests.
     ///
-    /// Once the audio system has stopped, every task is gone and this
-    /// does nothing.
-    pub fn schedule(&self) {
-        if !TASKS_ALIVE.load(Ordering::Relaxed) {
+    /// Once the audio system this task belongs to has stopped, every
+    /// task is gone and this does nothing — `cleanup` runs after that
+    /// point.
+    pub fn schedule(&self, _context: &Context) {
+        if !self.is_current() {
             return;
         }
         self.schedule_raw();
+    }
+
+    /// Whether the task behind this handle still exists.
+    fn is_current(&self) -> bool {
+        GENERATION.load(Ordering::Acquire) == self.generation
     }
 
     #[cfg(bela_device)]
@@ -243,7 +294,55 @@ unsafe extern "C" fn trampoline<F: FnMut()>(arg: *mut c_void) {
 
 #[cfg(test)]
 mod tests {
+    use core::ptr;
+
     use super::*;
+
+    /// The generation is process-wide, so the tests that move it have
+    /// to run one at a time. Not [`LIFECYCLE`], which
+    /// [`with_teardown`] takes itself.
+    static SERIALISE: Mutex<()> = Mutex::new(());
+
+    /// A handle standing in for one from the current audio system. Its
+    /// pointer is never dereferenced: off-device `schedule_raw` does
+    /// nothing.
+    fn handle() -> AuxiliaryTask {
+        AuxiliaryTask {
+            raw: ptr::null_mut(),
+            generation: GENERATION.load(Ordering::Acquire),
+        }
+    }
+
+    #[test]
+    fn tearing_down_the_audio_system_retires_the_handles() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let task = handle();
+        assert!(task.is_current(), "a fresh handle should be live");
+
+        with_teardown(|| ());
+
+        assert!(
+            !task.is_current(),
+            "stopping deletes the task behind the handle"
+        );
+    }
+
+    #[test]
+    fn a_later_audio_system_does_not_revive_an_earlier_handle() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let old = handle();
+        with_teardown(|| ());
+        // Stands in for a task created for the next audio system.
+        let new = handle();
+
+        assert!(
+            !old.is_current(),
+            "a handle from the previous audio system must stay retired"
+        );
+        assert!(new.is_current(), "the new handle should be live");
+    }
 
     #[test]
     fn a_name_with_an_interior_nul_is_rejected() {

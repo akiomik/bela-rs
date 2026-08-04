@@ -95,13 +95,13 @@ unsafe impl BelaApplication for Report {
         }
     }
 
-    fn render(&mut self, _context: &mut Context) {
+    fn render(&mut self, context: &mut Context) {
         let blocks = self.blocks.fetch_add(1, Ordering::Relaxed) + 1;
         if blocks % self.interval != 0 {
             return;
         }
         if let Some(task) = &self.task {
-            task.schedule();
+            task.schedule(context);
             self.requests += 1;
         }
     }

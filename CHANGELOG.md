@@ -19,9 +19,13 @@ and this project adheres to
   application, which the audio thread holds by `&mut` while the task
   runs — and shares with `render` through atomics or a lock-free
   queue. `AUDIO_PRIORITY` is exposed to pick a priority below the
-  audio thread. Handles stop working once the audio system is stopped,
-  since that deletes every task; scheduling from `cleanup` would
-  otherwise have been a use-after-free reachable from safe code.
+  audio thread. `schedule` takes a `&Context`, which is a witness that
+  the caller is inside a Bela callback: stopping the audio system
+  deletes every task, and libbela joins the render thread before doing
+  so, so a schedule made from a callback can never be in flight while
+  the task behind it is freed. Handles also record which audio system
+  they belong to, so one that outlives its audio system stays retired
+  even if a later audio system creates tasks of its own.
   Measured on the board: a request that arrives while the callback is
   still running is silently lost, and the C return value does not
   report it, so `schedule()` returns nothing and the documentation

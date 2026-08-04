@@ -93,10 +93,10 @@ impl<T: BelaApplication> Bela<T> {
     /// Stops the real-time audio thread. Also happens on drop.
     pub fn stop(&mut self) {
         if self.started {
-            unsafe { bela_sys::Bela_stopAudio() };
             // Stopping deletes every auxiliary task, so the handles
-            // applications hold must stop working here.
-            task::invalidate_all();
+            // applications hold have to be retired before that
+            // happens, not after.
+            task::with_teardown(|| unsafe { bela_sys::Bela_stopAudio() });
             self.started = false;
         }
     }
