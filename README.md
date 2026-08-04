@@ -1,5 +1,9 @@
 # bela-rs
 
+[![CI](https://github.com/akiomik/bela-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/akiomik/bela-rs/actions/workflows/ci.yml)
+![Crates.io Version](https://img.shields.io/crates/v/bela-sys?label=bela-sys)
+![Crates.io Version](https://img.shields.io/crates/v/bela?label=bela)
+
 Rust bindings for the [Bela](https://bela.io) core API, targeting
 **Bela Gem** on PocketBeagle 2 (`aarch64-unknown-linux-gnu`).
 
