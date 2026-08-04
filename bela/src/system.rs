@@ -33,13 +33,27 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::Init`] when `Bela_initAudio` fails, e.g. when
-    /// the audio hardware is unavailable or already in use.
+    /// the audio hardware is unavailable or already in use, and
+    /// [`Error::ThreadCountUnsupported`] when more than one render
+    /// thread is requested.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         let app = Box::into_raw(Box::new(application));
         let ret = unsafe {
             let raw = bela_sys::Bela_InitSettings_alloc();
             bela_sys::Bela_defaultSettings(raw);
             settings.apply_to(&mut *raw);
+            // Measured on the board: with more than one render thread,
+            // Bela calls `render` on all of them at once, passing the
+            // same user data, so the trampoline would hand out several
+            // `&mut T` to one application. Refuse rather than
+            // initialise something unsound; see
+            // docs/multithreaded-rendering.md.
+            let threads = (*raw).threadCount;
+            if threads > 1 {
+                bela_sys::Bela_InitSettings_free(raw);
+                drop(Box::from_raw(app));
+                return Err(Error::ThreadCountUnsupported(threads));
+            }
             (*raw).setup = Some(trampoline::setup::<T>);
             (*raw).render = Some(trampoline::render::<T>);
             (*raw).cleanup = Some(trampoline::cleanup::<T>);

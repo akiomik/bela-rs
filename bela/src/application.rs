@@ -20,6 +20,12 @@ use crate::context::Context;
 /// `setup` and `cleanup` run outside the real-time context and are not
 /// subject to these restrictions (panics still abort the process).
 ///
+/// All three run on a single thread: Bela's multithreaded rendering
+/// calls `render` on every thread at once, which `&mut self` cannot
+/// express, so [`Bela`](crate::Bela) rejects a
+/// [`Settings::thread_count`](crate::Settings::thread_count) above 1
+/// (`docs/multithreaded-rendering.md`).
+///
 /// Implementors must be [`Send`]: the application is moved to the audio
 /// thread after construction.
 pub unsafe trait BelaApplication: Send {
