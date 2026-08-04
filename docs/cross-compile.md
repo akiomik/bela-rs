@@ -45,6 +45,12 @@ scripts/sync-sysroot.sh            # ./bela-sysroot from root@bela.local
 The result is about 850 MB and is git-ignored. Re-run it after
 updating the board image.
 
+The transfer takes whichever path `bela.local` resolves to, the USB
+gadget network by default. Attaching a USB Ethernet adapter is an
+option — see [board-network.md](board-network.md) — but it is not a
+speedup: the step is bound by `rsync`'s compression on the board, not
+by the link.
+
 ## 4. Build, deploy and run
 
 Set `BELA_SYSROOT` when building; `bela-sys/build.rs` derives the

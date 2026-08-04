@@ -69,6 +69,22 @@ Captured from a verbose on-board build:
   gets `192.168.7.1/24`). `ssh root@bela.local` works without a
   password; there is also a `bela` user with one-time password
   `temppwd`.
+- Networking is managed by `systemd-networkd`, and the image ships
+  `.network` units for the gadget and wireless interfaces only — there
+  is none for a wired interface, so a USB Ethernet adapter binds its
+  driver but stays `unmanaged`. Setup and measured throughput for both
+  paths: [board-network.md](board-network.md).
+- The kernel command line carries `net.ifnames=0`, so interfaces keep
+  kernel-style names (`eth0`, not `enx…`).
+- Both USB ports are USB 2.0, and the SoC has no USB 3 at all, so
+  480 Mbit/s is a hardware ceiling rather than a setting that could be
+  lifted. The device tree (`ti,am625`) carries two DWC3 controllers,
+  both declared `maximum-speed = "high-speed"`: `usb@31000000`
+  (`dr_mode = peripheral`, the gadget tether) and `usb@31100000`
+  (`dr_mode = host`, where a USB Ethernet adapter goes). Only one USB
+  bus registers and it is `version 2.00`; `dmesg` reports `xhci-hcd:
+  USB3 root hub has no ports`, and there is no SerDes node to carry
+  SuperSpeed. A gigabit Ethernet adapter cannot be filled.
 - Services: `bela_daemon.service` (IDE/daemon — stop with
   `systemctl stop bela_daemon` before running standalone binaries; not
   exercised yet), `bela_button.service` (cape button monitor),
