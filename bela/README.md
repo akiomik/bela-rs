@@ -48,6 +48,12 @@ forbidden in `render`:
 rt_println!("{} blocks, {} underruns", blocks, context.underrun_count());
 ```
 
+Whether `render` fits within its block deadline is answered by
+`CpuMonitor`, which reports how much of each block the audio thread
+uses, and by `CpuTimer`, which measures one section of `render` at a
+time; see [`examples/cpu.rs`](examples/cpu.rs). Without them the first
+sign of running out of headroom is a dropout.
+
 See [`examples/`](examples) for runnable versions and the
 [repository README](../README.md) for project status and
 cross-compilation instructions.

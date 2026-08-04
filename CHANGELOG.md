@@ -10,6 +10,35 @@ and this project adheres to
 
 ### Added
 
+- CPU monitoring in the `bela` crate, wrapping `Bela_cpuMonitoringInit`
+  / `Bela_cpuMonitoringGet` / `Bela_cpuTic` / `Bela_cpuToc`. It answers
+  whether `render` fits within its block deadline, which until now only
+  showed up as dropouts and `Context::underrun_count` after the fact.
+  `CpuMonitor::enable` turns on the monitoring libbela does for the
+  whole audio thread; `CpuTimer` measures a section of `render` with
+  counters the application owns, bracketed either by `tic`/`toc` or by
+  the `measure()` guard, both real-time safe. Both are read as a
+  `CpuUsage`, which implements `Display` for printing from an
+  auxiliary task or from `cleanup`.
+  The cycle length is a `NonZeroU32`, which is also how the API avoids
+  the count that the C documentation says disables monitoring:
+  `Bela_cpuMonitoringInit(0)` returns without doing anything, so there
+  is no disabling to expose. Enabling has to happen before the audio
+  thread starts, since that is when libbela decides whether to measure
+  at all.
+  Bela measures each period from the previous tic, and a first tic has
+  only a zeroed timestamp to measure from — the whole monotonic clock.
+  `CpuTimer` throws its first measurement away, so every reading it
+  gives counts; `CpuMonitor` cannot, because libbela takes that tic, so
+  its first cycle also counts the audio system starting up. Measured on
+  the board: a first reading of 11.1% against a steady 19.0%
+- `bela/examples/cpu.rs`, running a bank of 64 sine oscillators with a
+  `CpuMonitor` over the whole audio thread and a `CpuTimer` over the
+  oscillators alone, reported once a second from an auxiliary task.
+  `scripts/smoke-test.sh` runs it and checks that both readings are
+  percentages of a block and that the measured section stays within the
+  thread that runs it
+
 - `AuxiliaryTask` in the `bela` crate: a safe wrapper over
   `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work
   that must not happen in `render` (I/O, allocation, long

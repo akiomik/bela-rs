@@ -27,6 +27,9 @@ pub enum Error {
     /// This is what a `cleanup` callback gets: it runs inside that
     /// teardown.
     TaskCreateWhileStopping,
+    /// `Bela_cpuMonitoringInit` failed, or the crate was built for a
+    /// target with no audio thread to monitor.
+    CpuMonitoring,
 }
 
 impl fmt::Display for Error {
@@ -45,6 +48,7 @@ impl fmt::Display for Error {
                 f,
                 "auxiliary tasks cannot be created while the audio system is stopping"
             ),
+            Self::CpuMonitoring => write!(f, "Bela_cpuMonitoringInit failed"),
         }
     }
 }

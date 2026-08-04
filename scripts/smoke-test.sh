@@ -23,10 +23,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
-# `print` carries the numeric checks and `task_lifecycle` the auxiliary
-# task ones; the others only have to start, keep running and stop
-# cleanly.
-EXAMPLES="print sine passthrough aux_task task_lifecycle"
+# `print` carries the numeric checks, `task_lifecycle` the auxiliary
+# task ones and `cpu` the CPU monitoring ones; the others only have to
+# start, keep running and stop cleanly.
+EXAMPLES="print sine passthrough aux_task task_lifecycle cpu"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5
@@ -261,6 +261,42 @@ else
   else
     fail "task_lifecycle: creating a task from cleanup was $cleanup_create"
   fi
+fi
+
+# CPU monitoring. The numbers themselves depend on the board and on
+# what else it is doing, so the checks are on the relationships that
+# have to hold whatever they are: both readings are real percentages,
+# and the measured section is part of the audio thread it runs on.
+log="$LOG_DIR/cpu.log"
+# cleanup: audio thread 8.4% busy, averaged over 2000 measurements
+thread="$(awk '/^cleanup: audio thread/ { print $4 + 0; exit }' "$log" 2>/dev/null || true)"
+# cleanup: oscillators 5.1% busy, averaged over 2000 measurements; 12075 blocks rendered
+section="$(awk '/^cleanup: oscillators/ { print $3 + 0; exit }' "$log" 2>/dev/null || true)"
+reports="$(grep -c '^cpu: ' "$log" 2>/dev/null || true)"
+
+if [ -z "$thread" ] || [ -z "$section" ]; then
+  fail "cpu: no cleanup summary"
+else
+  if awk -v t="$thread" 'BEGIN { exit !(t > 0 && t <= 100) }'; then
+    pass "cpu: the audio thread reported ${thread}% busy"
+  else
+    fail "cpu: the audio thread reported ${thread}%, which is not a percentage of a block"
+  fi
+
+  # A percentage of the same block period, so it cannot exceed the
+  # thread's — allowing for the two cycles not being aligned and for
+  # the one decimal place the report prints.
+  if awk -v s="$section" -v t="$thread" 'BEGIN { exit !(s > 0 && s <= t + 1) }'; then
+    pass "cpu: the measured section reported ${section}%, within the thread's ${thread}%"
+  else
+    fail "cpu: the measured section reported ${section}%, against the thread's ${thread}%"
+  fi
+fi
+
+if [ "${reports:-0}" -gt 0 ]; then
+  pass "cpu: the reporting task ran $reports time(s)"
+else
+  fail "cpu: the reporting task never ran"
 fi
 
 echo
