@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `scripts/sync-sysroot.sh` no longer aborts partway through. `rsync`
+  cannot reproduce the setgid bit of files like
+  `/usr/lib/aarch64-linux-gnu/utempter/utempter` as an unprivileged
+  user on the host, and the resulting error stopped the script before
+  it created the `lib` and `ld-linux-aarch64.so.1` symlinks that
+  cross-linking needs. The sysroot now drops setuid/setgid bits, which
+  it never needs
+
+### Changed
+
+- `scripts/sync-sysroot.sh` no longer compresses the transfer: gzip on
+  the board's Cortex-A53 was the bottleneck rather than the link, and
+  dropping `-z` cuts a full sync from 163 s to about 40 s
+
 ## [0.1.0] - 2026-08-05
 
 First hardware-validated release. The examples cross-build on a host

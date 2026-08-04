@@ -48,8 +48,7 @@ updating the board image.
 The transfer takes whichever path `bela.local` resolves to, the USB
 gadget network by default. Attaching a USB Ethernet adapter is an
 option — see [board-network.md](board-network.md) — but it is not a
-speedup: the step is bound by `rsync`'s compression on the board, not
-by the link.
+speedup: the board is USB 2.0 on either path.
 
 ## 4. Build, deploy and run
 

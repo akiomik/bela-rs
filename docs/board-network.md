@@ -26,28 +26,43 @@ incompressible data:
 | Ethernet adapter    | 194 Mbit/s       | 23.3 MB/s (186 Mbit/s) |
 
 And the step that actually matters, a full `scripts/sync-sysroot.sh`
-into an empty destination:
+into an empty destination (~840 MB, three runs each):
 
-| Path               | elapsed |
-|--------------------|---------|
-| USB gadget         | 139 s   |
-| Ethernet adapter   | 137 s   |
+| Path                         | elapsed |
+|------------------------------|---------|
+| USB gadget                   | 40–43 s |
+| Ethernet adapter, Wi-Fi host | 39–40 s |
+| Ethernet adapter, wired host | 43–47 s |
 
-The two are within noise of each other, for two independent reasons:
+They all land within a few seconds of each other, for two independent
+reasons:
 
-- **The board is USB 2.0 either way.** The adapter negotiates 1000
-  Mbit/s to the switch, but it enumerates as a high-speed (480 Mbit/s)
-  USB device — `dmesg` reports `xhci-hcd: USB3 root hub has no ports`.
-  The gadget link runs over the same generation of hardware.
-- **The sysroot sync is not link-bound.** It is bound by `rsync -z`:
-  gzip on the board's Cortex-A53 is the bottleneck. The same transfer
-  over the same gadget link without `-z` takes **38 s** instead of
-  139 s.
+- **The adapter cannot use the gigabit link it negotiates.** It
+  enumerates as a high-speed (480 Mbit/s) USB device — `dmesg` reports
+  `xhci-hcd: USB3 root hub has no ports` — and board-to-host tops out
+  at 194 Mbit/s in practice, short of what the gadget link reaches
+  over the same generation of hardware.
+- **The sysroot sync is bound by the board's own storage, not by the
+  link.** Reading the same tree locally on the board — `tar` to
+  `/dev/null`, cold cache, no network involved at all — accounts for
+  **25 s** of the 40. It is 8213 files, and walking them holds the
+  effective read rate to 34 MB/s where a single large file reads at
+  86 MB/s. A faster link cannot buy back much of that.
 
-Caveat on the numbers: the host used here is on Wi-Fi (802.11ax,
-5 GHz), so the Ethernet row is board → adapter → switch → Wi-Fi →
-host. A wired host would do better on that row, but the board-side
-USB 2.0 ceiling applies regardless.
+  Something else dominated until recently: `rsync -z`, whose gzip runs
+  on the board's Cortex-A53. The same complete sync with `-z` takes
+  **163 s**, which is why `scripts/sync-sysroot.sh` no longer passes
+  it.
+
+A better host link does not rescue the Ethernet row. Repeating the
+throughput measurements with the host on wired gigabit rather than
+Wi-Fi leaves board-to-host at the same 194 Mbit/s, and ssh at
+22.4 MB/s. Only the opposite direction gains — 80 Mbit/s to
+225 Mbit/s — and this workflow spends almost all of its bytes reading
+from the board, not writing to it. The board's CPU is not saturated
+while that runs, so the limit is neither the LAN, nor the host, nor
+the CPU: the adapter's USB host path simply does not reach what the
+gadget link does over the same generation of hardware.
 
 ## What the stock image does
 
