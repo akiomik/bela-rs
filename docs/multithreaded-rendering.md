@@ -94,5 +94,5 @@ takes `&self` and whose implementor is `Sync`, leaving `setup` and
 `cleanup` on `&mut self` (they are single-threaded, as measured above).
 Applications would partition by `context.this_thread()` and use
 interior mutability — atomics, or per-thread state indexed by the
-thread number — for anything they mutate. That trait is not designed
-yet; it needs its own issue before the surface is treated as stable.
+thread number — for anything they mutate. Designing it is
+[issue #25](https://github.com/akiomik/bela-rs/issues/25).
