@@ -1,37 +1,79 @@
 # Bela Gem board facts
 
-Values measured on the actual board during the fact-finding phase (the
-first task once the board arrives; see issue #4). Record **only values
-confirmed on the device** — no guesses.
-
-> **Status: not started (board has not arrived).**
+Measured on the actual board (Bela Gem Stereo on PocketBeagle 2),
+collected 2026-08-05 over the USB gadget network. Only values confirmed
+on the device are recorded here.
 
 ## System
 
-- [ ] `uname -a` output (architecture, kernel version):
-- [ ] Xenomai version and generation (including how Cobalt/Dovetail was
-      verified):
-- [ ] Debian version:
-- [ ] Bela software version / branch / commit on the board
-      (git info of `/root/Bela`). **The bindgen header pin is moved to
-      this exact version**:
+- `uname -a`:
+  `Linux bela 6.12.49-ti-arm64-r55-evl-2 #2 SMP EVL Thu Feb 19 16:28:06 UTC 2026 aarch64 GNU/Linux`
+- **Real-time core: EVL (Xenomai 4 lineage), not Xenomai 3
+  Cobalt/Dovetail.** `evl --version` reports
+  `evl.0.55 -- #98a8b88 (2025-10-08) [requires ABI 42]`. Userspace
+  library is `libevl.so.6` in `/usr/evl/lib/aarch64-linux-gnu`, headers
+  in `/usr/evl/include` (confirmed via the kernel name, `evl
+  --version`, and `ldd libbela.so`).
+- OS: Debian 12 bookworm — "Bela Debian Bookworm Image 2026-03-25".
+- Bela software in `/root/Bela`: git HEAD is `fb362a54` (`master`,
+  2025-03-29) — **but the working tree is overlaid with newer,
+  unpublished sources**. `include/Bela.h` reports **version 1.18.0**
+  (upstream `master` at that commit is 1.13, the public `dev` branch
+  1.14). `git status` shows the include tree as staged deletions; the
+  on-disk files are what the shipped `libbela` was built from and are
+  the ground truth for the ABI.
+- Header changelog highlights beyond our current vendored copy (1.14):
+  - 1.15.0: `threadCount` in `BelaInitSettings`; `const uint32_t
+    thisThread` / `threadCount` in `BelaContext` (multithreaded
+    rendering — this is how the "per-core render" feature surfaces; no
+    separate callback signature). **`BelaContext` layout change: the
+    committed bindings must be regenerated.**
+  - 1.16.0: `BelaGem` hardware support.
+  - 1.17.0: `sampleRate` in `BelaInitSettings`, `Bela_initRtBackend()`,
+    `Bela_gettime()`, `Bela_nanosleep()`, `Bela_printFlushBuffers()`;
+    `INPUT`/`OUTPUT` became `enum BelaDigitalDirection`.
+  - 1.18.0: `Bela_clock_gettime()`.
+- **Header pin implication**: vendor the headers from the board
+  (`/root/Bela/include`), not from an upstream git ref. Of the include
+  closure, `GPIOcontrol.h` and `Utilities.h` are byte-identical to the
+  currently vendored copies; only `Bela.h` differs.
 
 ## Build and link information
 
-Collect from a verbose build of a C++ example (`make VERBOSE=1` or
-similar).
+Captured from a verbose on-board build:
+`make -C /root/Bela PROJECT=<name> AT=` (compiler is `clang++`).
 
-- [ ] Compile-time `-I` include paths:
-- [ ] Link-time `-l` flags:
-- [ ] Library search paths (`-L`) and the actual location of
-      `libbela*.so`:
-- [ ] Xenomai-related link flags (`libcobalt` etc.) and any wrapper
-      scripts involved:
-- [ ] Signature of the per-core render() extension API (check the
-      headers):
+- Include paths: the project dir, `/root/Bela/include/legacy`,
+  `/root/Bela/include`, `/root/Bela/build/pru`, `/root/Bela`,
+  `/usr/evl/include`.
+- Defines (also needed as clang args when running bindgen):
+  `BELA_USE_POLL`, `ENABLE_PRU_UIO=0`, `ENABLE_PRU_RPROC=1`,
+  `IS_AM62_PB2`, `IS_AM62`, `BELA_HAS_GPIO`, `BELA_HAS_PRU_AND_MCASP`,
+  `BELA_RT_WRAP(call)=call`, `BELA_EVL`, `NDEBUG`, plus
+  `firmwareBelaRProc*` paths for the PRU firmware.
+- Codegen flags: `-mcpu=cortex-a53 -mtune=cortex-a53 -O3 -ffast-math
+  -ftree-vectorize -std=c++14 -no-pie -pthread`.
+- Link line (in-tree examples link the core object files directly):
+  `-Wl,--as-needed -no-pie -pthread -Llib/ -lseasocks
+  -L/usr/evl/lib/aarch64-linux-gnu -levl -lpthread -lrt`.
+- For external programs, `/root/Bela/lib/` provides `libbela.so` /
+  `libbela.a` (and `libbelaextra.*`). `ldd libbela.so` resolves
+  `libevl.so.6` (`/usr/evl/lib/aarch64-linux-gnu`), `libseasocks.so`
+  (`/usr/local/lib`), `libstdc++`, `libbpf`, `libelf`, `libz`, `libm`,
+  `libc` — so the expected external link is `-L/root/Bela/lib -lbela`
+  with a sysroot that carries those transitive dependencies.
 
 ## Operations
 
-- [ ] How to stop/disable the Bela IDE default program:
-- [ ] ssh access (hostname, authentication):
-- [ ] List of paths that must be synced as the sysroot:
+- USB gadget network: the board is `bela.local` (host-side interface
+  gets `192.168.7.1/24`). `ssh root@bela.local` works without a
+  password; there is also a `bela` user with one-time password
+  `temppwd`.
+- Services: `bela_daemon.service` (IDE/daemon — stop with
+  `systemctl stop bela_daemon` before running standalone binaries; not
+  exercised yet), `bela_button.service` (cape button monitor),
+  `bela-usb-gadgets.service`.
+- Paths to sync as the cross-compilation sysroot: `/root/Bela/include`,
+  `/root/Bela/lib`, `/usr/evl`, `/usr/local/lib` (seasocks),
+  `/usr/include`, `/usr/lib/aarch64-linux-gnu`,
+  `/lib/aarch64-linux-gnu`.
