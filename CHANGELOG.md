@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-05
+
+First hardware-validated release. The examples cross-build on a host
+and produce sound on a Bela Gem Stereo (PocketBeagle 2, EVL real-time
+core).
+
 ### Added
 
 - `bela-sys`: `build.rs` emits the `libbela` link flags for device
@@ -79,5 +85,6 @@ but cannot produce a runnable device binary until the board arrives.
 - Documentation: cross-compilation setup draft and a board-facts
   template for on-device measurements
 
-[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/akiomik/bela-rs/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/akiomik/bela-rs/releases/tag/v0.0.1

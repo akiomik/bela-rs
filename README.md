@@ -3,12 +3,11 @@
 Rust bindings for the [Bela](https://bela.io) core API, targeting
 **Bela Gem** on PocketBeagle 2 (`aarch64-unknown-linux-gnu`).
 
-> **Status: early development.** The hardware has not arrived yet;
-> nothing here has run on a board. Linking against `libbela` is not
-> wired up, so the published 0.0.x crates compile but cannot produce a
-> runnable device binary yet. Version 0.1.0 is reserved for the first
-> hardware-validated release:
-> [milestone v0.1.0 — sound on Bela Gem](https://github.com/akiomik/bela-rs/milestone/1).
+> **Status: works on hardware, API not yet settled.** The examples
+> cross-build on a host and produce sound on a Bela Gem Stereo. The
+> scope is still the core audio API — the C++ libraries and most of
+> the auxiliary-task surface are not wrapped yet, and the API may
+> change in any 0.x release.
 
 ## Crates
 
@@ -25,6 +24,49 @@ now and may be added incrementally.
 The integration model is the officially supported one: a standalone
 binary that defines the render callbacks and links `libbela`,
 cross-compiled on a host machine and copied to the board.
+
+## Quick start
+
+Implement `BelaApplication` and hand it to `Bela::run`. The trait is
+`unsafe` because implementing it is a promise that `render` is
+real-time safe: no allocation, blocking, system calls or panics.
+
+```rust
+use bela::{Bela, BelaApplication, Context, Settings};
+
+struct Passthrough;
+
+unsafe impl BelaApplication for Passthrough {
+    fn render(&mut self, context: &mut Context) {
+        let channels = context
+            .audio_in_channels()
+            .min(context.audio_out_channels());
+        for frame in 0..context.audio_frames() {
+            for channel in 0..channels {
+                let sample = context.audio_read(frame, channel);
+                context.audio_write(frame, channel, sample);
+            }
+        }
+    }
+}
+
+fn main() -> Result<(), bela::Error> {
+    Bela::run(Passthrough, &Settings::new())
+}
+```
+
+Building requires a sysroot synced from the board; see
+[docs/cross-compile.md](docs/cross-compile.md) for the one-time setup.
+
+```sh
+export BELA_SYSROOT="$PWD/bela-sysroot"
+cargo build --release --target aarch64-unknown-linux-gnu
+scp target/aarch64-unknown-linux-gnu/release/my-app root@bela.local:
+ssh -t root@bela.local 'systemctl stop bela_daemon && ./my-app'
+```
+
+Set `panic = "abort"` in the release profile: a panic crossing the
+audio callback boundary aborts the process either way.
 
 ## Documentation
 
