@@ -70,6 +70,15 @@ and this project adheres to
 
 ### Fixed
 
+- `rt_print!` and `rt_println!` stop formatting as soon as the message
+  fills the buffer, instead of running the formatting machinery to the
+  end and discarding what no longer fits. Padding is written one
+  `char` at a time, so `rt_println!("{:width$}", "", width = 65_535)`
+  was 65_535 calls into the writer on the audio thread — bounded
+  memory, but not bounded time, and enough to miss the render
+  deadline. The output is unchanged: the message is still truncated on
+  a `char` boundary and marked with `...`
+
 - `Bela::new` rejects a `Settings::thread_count` above 1 with the new
   `Error::ThreadCountUnsupported` instead of initialising an unsound
   setup. Bela calls `render` on all render threads at once with the

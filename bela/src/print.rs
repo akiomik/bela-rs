@@ -103,12 +103,19 @@ impl Message {
 
 impl Write for Message {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        // Truncation is recorded and reported through the marker rather
-        // than as an error: returning `Err` would abandon the rest of
-        // the message, and there is nothing a caller could do about it
-        // on the audio thread.
         self.append(s);
-        Ok(())
+        // Once the buffer is full there is nothing left to write, and
+        // the error is how `write_fmt` is told to stop. That matters on
+        // the audio thread: the formatting machinery writes a piece at a
+        // time, so padding a field to a huge width — `{:width$}` with
+        // `width = 65_535` — is tens of thousands of calls that would
+        // otherwise all run and all discard their input. `emit` ignores
+        // this expected error and prints what was assembled.
+        if self.truncated {
+            Err(fmt::Error)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -145,8 +152,10 @@ pub fn println_args(args: fmt::Arguments<'_>) {
 
 fn emit(args: fmt::Arguments<'_>, newline: bool) {
     let mut message = Message::new();
-    // `write_str` never fails, so the only way this returns `Err` is a
-    // `Display` implementation that failed on its own.
+    // An `Err` here means either that the message filled the buffer or
+    // that a `Display` implementation failed on its own. Both leave a
+    // partial message worth printing, and truncation is reported by the
+    // marker `finish` appends.
     let _ = message.write_fmt(args);
     write_c_str(message.finish(newline));
 }
@@ -312,6 +321,40 @@ mod tests {
             .chars()
             .count();
         assert_eq!(characters * 3, formatted.len() - TRUNCATION_MARKER.len());
+    }
+
+    #[test]
+    fn formatting_stops_once_the_buffer_is_full() {
+        /// Passes writes through to a [`Message`], counting them.
+        struct Counting<'a> {
+            message: &'a mut Message,
+            calls: usize,
+        }
+
+        impl Write for Counting<'_> {
+            fn write_str(&mut self, s: &str) -> fmt::Result {
+                self.calls += 1;
+                self.message.write_str(s)
+            }
+        }
+
+        // Padding is written one `char` at a time, so a field this wide
+        // is 65_535 calls if nothing stops them.
+        let mut message = Message::new();
+        let mut counting = Counting {
+            message: &mut message,
+            calls: 0,
+        };
+        let _ = counting.write_fmt(format_args!("{:width$}", "", width = 65_535));
+        let calls = counting.calls;
+        assert!(
+            calls < 2 * MESSAGE_CAPACITY,
+            "the work should be bounded by the capacity, not by the width, but took {calls} writes"
+        );
+        // And what did fit is still printed, marked as truncated.
+        let formatted = message.finish(false).to_bytes();
+        assert_eq!(formatted.len(), MESSAGE_CAPACITY);
+        assert!(formatted.ends_with(TRUNCATION_MARKER.as_bytes()));
     }
 
     #[test]
