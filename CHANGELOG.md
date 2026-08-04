@@ -17,6 +17,9 @@ and this project adheres to
 - `bela`: `Context::this_thread` / `thread_count` and
   `Settings::thread_count` for the multithreaded rendering added in
   Bela 1.15
+- `bela`: `Bela::run` also handles SIGHUP, so a dropped ssh connection
+  shuts the audio system down cleanly instead of killing the process
+  outright
 
 ### Changed
 

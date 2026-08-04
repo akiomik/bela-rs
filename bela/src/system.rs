@@ -99,8 +99,13 @@ impl<T: BelaApplication> Bela<T> {
     /// Initialises and starts the audio system, blocks until a stop is
     /// requested, then shuts down.
     ///
-    /// Installs SIGINT/SIGTERM handlers that request a stop, so Ctrl-C
-    /// over ssh shuts down cleanly (mirroring the C example templates).
+    /// Installs SIGINT/SIGTERM/SIGHUP handlers that request a stop, so
+    /// Ctrl-C, `systemctl stop` and a dropped ssh connection all shut
+    /// down cleanly (mirroring the C example templates).
+    ///
+    /// Note that Ctrl-C only reaches the program when ssh allocates a
+    /// terminal (`ssh -t`); otherwise it just kills the local client
+    /// and leaves the program running on the board.
     ///
     /// # Errors
     /// Returns [`Error::Init`] or [`Error::Start`] when the audio
@@ -108,9 +113,8 @@ impl<T: BelaApplication> Bela<T> {
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
         let mut bela = Self::new(application, settings)?;
         let handler = request_stop_on_signal as extern "C" fn(c_int);
-        unsafe {
-            libc::signal(libc::SIGINT, handler as libc::sighandler_t);
-            libc::signal(libc::SIGTERM, handler as libc::sighandler_t);
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            unsafe { libc::signal(signal, handler as libc::sighandler_t) };
         }
         bela.start()?;
         while !Self::stop_requested() {

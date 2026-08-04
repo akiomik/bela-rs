@@ -54,7 +54,7 @@ library search paths from it, and the linker wrapper uses it too.
 export BELA_SYSROOT="$PWD/bela-sysroot"
 cargo build -p bela --release --target aarch64-unknown-linux-gnu --example sine
 scp target/aarch64-unknown-linux-gnu/release/examples/sine root@bela.local:
-ssh root@bela.local 'systemctl stop bela_daemon && ./sine'
+ssh -t root@bela.local 'systemctl stop bela_daemon && ./sine'
 ```
 
 Rust binaries cannot be built by the Bela IDE, hence the scp + ssh
@@ -62,8 +62,15 @@ workflow. `bela_daemon` runs the IDE's own program and holds the audio
 hardware, so stop it first; start it again with
 `systemctl start bela_daemon`.
 
-Press Ctrl-C (or send SIGTERM) to stop: `Bela::run` installs handlers
-that request a clean shutdown.
+**Use `ssh -t`.** Without it ssh allocates no terminal, so Ctrl-C only
+kills the local ssh client while the program keeps running on the
+board — you then have to log in and `pkill -f ./sine` to stop it. With
+`-t`, Ctrl-C reaches the program and `Bela::run` shuts down cleanly
+(it handles SIGINT, SIGTERM and SIGHUP, so `systemctl stop` and a
+dropped connection are clean too).
+
+Note that Bela renames the process, so `pgrep -x sine` does not match
+it; use `pgrep -f './sine'`.
 
 ## Updating the vendored headers
 
