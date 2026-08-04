@@ -50,9 +50,18 @@ Version meanings while pre-1.0:
    cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
    ```
 
-4. **Commit and push** (`chore(release): prepare vX.Y.Z`), then wait
+4. **Verify on hardware**, which CI cannot do:
+
+   ```sh
+   BELA_SYSROOT="$PWD/bela-sysroot" scripts/smoke-test.sh
+   ```
+
+   It builds the examples, runs each of them on the board and checks
+   that audio actually ran at the right rate and shut down cleanly.
+
+5. **Commit and push** (`chore(release): prepare vX.Y.Z`), then wait
    for CI to go green on `main`.
-5. **Tag and push the tag** — this is the publish trigger:
+6. **Tag and push the tag** — this is the publish trigger:
 
    ```sh
    git tag -a vX.Y.Z -m "vX.Y.Z"
@@ -66,7 +75,7 @@ Version meanings while pre-1.0:
    - publishes `bela-sys` first, then `bela`, skipping any version
      that is already on crates.io and retrying through the index
      propagation delay.
-6. **Create the GitHub release** from the changelog section:
+7. **Create the GitHub release** from the changelog section:
 
    ```sh
    gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
