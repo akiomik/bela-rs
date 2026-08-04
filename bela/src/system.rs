@@ -91,12 +91,21 @@ impl<T: BelaApplication> Bela<T> {
     }
 
     /// Stops the real-time audio thread. Also happens on drop.
+    ///
+    /// Auxiliary tasks do not survive this: the handles an application
+    /// holds are retired, and creating one while it runs fails with
+    /// [`Error::TaskCreateWhileStopping`].
     pub fn stop(&mut self) {
         if self.started {
-            // Stopping deletes every auxiliary task, so the handles
-            // applications hold have to be retired before that
-            // happens, not after.
-            task::with_teardown(|| unsafe { bela_sys::Bela_stopAudio() });
+            task::teardown(|| self.stop_audio());
+        }
+    }
+
+    /// Stops audio if it is running, without touching the task
+    /// lifecycle; callers do that around it.
+    fn stop_audio(&mut self) {
+        if self.started {
+            unsafe { bela_sys::Bela_stopAudio() };
             self.started = false;
         }
     }
@@ -150,12 +159,16 @@ extern "C" fn request_stop_on_signal(_signal: c_int) {
 
 impl<T: BelaApplication> Drop for Bela<T> {
     fn drop(&mut self) {
-        self.stop();
-        unsafe {
-            // Runs the cleanup callback, which still borrows the app...
-            bela_sys::Bela_cleanupAudio();
-            // ...so the app must only be freed afterwards.
-            drop(Box::from_raw(self.app));
-        }
+        // One teardown window over the whole shutdown, including the
+        // cleanup callback and the case where audio was never started:
+        // each Bela version deletes the auxiliary tasks somewhere in
+        // here, and no handle may look live while that happens.
+        task::teardown(|| {
+            self.stop_audio();
+            // Runs the cleanup callback, which still borrows the app.
+            unsafe { bela_sys::Bela_cleanupAudio() };
+        });
+        // The app is only freed once the callback can no longer run.
+        drop(unsafe { Box::from_raw(self.app) });
     }
 }

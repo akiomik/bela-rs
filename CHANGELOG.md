@@ -25,7 +25,11 @@ and this project adheres to
   so, so a schedule made from a callback can never be in flight while
   the task behind it is freed. Handles also record which audio system
   they belong to, so one that outlives its audio system stays retired
-  even if a later audio system creates tasks of its own.
+  even if a later audio system creates tasks of its own — including
+  when that audio system was initialised but never started. Creating a
+  task while an audio system is being torn down fails with
+  `Error::TaskCreateWhileStopping`, which is also what a `cleanup`
+  callback gets, since it runs inside that teardown.
   Measured on the board: a request that arrives while the callback is
   still running is silently lost, and the C return value does not
   report it, so `schedule()` returns nothing and the documentation

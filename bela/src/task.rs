@@ -2,6 +2,7 @@
 
 #[cfg(bela_device)]
 use core::ffi::c_void;
+use core::ops::DerefMut;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::ffi::CString;
 use std::sync::{Mutex, PoisonError};
@@ -19,44 +20,84 @@ pub const AUDIO_PRIORITY: i32 = bela_sys::BELA_AUDIO_PRIORITY as i32;
 
 /// Which set of tasks libbela currently holds.
 ///
-/// `Bela_stopAudio` ends with `Bela_deleteAllAuxiliaryTasks`, which
-/// frees every task at once and leaves the handles dangling. Each
-/// handle records the generation it was created in, and the counter is
-/// bumped when the audio system is torn down, so a handle from an
-/// earlier audio system stays dead even after a later one creates
-/// tasks of its own. Reading it is a single atomic load, which
-/// [`AuxiliaryTask::schedule`] can afford on the render path.
+/// `Bela_deleteAllAuxiliaryTasks` frees every task at once and leaves
+/// the handles dangling. Each handle records the generation it was
+/// created in, and the counter is bumped when an audio system is torn
+/// down, so a handle from an earlier one stays dead even after a later
+/// one creates tasks of its own. Reading it is a single atomic load,
+/// which [`AuxiliaryTask::schedule`] can afford on the render path.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Serialises creating a task against tearing the audio system down.
+/// Serialises creating tasks against tearing an audio system down.
 ///
 /// Both sides run outside the real-time context — creating a task
-/// allocates and starts a thread, and stopping joins threads — so an
-/// ordinary mutex is the right tool. Holding it across
-/// `Bela_stopAudio` is what stops a task created concurrently from
-/// being deleted by that same stop while its handle still looks
-/// current.
-static LIFECYCLE: Mutex<()> = Mutex::new(());
+/// allocates and starts a thread, tearing down joins threads — so an
+/// ordinary mutex is the right tool. It is held only across the state
+/// changes, never across the C calls: the teardown runs the user's
+/// `cleanup` callback, which may itself try to create a task, and a
+/// lock held across that would deadlock. Instead the window is marked
+/// closed and creation inside it fails with
+/// [`Error::TaskCreateWhileStopping`].
+static LIFECYCLE: Mutex<Lifecycle> = Mutex::new(Lifecycle {
+    generation: 0,
+    accepting: true,
+});
 
-/// Runs the audio system teardown with the task handles retired first.
+struct Lifecycle {
+    /// Bumped once per teardown; mirrored into [`GENERATION`].
+    generation: u64,
+    /// Whether tasks may be created at the moment.
+    accepting: bool,
+}
+
+/// Runs an audio system teardown with the task handles retired first.
 ///
-/// The generation is bumped *before* `stop` deletes the tasks, so no
-/// handle can be seen as live while the memory behind it is being
-/// freed.
+/// Everything that can delete tasks belongs inside `teardown`: the
+/// stop, the cleanup, and the drop of an audio system that was never
+/// started. Which C function does the deleting is a moving target —
+/// the build this crate is pinned to deletes at the end of
+/// `Bela_stopAudio`, while upstream `fb362a5` deletes in
+/// `Bela_cleanupAudio` after the user's `cleanup` callback has run — so
+/// the window covers the whole teardown rather than one call.
+///
+/// Inside it, no task can be created and every existing handle is
+/// already retired, which is what keeps a delete from racing a create
+/// (they touch the same unsynchronised vector in libbela) or from
+/// leaving a live-looking handle to freed memory.
 #[cfg_attr(
     not(bela_device),
     allow(
         dead_code,
-        reason = "only the device-gated system module stops the audio system"
+        reason = "only the device-gated system module tears an audio system down"
     )
 )]
-pub fn with_teardown<R>(stop: impl FnOnce() -> R) -> R {
-    // A poisoned lock means a panic while creating a task or stopping
-    // audio; the counter is still consistent, so carry on rather than
-    // panicking again on the way down.
-    let _guard = LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner);
-    GENERATION.fetch_add(1, Ordering::Release);
-    stop()
+pub fn teardown<R>(shut_down: impl FnOnce() -> R) -> R {
+    // Reopens the window even if the teardown panics on the way out.
+    struct Reopen;
+    impl Drop for Reopen {
+        fn drop(&mut self) {
+            lifecycle().accepting = true;
+        }
+    }
+
+    {
+        let mut lifecycle = lifecycle();
+        lifecycle.accepting = false;
+        lifecycle.generation += 1;
+        GENERATION.store(lifecycle.generation, Ordering::Release);
+    }
+    let _reopen = Reopen;
+    shut_down()
+}
+
+/// Takes the lifecycle lock.
+///
+/// A poisoned lock means a panic while creating a task or tearing an
+/// audio system down. The state behind it stays consistent — the
+/// generation only ever grows — so recovering beats panicking again,
+/// often on the way down from the first panic.
+fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
+    LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A task that runs a callback on a lower-priority thread when the
@@ -81,15 +122,22 @@ pub fn with_teardown<R>(stop: impl FnOnce() -> R) -> R {
 ///
 /// Create tasks in `setup` (creating one allocates and starts a
 /// thread, so `render` is the wrong place). They live until the audio
-/// system stops, which deletes all of them at once: the C API has no
-/// way to delete one task, so dropping this handle does not destroy the
-/// task, and the callback's state stays allocated for the life of the
-/// process.
+/// system they were created in is torn down, which deletes all of them
+/// at once: the C API has no way to delete one task, so dropping this
+/// handle does not destroy the task, and the callback's state stays
+/// allocated for the life of the process.
 ///
 /// Because that teardown frees the tasks behind the handles, a handle
-/// records which audio system it belongs to and scheduling it
-/// afterwards does nothing — including from a handle that outlived one
-/// audio system while a later one is running.
+/// records which audio system it belongs to, and scheduling it
+/// afterwards does nothing — including a handle that outlived one
+/// audio system while a later one is running, and including one from
+/// an audio system that was initialised but never started.
+///
+/// Tasks cannot be created during a teardown at all: from `cleanup`,
+/// or from another thread while an audio system is being dropped,
+/// [`new`](AuxiliaryTask::new) fails with
+/// [`Error::TaskCreateWhileStopping`] rather than handing back a task
+/// that is about to be deleted.
 ///
 /// # Example
 ///
@@ -161,10 +209,12 @@ impl AuxiliaryTask {
     /// recommends.
     ///
     /// # Errors
-    /// Returns [`Error::TaskName`] when `name` contains a NUL byte, and
-    /// [`Error::TaskCreate`] when Bela could not create the task —
-    /// which is also what happens off-device, where there is no audio
-    /// system to create it in.
+    /// Returns [`Error::TaskName`] when `name` contains a NUL byte,
+    /// [`Error::TaskCreateWhileStopping`] when an audio system is being
+    /// torn down — including from a `cleanup` callback, which runs
+    /// inside that teardown — and [`Error::TaskCreate`] when Bela could
+    /// not create the task, which is also what happens off-device,
+    /// where there is no audio system to create it in.
     pub fn new<F>(name: &str, priority: i32, callback: F) -> Result<Self, Error>
     where
         F: FnMut() + Send + 'static,
@@ -174,15 +224,26 @@ impl AuxiliaryTask {
         // as libbela might call it, and libbela offers no per-task
         // delete to hang a free off. See the lifetime note above.
         let state: *mut F = Box::into_raw(Box::new(callback));
-        // Held across the creation so that a teardown running
-        // concurrently either happens entirely before it — and the new
-        // task belongs to the new generation — or entirely after.
-        let _guard = LIFECYCLE.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::create::<F>(&name, priority, state)
+        // Held across the creation, so a teardown either retires the
+        // handles before this task exists — and it is created into the
+        // new generation — or waits until it does.
+        let lifecycle = lifecycle();
+        if !lifecycle.accepting {
+            // A task created now would be deleted by the teardown that
+            // is already under way.
+            drop(unsafe { Box::from_raw(state) });
+            return Err(Error::TaskCreateWhileStopping);
+        }
+        Self::create::<F>(&name, priority, lifecycle.generation, state)
     }
 
     #[cfg(bela_device)]
-    fn create<F: FnMut()>(name: &CString, priority: i32, state: *mut F) -> Result<Self, Error> {
+    fn create<F: FnMut()>(
+        name: &CString,
+        priority: i32,
+        generation: u64,
+        state: *mut F,
+    ) -> Result<Self, Error> {
         // Safety: the callback pointer and `state` outlive the task
         // (state is leaked), and Bela copies the name.
         let raw = unsafe {
@@ -198,10 +259,7 @@ impl AuxiliaryTask {
             drop(unsafe { Box::from_raw(state) });
             return Err(Error::TaskCreate);
         }
-        Ok(Self {
-            raw,
-            generation: GENERATION.load(Ordering::Acquire),
-        })
+        Ok(Self { raw, generation })
     }
 
     #[cfg(not(bela_device))]
@@ -209,7 +267,12 @@ impl AuxiliaryTask {
         clippy::unnecessary_wraps,
         reason = "mirrors the device signature, which can succeed"
     )]
-    fn create<F: FnMut()>(_name: &CString, _priority: i32, state: *mut F) -> Result<Self, Error> {
+    fn create<F: FnMut()>(
+        _name: &CString,
+        _priority: i32,
+        _generation: u64,
+        state: *mut F,
+    ) -> Result<Self, Error> {
         // Off-device there is no libbela to hand the task to, so the
         // state is reclaimed rather than leaked.
         drop(unsafe { Box::from_raw(state) });
@@ -295,12 +358,13 @@ unsafe extern "C" fn trampoline<F: FnMut()>(arg: *mut c_void) {
 #[cfg(test)]
 mod tests {
     use core::ptr;
+    use std::panic::catch_unwind;
 
     use super::*;
 
-    /// The generation is process-wide, so the tests that move it have
-    /// to run one at a time. Not [`LIFECYCLE`], which
-    /// [`with_teardown`] takes itself.
+    /// The lifecycle state is process-wide, so the tests that move it
+    /// have to run one at a time. Not [`LIFECYCLE`], which the code
+    /// under test takes itself.
     static SERIALISE: Mutex<()> = Mutex::new(());
 
     /// A handle standing in for one from the current audio system. Its
@@ -320,12 +384,14 @@ mod tests {
         let task = handle();
         assert!(task.is_current(), "a fresh handle should be live");
 
-        with_teardown(|| ());
+        teardown(|| {
+            assert!(
+                !task.is_current(),
+                "handles must be retired before anything can delete the tasks"
+            );
+        });
 
-        assert!(
-            !task.is_current(),
-            "stopping deletes the task behind the handle"
-        );
+        assert!(!task.is_current(), "and stay retired afterwards");
     }
 
     #[test]
@@ -333,7 +399,7 @@ mod tests {
         let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
 
         let old = handle();
-        with_teardown(|| ());
+        teardown(|| ());
         // Stands in for a task created for the next audio system.
         let new = handle();
 
@@ -342,6 +408,44 @@ mod tests {
             "a handle from the previous audio system must stay retired"
         );
         assert!(new.is_current(), "the new handle should be live");
+    }
+
+    #[test]
+    fn tasks_cannot_be_created_during_a_teardown() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
+        teardown(|| {
+            // What a `cleanup` callback sees: an explicit failure
+            // rather than a deadlock or a task about to be deleted.
+            let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+            assert_eq!(
+                error,
+                Error::TaskCreateWhileStopping,
+                "creating a task during a teardown must fail"
+            );
+        });
+
+        let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+        assert_ne!(
+            error,
+            Error::TaskCreateWhileStopping,
+            "creation should be accepted again once the teardown is over"
+        );
+    }
+
+    #[test]
+    fn a_panicking_teardown_still_reopens_creation() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let panicked = catch_unwind(|| teardown(|| panic!("teardown blew up")));
+        assert!(panicked.is_err(), "the panic should propagate");
+
+        let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+        assert_ne!(
+            error,
+            Error::TaskCreateWhileStopping,
+            "the window must not stay closed after a panic"
+        );
     }
 
     #[test]
