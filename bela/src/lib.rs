@@ -21,6 +21,11 @@
 //! }
 //! ```
 //!
+//! Debugging output from the audio thread goes through
+//! [`rt_println!`], which formats into a fixed-size stack buffer and
+//! hands it to Bela's real-time print function — `println!` allocates
+//! and blocks, and is forbidden in `render`.
+//!
 //! [`Bela`] itself calls into `libbela` and therefore only exists when
 //! compiling for the device target (`aarch64-unknown-linux-gnu`); the
 //! rest of the crate — [`BelaApplication`], [`Context`], [`Settings`] —
@@ -35,6 +40,7 @@
 mod application;
 mod context;
 mod error;
+mod print;
 mod settings;
 #[cfg(bela_device)]
 mod system;
@@ -43,6 +49,7 @@ mod util;
 pub use application::BelaApplication;
 pub use context::{Context, PinMode};
 pub use error::Error;
+pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
 #[cfg(bela_device)]
 pub use system::Bela;
