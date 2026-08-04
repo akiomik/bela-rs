@@ -23,6 +23,8 @@ and this project adheres to
 - `bela/examples/print.rs`, printing the audio configuration from
   `setup` and a once-a-second heartbeat from `render`
 
+### Fixed
+
 - `scripts/sync-sysroot.sh` no longer aborts partway through. `rsync`
   cannot reproduce the setgid bit of files like
   `/usr/lib/aarch64-linux-gnu/utempter/utempter` as an unprivileged
