@@ -139,6 +139,18 @@ fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
 /// [`Error::TaskCreateWhileStopping`] rather than handing back a task
 /// that is about to be deleted.
 ///
+/// # Not shareable
+///
+/// The handle is [`Send`], because applications are moved to the audio
+/// thread, but deliberately not [`Sync`]: sharing one by reference
+/// would put scheduling back within reach of a thread that has no
+/// business doing it.
+///
+/// ```compile_fail
+/// fn assert_sync<T: Sync>() {}
+/// assert_sync::<bela::AuxiliaryTask>();
+/// ```
+///
 /// # Example
 ///
 /// ```no_run
@@ -358,13 +370,18 @@ unsafe extern "C" fn trampoline<F: FnMut()>(arg: *mut c_void) {
 #[cfg(test)]
 mod tests {
     use core::ptr;
+    use core::time::Duration;
     use std::panic::catch_unwind;
+    use std::sync::mpsc;
+    use std::thread;
 
     use super::*;
 
-    /// The lifecycle state is process-wide, so the tests that move it
-    /// have to run one at a time. Not [`LIFECYCLE`], which the code
-    /// under test takes itself.
+    /// The lifecycle state is process-wide, so every test that touches
+    /// it — [`teardown`] or [`AuxiliaryTask::new`], which reads the
+    /// window — has to take this first, or it can observe another
+    /// test's teardown. Not [`LIFECYCLE`], which the code under test
+    /// takes itself.
     static SERIALISE: Mutex<()> = Mutex::new(());
 
     /// A handle standing in for one from the current audio system. Its
@@ -434,6 +451,27 @@ mod tests {
     }
 
     #[test]
+    fn creating_a_task_never_blocks_on_a_teardown() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
+        teardown(|| {
+            // The lock must not be held across the teardown: a thread
+            // asking for a task has to be turned away, not parked until
+            // the window closes.
+            let (sender, receiver) = mpsc::channel();
+            thread::spawn(move || {
+                let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+                let _ = sender.send(error);
+            });
+
+            let error = receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("creating a task blocked while an audio system was being torn down");
+            assert_eq!(error, Error::TaskCreateWhileStopping);
+        });
+    }
+
+    #[test]
     fn a_panicking_teardown_still_reopens_creation() {
         let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
 
@@ -450,12 +488,16 @@ mod tests {
 
     #[test]
     fn a_name_with_an_interior_nul_is_rejected() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
         let error = AuxiliaryTask::new("no\0pe", 50, || {}).unwrap_err();
         assert_eq!(error, Error::TaskName, "expected the name to be rejected");
     }
 
     #[test]
     fn tasks_cannot_be_created_off_device() {
+        let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
+
         let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
         assert_eq!(
             error,

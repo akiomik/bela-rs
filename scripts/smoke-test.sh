@@ -23,9 +23,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
-# `print` carries the numeric checks; the others only have to start,
-# keep running and stop cleanly.
-EXAMPLES="print sine passthrough aux_task"
+# `print` carries the numeric checks and `task_lifecycle` the auxiliary
+# task ones; the others only have to start, keep running and stop
+# cleanly.
+EXAMPLES="print sine passthrough aux_task task_lifecycle"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5
@@ -228,6 +229,37 @@ else
     fail "print: cleanup did not run"
   else
     pass "print: cleanup ran after $total blocks"
+  fi
+fi
+
+# The auxiliary task lifecycle rules, which the host tests cannot reach
+# because they need a real audio system. See the example's header for
+# what each field means.
+log="$LOG_DIR/task_lifecycle.log"
+summary="$(awk '/^lifecycle: stale-runs=/ { print; exit }' "$log" 2>/dev/null || true)"
+if [ -z "$summary" ]; then
+  fail "task_lifecycle: no summary line"
+else
+  stale="$(echo "$summary" | sed -n 's/.*stale-runs=\([0-9]*\).*/\1/p')"
+  fresh="$(echo "$summary" | sed -n 's/.*fresh-runs=\([0-9]*\).*/\1/p')"
+  cleanup_create="$(echo "$summary" | sed -n 's/.*cleanup-create=\([a-z-]*\).*/\1/p')"
+
+  if [ "$stale" = 0 ]; then
+    pass "task_lifecycle: a handle from a dropped audio system never ran"
+  else
+    fail "task_lifecycle: a retired handle ran its task $stale time(s)"
+  fi
+
+  if [ "${fresh:-0}" -gt 0 ]; then
+    pass "task_lifecycle: the running audio system's own task ran $fresh time(s)"
+  else
+    fail "task_lifecycle: the running audio system's task never ran"
+  fi
+
+  if [ "$cleanup_create" = rejected ]; then
+    pass "task_lifecycle: creating a task from cleanup was refused"
+  else
+    fail "task_lifecycle: creating a task from cleanup was $cleanup_create"
   fi
 fi
 

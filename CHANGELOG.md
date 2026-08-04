@@ -36,6 +36,11 @@ and this project adheres to
   says to count invocations in the callback when it matters
 - `bela/examples/aux_task.rs`, reporting from a task scheduled once a
   second by `render`, including work that allocates
+- `bela/examples/task_lifecycle.rs`, a hardware check for the task
+  lifecycle rules the host tests cannot reach — a handle from an audio
+  system that was dropped without ever starting never runs, the running
+  system's own task does, and creating a task from `cleanup` is
+  refused. `scripts/smoke-test.sh` asserts on all three
 
 - `scripts/smoke-test.sh`: builds the examples, runs each of them on a
   board and gives a single pass/fail answer. The checks are numeric
