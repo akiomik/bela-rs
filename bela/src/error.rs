@@ -32,6 +32,19 @@ pub enum Error {
     /// The requested CPU monitoring acquisition cycle does not fit in a
     /// C `int`, which is how libbela takes it.
     CpuMonitoringCycle(u32),
+    /// CPU monitoring was requested with a period size big enough that
+    /// libbela runs `render` on a different thread from the one it
+    /// measures.
+    ///
+    /// See
+    /// [`MAX_MONITORED_PERIOD_SIZE`](crate::MAX_MONITORED_PERIOD_SIZE).
+    CpuMonitoringPeriodSize(i32),
+    /// Another [`Bela`](crate::Bela) audio system already exists in
+    /// this process.
+    ///
+    /// The C API is a process-wide singleton, so a second one would
+    /// share — and reset — the state the first is using.
+    AudioSystemExists,
 }
 
 impl fmt::Display for Error {
@@ -55,6 +68,16 @@ impl fmt::Display for Error {
                 f,
                 "the CPU monitoring cycle is {count} measurements, \
                  which does not fit in the C int libbela takes"
+            ),
+            Self::CpuMonitoringPeriodSize(frames) => write!(
+                f,
+                "CPU monitoring needs a period size of at most {max} frames, not {frames}: \
+                 above that libbela renders on a separate thread from the one it measures",
+                max = crate::MAX_MONITORED_PERIOD_SIZE
+            ),
+            Self::AudioSystemExists => write!(
+                f,
+                "a Bela audio system already exists in this process; the C API is a singleton"
             ),
         }
     }

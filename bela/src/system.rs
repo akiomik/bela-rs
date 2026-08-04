@@ -3,10 +3,13 @@ use core::marker::PhantomData;
 use core::time::Duration;
 use std::thread;
 
+use bela_sys::BelaInitSettings;
+
 use crate::application::{BelaApplication, trampoline};
 use crate::cpu;
 use crate::error::Error;
 use crate::settings::{self, Settings};
+use crate::singleton::Claim;
 use crate::task;
 
 /// Owns an initialised Bela audio system and the application driven by
@@ -18,7 +21,9 @@ use crate::task;
 /// "run until stopped" case, use [`Bela::run`].
 ///
 /// Only one `Bela` may exist at a time: the underlying C API is a
-/// process-wide singleton.
+/// process-wide singleton. A second [`new`](Bela::new) fails with
+/// [`Error::AudioSystemExists`] rather than reaching into globals the
+/// first one is using — from this thread or any other.
 ///
 /// Only available on the device target (`aarch64-unknown-linux-gnu`).
 pub struct Bela<T: BelaApplication> {
@@ -26,6 +31,10 @@ pub struct Bela<T: BelaApplication> {
     // raw so the audio thread's access is never aliased by a &mut.
     app: *mut T,
     started: bool,
+    /// Released once this audio system is gone, so the next one can be
+    /// built. Declared last: fields drop after `Drop::drop`, so the
+    /// claim outlives the teardown that runs there.
+    _claim: Claim,
     _marker: PhantomData<T>,
 }
 
@@ -34,35 +43,43 @@ impl<T: BelaApplication> Bela<T> {
     /// applied on top of `Bela_defaultSettings()`.
     ///
     /// # Errors
-    /// Returns [`Error::Init`] when `Bela_initAudio` fails, e.g. when
-    /// the audio hardware is unavailable or already in use,
-    /// [`Error::ThreadCountUnsupported`] when more than one render
-    /// thread is requested, and [`Error::CpuMonitoringCycle`] or
-    /// [`Error::CpuMonitoring`] when
-    /// [`Settings::cpu_monitoring`] asks for something libbela cannot
-    /// serve.
+    /// Returns [`Error::AudioSystemExists`] when another audio system
+    /// is alive in this process, [`Error::Init`] when `Bela_initAudio`
+    /// fails, e.g. when the audio hardware is unavailable or already in
+    /// use, [`Error::ThreadCountUnsupported`] when more than one render
+    /// thread is requested, and [`Error::CpuMonitoringCycle`],
+    /// [`Error::CpuMonitoringPeriodSize`] or [`Error::CpuMonitoring`]
+    /// when [`Settings::cpu_monitoring`] asks for something that cannot
+    /// be served.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
-        // Checked before anything is allocated or initialised, so a
-        // cycle libbela cannot take costs nothing to reject.
+        // First, because everything below reaches into libbela's
+        // globals — including, before `Bela_initAudio` is called at
+        // all, the CPU monitoring counters an audio system that is
+        // already running would be writing.
+        let claim = Claim::take()?;
+        // Checked before anything is allocated, so a cycle libbela
+        // cannot take costs nothing to reject.
         let monitoring = settings
             .cpu_monitoring_cycle()
             .map(cpu::check_cycle)
             .transpose()?;
-        // Before Bela_initAudio, because the `setup` callback runs
-        // inside that call and should already see the answer that
-        // `Context::cpu_usage` will give for the rest of the run. The
-        // priming tic this takes is what the audio thread's first
-        // reading is measured from, so everything from here to
-        // `start` is startup time that reading includes.
-        cpu::apply_monitoring(monitoring)?;
         let app = Box::into_raw(Box::new(application));
         let ret = unsafe {
             let raw = bela_sys::Bela_InitSettings_alloc();
             bela_sys::Bela_defaultSettings(raw);
             settings.apply_to(&mut *raw);
             // Refuse what the safe API cannot serve rather than
-            // initialising something unsound.
-            if let Err(error) = settings::check_supported(&*raw) {
+            // initialising something unsound, then turn monitoring on —
+            // both while the settings are resolved but before
+            // `Bela_initAudio`, since the `setup` callback runs inside
+            // that call and should already see the answer
+            // `Context::cpu_usage` will give for the rest of the run.
+            // The priming tic it takes is what the audio thread's first
+            // reading is measured from, so everything from here to
+            // `start` is startup time that reading includes.
+            let prepared = Self::check_supported(&*raw, monitoring)
+                .and_then(|()| cpu::apply_monitoring(monitoring));
+            if let Err(error) = prepared {
                 bela_sys::Bela_InitSettings_free(raw);
                 drop(Box::from_raw(app));
                 return Err(error);
@@ -82,8 +99,20 @@ impl<T: BelaApplication> Bela<T> {
         Ok(Self {
             app,
             started: false,
+            _claim: claim,
             _marker: PhantomData,
         })
+    }
+
+    /// Checks the resolved settings against what this crate can serve.
+    fn check_supported(raw: &BelaInitSettings, monitoring: Option<c_int>) -> Result<(), Error> {
+        settings::check_supported(raw)?;
+        if monitoring.is_some() {
+            // Needs the resolved period size: unset in `Settings` means
+            // Bela's default, not "no period size".
+            cpu::check_period_size(raw.periodSize)?;
+        }
+        Ok(())
     }
 
     /// Starts the real-time audio thread.

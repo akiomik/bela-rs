@@ -63,6 +63,39 @@ Captured from a verbose on-board build:
   `libc` — so the expected external link is `-L/root/Bela/lib -lbela`
   with a sysroot that carries those transitive dependencies.
 
+## Audio thread
+
+- **Large period sizes move `render` to a second thread.** libbela
+  renders in short "native" blocks and, when the requested period size
+  exceeds what the PRU memory allows, splits the work in two: the core
+  audio thread (`audioLoop` → `PRU::loop`) keeps the short blocks, and
+  the user's `render` runs on `bela-audio-fifo` (`fifoLoop`) behind a
+  context FIFO. The block size the application sees is the requested
+  one either way, and nothing in `BelaContext` distinguishes the two
+  arrangements.
+
+  Measured with `Settings::verbose(true)`, which makes libbela print
+  `gFifoFactor`:
+
+  | `period_size` | `gFifoFactor` | core `audioFrames` | user `audioFrames` |
+  |---------------|---------------|--------------------|--------------------|
+  | 16            | 1             | 16                 | 16                 |
+  | 32            | 1             | 32                 | 32                 |
+  | 64            | 1             | 64                 | 64                 |
+  | 128           | 1             | 128                | 128                |
+  | 256           | 2             | 128                | 256                |
+
+  So the split starts above 128 frames on this board, i.e. the divisor
+  is 128 — the same one upstream `fb362a5` uses for `BelaHw_Bela`,
+  whose `switch` has no Gem case at all (Gem support is in the image
+  overlay).
+
+  This matters for the CPU monitoring counters, which `PRU::loop`
+  updates on the core audio thread: above 128 frames a read from
+  `render` would be a cross-thread read of an unsynchronised structure.
+  `Settings::cpu_monitoring` is refused there
+  (`MAX_MONITORED_PERIOD_SIZE`).
+
 ## Operations
 
 - USB gadget network: the board is `bela.local` (host-side interface

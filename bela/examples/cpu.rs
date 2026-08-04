@@ -202,8 +202,27 @@ unsafe impl BelaApplication for Load {
     }
 }
 
+/// Checks that monitoring is refused at a period size where libbela
+/// would run `render` on its FIFO thread, away from the thread that
+/// updates the counters. Only the board can tell: the split happens
+/// inside libbela, and nothing in the context reveals it.
+#[cfg(bela_device)]
+fn report_fifo_guard() {
+    let settings = bela::Settings::new()
+        .cpu_monitoring(cycle())
+        .period_size(bela::MAX_MONITORED_PERIOD_SIZE.unsigned_abs() * 2);
+    let outcome = match bela::Bela::new(Load::new(), &settings) {
+        Err(bela::Error::CpuMonitoringPeriodSize(frames)) => format!("refused at {frames} frames"),
+        Err(error) => format!("other-error {error}"),
+        // Dropped immediately, which tears the audio system down again.
+        Ok(_) => "accepted".to_owned(),
+    };
+    println!("fifo-guard: {outcome}");
+}
+
 #[cfg(bela_device)]
 fn main() -> Result<(), bela::Error> {
+    report_fifo_guard();
     bela::Bela::run(Load::new(), &bela::Settings::new().cpu_monitoring(cycle()))
 }
 

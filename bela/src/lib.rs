@@ -55,6 +55,7 @@ mod cpu;
 mod error;
 mod print;
 mod settings;
+mod singleton;
 #[cfg(bela_device)]
 mod system;
 mod task;
@@ -62,7 +63,7 @@ mod util;
 
 pub use application::BelaApplication;
 pub use context::{Context, PinMode};
-pub use cpu::{CpuSection, CpuTimer, CpuUsage};
+pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;

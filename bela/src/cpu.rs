@@ -25,10 +25,15 @@
 //! So neither operation is reachable from a point where it could race.
 //! Enabling is a [`Settings`](crate::Settings) field, applied by
 //! [`Bela::new`](crate::Bela::new) before an audio thread exists — the
-//! reason [`apply_monitoring`] is not public. Reading needs the
-//! `&Context` that only a Bela callback has: `setup` runs before the
-//! audio thread starts, `render` runs *on* it, and `cleanup` runs after
-//! libbela has joined it.
+//! reason [`apply_monitoring`] is not public, and part of why only one
+//! audio system may exist at a time. Reading needs the `&Context` that
+//! only a Bela callback has: `setup` runs before the audio thread
+//! starts, `render` runs *on* it, and `cleanup` runs after libbela has
+//! joined it.
+//!
+//! That last claim about `render` only holds while libbela renders on
+//! the thread it measures, which stops being true at large period
+//! sizes; [`MAX_MONITORED_PERIOD_SIZE`] covers what happens then.
 //!
 //! [`CpuTimer`] has no such constraint, because its counters belong to
 //! the application rather than to libbela.
@@ -164,7 +169,10 @@ impl Context {
     /// another thread would be a data race; inside a callback there is
     /// no other thread to race with — `setup` runs before the audio
     /// thread starts, `render` runs on it, and `cleanup` runs after
-    /// libbela has joined it.
+    /// libbela has joined it. That `render` really is on the measured
+    /// thread is why monitoring is refused above
+    /// [`MAX_MONITORED_PERIOD_SIZE`](crate::MAX_MONITORED_PERIOD_SIZE)
+    /// frames.
     ///
     /// To report from an [`AuxiliaryTask`](crate::AuxiliaryTask),
     /// publish the reading from `render` through an atomic and let the
@@ -270,6 +278,47 @@ fn disable_monitoring() -> Result<(), Error> {
     }
     unsafe { (*data).count = 0 };
     Ok(())
+}
+
+/// Largest period size for which libbela runs `render` on the same
+/// thread that updates the monitoring counters.
+///
+/// Above a hardware-dependent limit, libbela splits the audio thread in
+/// two: `PRU::loop` keeps the short blocks — and with them the
+/// `Bela_cpuTic` / `Bela_cpuToc` pair — while the user's `render` moves
+/// to a second thread (`fifoLoop`, on `bela-audio-fifo`) fed through a
+/// context FIFO. The block size the application sees is unchanged, so
+/// nothing in the context distinguishes the two arrangements.
+///
+/// That arrangement would put [`Context::cpu_usage`] on a different
+/// thread from the writer, which is the race the API exists to prevent,
+/// so monitoring is refused there rather than reading across it.
+///
+/// Measured on a Bela Gem Stereo (image 2026-03-25, Bela 1.18.0):
+/// `gFifoFactor` is 1 at period sizes 16, 32, 64 and 128, and 2 at 256.
+/// See `docs/board-facts.md`.
+pub const MAX_MONITORED_PERIOD_SIZE: c_int = 128;
+
+/// Checks that `render` will run on the thread that updates the
+/// counters, given the period size that settings resolved to.
+///
+/// # Errors
+/// Returns [`Error::CpuMonitoringPeriodSize`] for a period size big
+/// enough for libbela to move `render` off that thread; see
+/// [`MAX_MONITORED_PERIOD_SIZE`].
+#[cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only the device-gated audio system applies settings; still unit-tested on the host"
+    )
+)]
+pub const fn check_period_size(period_size: c_int) -> Result<(), Error> {
+    if period_size <= MAX_MONITORED_PERIOD_SIZE {
+        Ok(())
+    } else {
+        Err(Error::CpuMonitoringPeriodSize(period_size))
+    }
 }
 
 /// Converts an acquisition cycle length to the `int` libbela takes.
@@ -604,6 +653,30 @@ mod tests {
         assert_eq!(
             check_cycle(cycle_of(u32::MAX)),
             Err(Error::CpuMonitoringCycle(u32::MAX))
+        );
+    }
+
+    #[test]
+    fn period_sizes_that_keep_render_on_the_measured_thread_are_accepted() {
+        // Measured on the board: gFifoFactor is 1 up to 128 frames.
+        for frames in [1, 16, 32, 64, MAX_MONITORED_PERIOD_SIZE] {
+            assert_eq!(check_period_size(frames), Ok(()), "{frames} frames");
+        }
+    }
+
+    #[test]
+    fn a_period_size_that_moves_render_off_the_measured_thread_is_refused() {
+        // At 256 the board reported gFifoFactor 2, which puts `render`
+        // on bela-audio-fifo while PRU::loop keeps ticking.
+        let over = MAX_MONITORED_PERIOD_SIZE + 1;
+
+        assert_eq!(
+            check_period_size(over),
+            Err(Error::CpuMonitoringPeriodSize(over))
+        );
+        assert_eq!(
+            check_period_size(256),
+            Err(Error::CpuMonitoringPeriodSize(256))
         );
     }
 

@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- `Bela` now enforces the "only one at a time" rule it documented:
+  the process-wide claim on the audio system is taken atomically by
+  `Bela::new`, and a second one fails with `Error::AudioSystemExists`
+  instead of reaching into libbela's globals — from this thread or any
+  other. That matters beyond tidiness now that setting an audio system
+  up touches the CPU monitoring counters before `Bela_initAudio` gets
+  a chance to refuse, which a second setup would race against the
+  first audio system's thread. The claim is released when the `Bela`
+  is dropped, including when construction fails partway through or a
+  panic unwinds through it
+
 - CPU monitoring in the `bela` crate, wrapping `Bela_cpuMonitoringInit`
   / `Bela_cpuMonitoringGet` / `Bela_cpuTic` / `Bela_cpuToc`. It answers
   whether `render` fits within its block deadline, which until now only
@@ -32,6 +43,14 @@ and this project adheres to
   thread starts, `render` runs on it, and `cleanup` runs after libbela
   has joined it. To report from an auxiliary task, publish the reading
   from `render` through an atomic.
+  That `render` runs on the measured thread stops being true at large
+  period sizes, where libbela keeps the counters on the core audio
+  thread and moves `render` to a FIFO thread of its own. Nothing in the
+  context distinguishes the two arrangements, so monitoring is refused
+  above `MAX_MONITORED_PERIOD_SIZE` with
+  `Error::CpuMonitoringPeriodSize` rather than read across threads.
+  Measured on the board: `gFifoFactor` is 1 at 16, 32, 64 and 128
+  frames and 2 at 256, recorded in `docs/board-facts.md`
   The cycle length is a `NonZeroU32`, which is also how the API avoids
   the count that the C documentation says disables monitoring:
   `Bela_cpuMonitoringInit(0)` returns without doing anything, so
@@ -51,8 +70,10 @@ and this project adheres to
   oscillators alone, both read in `render` and reported once a second
   from an auxiliary task through atomics — the pattern to copy.
   `scripts/smoke-test.sh` runs it and checks that both readings are
-  percentages of a block and that the measured section stays within the
-  thread that runs it
+  percentages of a block, that the measured section stays within the
+  thread that runs it, and that monitoring is refused at a period size
+  where `render` would move off that thread — a rule only the board can
+  confirm, since the split happens inside libbela
 
 - `AuxiliaryTask` in the `bela` crate: a safe wrapper over
   `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work

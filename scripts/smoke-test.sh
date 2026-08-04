@@ -299,6 +299,17 @@ else
   fail "cpu: the reporting task never ran"
 fi
 
+# Above a period size libbela can render natively, it moves `render` to
+# its own FIFO thread while the counters stay with the core audio
+# thread, so monitoring has to be refused rather than read across the
+# two. Only the board can confirm it: the split is internal to libbela.
+guard="$(sed -n 's/^fifo-guard: //p' "$log" 2>/dev/null | head -1)"
+case "$guard" in
+"refused at "*) pass "cpu: monitoring $guard, where render moves off the measured thread" ;;
+"") fail "cpu: no fifo-guard line" ;;
+*) fail "cpu: monitoring was $guard at a period size that moves render off the measured thread" ;;
+esac
+
 echo
 if [ "$failures" -eq 0 ]; then
   echo "smoke test passed"
