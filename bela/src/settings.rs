@@ -26,6 +26,7 @@ pub struct Settings {
     high_performance_mode: Option<bool>,
     uniform_sample_rate: Option<bool>,
     stop_button_pin: Option<i32>,
+    thread_count: Option<u32>,
 }
 
 impl Settings {
@@ -118,6 +119,14 @@ impl Settings {
         self
     }
 
+    /// Number of threads used for `render` (multithreaded rendering on
+    /// the quad-core Bela Gem).
+    #[must_use]
+    pub const fn thread_count(mut self, threads: u32) -> Self {
+        self.thread_count = Some(threads);
+        self
+    }
+
     /// Applies the overrides to a raw `BelaInitSettings`, leaving unset
     /// fields untouched.
     ///
@@ -157,6 +166,9 @@ impl Settings {
         }
         if let Some(v) = self.stop_button_pin {
             raw.stopButtonPin = v;
+        }
+        if let Some(v) = self.thread_count {
+            raw.threadCount = v;
         }
     }
 }
@@ -204,12 +216,14 @@ mod tests {
             .use_analog(false)
             .verbose(true)
             .stop_button_pin(-1)
+            .thread_count(4)
             .apply_to(&mut raw);
 
         assert_eq!(raw.periodSize, 64);
         assert_eq!(raw.useAnalog, 0);
         assert_eq!(raw.verbose, 1);
         assert_eq!(raw.stopButtonPin, -1);
+        assert_eq!(raw.threadCount, 4);
         // Untouched by the overrides above.
         assert_eq!(raw.uniformSampleRate, 1);
     }

@@ -27,10 +27,20 @@
 #ifndef BELA_H_
 #define BELA_H_
 #define BELA_MAJOR_VERSION 1
-#define BELA_MINOR_VERSION 14
+#define BELA_MINOR_VERSION 18
 #define BELA_BUGFIX_VERSION 0
 
 // Version history / changelog:
+// 1.18.0
+// - added Bela_clock_gettime()
+// 1.17.0
+// - added sampleRate to BelaInitSettings
+// - added Bela_initRtBackend(), Bela_gettime(), Bela_nanosleep(), Bela_printFlushBuffers()
+// - turned INPUT and OUTPUT enum into an BelaDigitalDirection
+// 1.16.0
+// - added BelaGem
+// 1.15.0
+// - added threadCount to BelaInitSettings and threadCount and thisThread to BelaContex
 // 1.14.0
 // - added disabledDigitalChannels to BelaInitSettings and corresponding command-line
 // - removed Bela_stopAllAuxiliaryTasks(), Bela_startAuxiliaryTask() and Bela_startAllAuxiliaryTasks()
@@ -125,6 +135,8 @@ typedef enum
 	BelaHw_NoHw = -1, ///< No hardware
 	BelaHw_Bela, ///< Bela
 	BelaHw_BelaMini, ///< Bela Mini
+	BelaHw_GemStereo, ///< Gem Stereo
+	BelaHw_GemMulti, ///< Gem Multi
 	BelaHw_Salt, ///< Salt
 	BelaHw_CtagFace, ///< Ctag Face
 	BelaHw_CtagBeast, ///< Ctag Beast
@@ -180,7 +192,6 @@ typedef enum
 
 /** \cond PRIVATE */
 #define MAX_PRU_FILENAME_LENGTH 256
-#define MAX_UNUSED_LENGTH 220
 #define MAX_PROJECTNAME_LENGTH 256
 /** \endcond */
 
@@ -340,7 +351,7 @@ typedef struct {
 	const uint32_t audioInChannels;
 	/// \brief The number of audio output channels
 	const uint32_t audioOutChannels;
-	/// \brief The audio sample rate in Hz (currently always 44100.0)
+	/// \brief The audio sample rate in Hz
 	const float audioSampleRate;
 
 	/// \brief The number of analog frames per block
@@ -434,6 +445,17 @@ typedef struct {
 
 	/// Number of detected underruns.
 	const unsigned int underrunCount;
+
+	/// \brief Which thread this context is running on.
+	///
+	/// Used for multithreaded rendering. Values range from 0 to (threadCount - 1).
+	const uint32_t thisThread;
+
+	/// \brief Total number of threads in use for render()
+	///
+	/// Used for multithreaded rendering.
+	const uint32_t threadCount;
+
 } BelaContext;
 
 struct BelaChannelGain {
@@ -533,7 +555,7 @@ typedef struct {
 	// to 128KiB
 	unsigned int auxiliaryTaskStackSize;
 
-	// Pointers to the user-defined functions
+	/// Pointers to the user-defined functions
 	bool (*setup)(BelaContext*, void*);
 	void (*render)(BelaContext*, void*);
 	void (*cleanup)(BelaContext*, void*);
@@ -559,7 +581,23 @@ typedef struct {
 	/// A bitmask of disabled digital channels
 	uint32_t disabledDigitalChannels;
 
-	char unused[MAX_UNUSED_LENGTH];
+	/// Number of parallel render threads to run
+	unsigned int threadCount;
+
+	/// More pointers to the user-defined functions
+	void (*render_pre)(BelaContext*, void*);
+	void (*render_post)(BelaContext*, void*);
+
+	/// The audio sample rate in Hz
+	float audioSampleRate;
+#ifdef __arm__
+	// there was some unused memory here on armv7.
+	// Keep updating the value as you add more values before or after
+	// TODO: that once the aarch64 API becomes public, you should just
+	// append to the end of the struct and amend this comment accordingly
+	char unused[204];
+#endif // __arm__
+	// end of formerly unused memory
 
 	/// User selected board to work with (as opposed to detected hardware).
 	BelaHw board;
@@ -1056,6 +1094,24 @@ int Bela_muteSpeakers(int mute);
 /** @} */
 
 /**
+ * \defgroup warppers Wrappers for real-time functionalities.
+ *
+ * @{
+ */
+
+void Bela_initRtBackend();
+
+int Bela_gettime(struct timespec* tp); // same as Bela_clock_gettime(CLOCK_MONOTONIC, tp)
+
+int Bela_clock_gettime(clockid_t clockid, struct timespec* tp);
+
+int Bela_nanosleep(const struct timespec *req, struct timespec *rem);
+
+void Bela_printFlushBuffers();
+
+/** @} */
+
+/**
  * \defgroup auxtask Auxiliary task support
  *
  * These functions are used to create separate real-time tasks (threads) which run at lower
@@ -1151,7 +1207,7 @@ void Bela_deleteAllAuxiliaryTasks();
  * @{
  */
 
-enum {
+enum BelaDigitalDirection {
 	INPUT = 0,
 	OUTPUT = 1,
 };

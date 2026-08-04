@@ -3,14 +3,10 @@ xtask = "run --manifest-path xtask/Cargo.toml --"
 
 # Cross-compilation settings for Bela Gem (PocketBeagle 2, aarch64).
 #
-# Until the board arrives, only `cargo check --target aarch64-unknown-linux-gnu`
-# is expected to work (it does not link). The linker and sysroot settings below
-# will be enabled once the sysroot has been synced from the board
-# (see docs/cross-compile.md).
-
-# [target.aarch64-unknown-linux-gnu]
-# linker = "aarch64-unknown-linux-gnu-gcc"
-# rustflags = ["-C", "link-arg=--sysroot=/path/to/bela-sysroot"]
-
-# [env]
-# BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu = "--sysroot=/path/to/bela-sysroot"
+# The linker comes from the messense/macos-cross-toolchains Homebrew tap
+# (see docs/cross-compile.md). Only needed when actually linking device
+# binaries; `cargo check`/`clippy` for the target work without it.
+# Link flags and library search paths are emitted by bela-sys/build.rs
+# based on the BELA_SYSROOT environment variable.
+[target.aarch64-unknown-linux-gnu]
+linker = "scripts/aarch64-bela-linker.sh"

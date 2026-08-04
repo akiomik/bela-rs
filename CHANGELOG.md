@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `bela-sys`: `build.rs` emits the `libbela` link flags for device
+  targets, so device binaries link and run. Cross-linking is driven by
+  `BELA_SYSROOT` together with `scripts/sync-sysroot.sh` and the linker
+  wrapper in `scripts/aarch64-bela-linker.sh`
+- `bela`: `Context::this_thread` / `thread_count` and
+  `Settings::thread_count` for the multithreaded rendering added in
+  Bela 1.15
+
+### Changed
+
+- `bela-sys`: bindings regenerated from the headers shipped on a Bela
+  Gem (Bela 1.18.0), which is newer than any published upstream branch.
+  `BelaContext` and `BelaInitSettings` gained fields, and the bindings
+  now cover `Bela_initRtBackend`, `Bela_clock_gettime` and friends.
+  `scripts/update-vendor.sh --board` vendors from a board, and the
+  provenance file is `vendor/bela/SOURCE` (was `COMMIT`)
+
 ## [0.0.1] - 2026-07-27
 
 Initial release: pre-hardware. Linking against `libbela` is not wired

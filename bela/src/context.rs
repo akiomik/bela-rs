@@ -156,6 +156,19 @@ impl Context {
         self.0.underrunCount
     }
 
+    /// Which render thread this context runs on, in
+    /// `0..thread_count()` (multithreaded rendering).
+    #[must_use]
+    pub const fn this_thread(&self) -> u32 {
+        self.0.thisThread
+    }
+
+    /// Total number of threads in use for `render`.
+    #[must_use]
+    pub const fn thread_count(&self) -> u32 {
+        self.0.threadCount
+    }
+
     // --- Whole-buffer access (interleaved) ---
 
     /// Audio input samples; empty outside `render` or with audio
@@ -451,6 +464,8 @@ mod tests {
             fixture.context.digitalFrames = DIGITAL_FRAMES as u32;
             fixture.context.digitalChannels = DIGITAL_CHANNELS as u32;
             fixture.context.audioFramesElapsed = 128;
+            fixture.context.thisThread = 1;
+            fixture.context.threadCount = 4;
             fixture
         }
 
@@ -472,6 +487,8 @@ mod tests {
         assert_eq!(context.digital_channels(), DIGITAL_CHANNELS);
         assert_eq!(context.audio_frames_elapsed(), 128);
         assert_eq!(context.underrun_count(), 0);
+        assert_eq!(context.this_thread(), 1);
+        assert_eq!(context.thread_count(), 4);
     }
 
     #[test]

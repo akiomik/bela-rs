@@ -2,3 +2,7 @@ target/
 
 # Local working notes, not repository deliverables
 /docs/bela-rust-bindings-feasibility.md
+
+# Board filesystem copy for cross-linking (synced via rsync, see
+# docs/cross-compile.md)
+/bela-sysroot/
