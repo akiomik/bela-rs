@@ -74,6 +74,20 @@ and this project adheres to
   thread that runs it, and that monitoring is refused at a period size
   where `render` would move off that thread — a rule only the board can
   confirm, since the split happens inside libbela
+- `bela/examples/monitoring_rules.rs`, the hardware checks for the
+  monitoring rules the host cannot reach, driven one per run by
+  `scripts/smoke-test.sh`: that `MAX_MONITORED_PERIOD_SIZE` is the
+  limit the *hardware* has rather than one that drifted from it (the
+  refusal alone would keep passing, since it only consults the
+  constant), that a second `Bela::new` is refused, and that leaving
+  `cpu_monitoring` unset really means off rather than whatever the last
+  audio system left behind.
+  One check per process, because the board does not survive several
+  audio systems in one: bringing four or five up and tearing them down
+  again ends in a bus error, and an initialisation aborted from `setup`
+  leaves libbela holding hardware it will not take back, so the next
+  one fails with `Mcasp::start() called while already running` and then
+  segfaults
 
 - `AuxiliaryTask` in the `bela` crate: a safe wrapper over
   `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work

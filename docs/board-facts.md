@@ -94,7 +94,19 @@ Captured from a verbose on-board build:
   updates on the core audio thread: above 128 frames a read from
   `render` would be a cross-thread read of an unsynchronised structure.
   `Settings::cpu_monitoring` is refused there
-  (`MAX_MONITORED_PERIOD_SIZE`).
+  (`MAX_MONITORED_PERIOD_SIZE`), and `scripts/smoke-test.sh` re-measures
+  the two boundary values on every run so the constant cannot drift away
+  from the hardware.
+
+- **An audio system can only be brought up once per process.** Creating
+  four or five in a row — `Bela::new` followed by dropping it — ends in
+  a bus error, and an initialisation aborted by returning `false` from
+  `setup` leaves libbela holding hardware it will not take back: the
+  next attempt reports `Mcasp::start() called while already running`,
+  fails to allocate its pipes, and segfaults. Individually each of
+  those configurations is fine, and two full cycles (what
+  `examples/task_lifecycle.rs` does) are reliable, but anything that
+  needs several is better split across processes.
 
 ## Operations
 

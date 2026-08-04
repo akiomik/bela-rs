@@ -176,7 +176,24 @@ impl Context {
     ///
     /// To report from an [`AuxiliaryTask`](crate::AuxiliaryTask),
     /// publish the reading from `render` through an atomic and let the
-    /// task print that; `examples/cpu.rs` does exactly this.
+    /// task print that; `examples/cpu.rs` does exactly this. Reading it
+    /// *in* the task is what must not compile, and does not: a task
+    /// callback is `Send + 'static`, and a `&Context` is neither —
+    /// `Context` wraps libbela's raw buffer pointers, so it is not
+    /// [`Sync`] and a reference to it cannot reach another thread at
+    /// all.
+    ///
+    /// ```compile_fail,E0277
+    /// use bela::{AuxiliaryTask, Context};
+    ///
+    /// fn report_from_a_task(context: &Context) {
+    ///     let _ = AuxiliaryTask::new("report", 50, move || {
+    ///         // The task runs on its own thread, where reading the
+    ///         // counters would race the audio thread writing them.
+    ///         let _ = context.cpu_usage();
+    ///     });
+    /// }
+    /// ```
     ///
     /// # The first reading is low
     ///
