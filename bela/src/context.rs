@@ -158,6 +158,11 @@ impl Context {
 
     /// Which render thread this context runs on, in
     /// `0..thread_count()` (multithreaded rendering).
+    ///
+    /// Always 0 for now: [`Bela`](crate::Bela) only accepts a single
+    /// render thread, because Bela renders every block on all threads
+    /// at once over shared buffers. See
+    /// `docs/multithreaded-rendering.md`.
     #[must_use]
     pub const fn this_thread(&self) -> u32 {
         self.0.thisThread

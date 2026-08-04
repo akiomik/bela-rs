@@ -22,8 +22,19 @@ and this project adheres to
   for callers that already have `format_args!`
 - `bela/examples/print.rs`, printing the audio configuration from
   `setup` and a once-a-second heartbeat from `render`
+- `docs/multithreaded-rendering.md`, recording what `threadCount` does
+  on the board: `render` runs concurrently on every thread, for the
+  same block, with the same user data and the same (unpartitioned)
+  buffers
 
 ### Fixed
+
+- `Bela::new` rejects a `Settings::thread_count` above 1 with the new
+  `Error::ThreadCountUnsupported` instead of initialising an unsound
+  setup. Bela calls `render` on all render threads at once with the
+  same user data, so the trampoline would have handed out several
+  `&mut T` to one application — reachable from safe code. A trait
+  shaped for concurrent rendering is still to be designed
 
 - `scripts/sync-sysroot.sh` no longer aborts partway through. `rsync`
   cannot reproduce the setgid bit of files like

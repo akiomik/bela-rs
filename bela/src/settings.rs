@@ -121,6 +121,13 @@ impl Settings {
 
     /// Number of threads used for `render` (multithreaded rendering on
     /// the quad-core Bela Gem).
+    ///
+    /// Values above 1 are currently rejected by
+    /// [`Bela::new`](crate::Bela::new) with
+    /// [`Error::ThreadCountUnsupported`](crate::Error::ThreadCountUnsupported):
+    /// Bela runs `render` on all threads at once over shared buffers,
+    /// which [`BelaApplication`](crate::BelaApplication) cannot express
+    /// with `&mut self`. See `docs/multithreaded-rendering.md`.
     #[must_use]
     pub const fn thread_count(mut self, threads: u32) -> Self {
         self.thread_count = Some(threads);
