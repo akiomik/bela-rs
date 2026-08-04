@@ -16,6 +16,17 @@ pub enum Error {
     /// user data, which would mean several `&mut self` to one
     /// application at once; see `docs/multithreaded-rendering.md`.
     ThreadCountUnsupported(u32),
+    /// An auxiliary task name contained a NUL byte.
+    TaskName,
+    /// `Bela_createAuxiliaryTask` failed, or the crate was built for a
+    /// target with no audio system to create the task in.
+    TaskCreate,
+    /// An auxiliary task was created while an audio system was being
+    /// torn down, which would have deleted it again immediately.
+    ///
+    /// This is what a `cleanup` callback gets: it runs inside that
+    /// teardown.
+    TaskCreateWhileStopping,
 }
 
 impl fmt::Display for Error {
@@ -27,6 +38,12 @@ impl fmt::Display for Error {
                 f,
                 "thread_count is {threads}: BelaApplication::render would be called \
                  concurrently on {threads} threads with &mut self"
+            ),
+            Self::TaskName => write!(f, "the auxiliary task name contains a NUL byte"),
+            Self::TaskCreate => write!(f, "Bela_createAuxiliaryTask failed"),
+            Self::TaskCreateWhileStopping => write!(
+                f,
+                "auxiliary tasks cannot be created while the audio system is stopping"
             ),
         }
     }

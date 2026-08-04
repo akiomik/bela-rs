@@ -10,6 +10,38 @@ and this project adheres to
 
 ### Added
 
+- `AuxiliaryTask` in the `bela` crate: a safe wrapper over
+  `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work
+  that must not happen in `render` (I/O, allocation, long
+  calculations) can be moved to a lower-priority thread that `render`
+  triggers with a real-time safe `schedule()`. The callback is a
+  `'static` closure that owns its state — it cannot borrow from the
+  application, which the audio thread holds by `&mut` while the task
+  runs — and shares with `render` through atomics or a lock-free
+  queue. `AUDIO_PRIORITY` is exposed to pick a priority below the
+  audio thread. `schedule` takes a `&Context`, which is a witness that
+  the caller is inside a Bela callback: stopping the audio system
+  deletes every task, and libbela joins the render thread before doing
+  so, so a schedule made from a callback can never be in flight while
+  the task behind it is freed. Handles also record which audio system
+  they belong to, so one that outlives its audio system stays retired
+  even if a later audio system creates tasks of its own — including
+  when that audio system was initialised but never started. Creating a
+  task while an audio system is being torn down fails with
+  `Error::TaskCreateWhileStopping`, which is also what a `cleanup`
+  callback gets, since it runs inside that teardown.
+  Measured on the board: a request that arrives while the callback is
+  still running is silently lost, and the C return value does not
+  report it, so `schedule()` returns nothing and the documentation
+  says to count invocations in the callback when it matters
+- `bela/examples/aux_task.rs`, reporting from a task scheduled once a
+  second by `render`, including work that allocates
+- `bela/examples/task_lifecycle.rs`, a hardware check for the task
+  lifecycle rules the host tests cannot reach — a handle from an audio
+  system that was dropped without ever starting never runs, the running
+  system's own task does, and creating a task from `cleanup` is
+  refused. `scripts/smoke-test.sh` asserts on all three
+
 - `scripts/smoke-test.sh`: builds the examples, runs each of them on a
   board and gives a single pass/fail answer. The checks are numeric
   rather than "it did not crash" — the reported block count has to

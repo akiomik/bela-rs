@@ -2,6 +2,8 @@ use core::ffi::c_int;
 
 use bela_sys::BelaInitSettings;
 
+use crate::error::Error;
+
 /// Overrides applied on top of Bela's default initialisation settings.
 ///
 /// Unset fields keep the values produced by `Bela_defaultSettings()` on
@@ -186,6 +188,31 @@ fn to_c_int(value: u32) -> c_int {
     c_int::try_from(value).unwrap_or(c_int::MAX)
 }
 
+/// Checks settings the safe API cannot serve, once they are resolved
+/// against Bela's defaults.
+///
+/// Measured on the board: with more than one render thread, Bela calls
+/// `render` on all of them at once, passing the same user data, so the
+/// trampoline would hand out several `&mut T` to one application. See
+/// `docs/multithreaded-rendering.md`.
+///
+/// # Errors
+/// Returns [`Error::ThreadCountUnsupported`] when more than one render
+/// thread is configured.
+#[cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only the device-gated audio system applies settings; still unit-tested on the host"
+    )
+)]
+pub const fn check_supported(raw: &BelaInitSettings) -> Result<(), Error> {
+    if raw.threadCount > 1 {
+        return Err(Error::ThreadCountUnsupported(raw.threadCount));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use core::mem;
@@ -249,5 +276,27 @@ mod tests {
         assert_eq!(raw.detectUnderruns, 0);
         assert_eq!(raw.highPerformanceMode, 1);
         assert_eq!(raw.uniformSampleRate, 0);
+    }
+
+    #[test]
+    fn a_single_render_thread_is_supported() {
+        let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
+        raw.threadCount = 1;
+
+        assert_eq!(check_supported(&raw), Ok(()));
+    }
+
+    #[test]
+    fn multithreaded_rendering_is_refused() {
+        // BelaApplication::render takes &mut self, and Bela calls it on
+        // every thread at once with the same user data.
+        let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
+        raw.threadCount = 4;
+
+        assert_eq!(
+            check_supported(&raw),
+            Err(Error::ThreadCountUnsupported(4)),
+            "more than one render thread cannot be served safely"
+        );
     }
 }

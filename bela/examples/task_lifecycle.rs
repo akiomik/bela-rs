@@ -1,0 +1,159 @@
+//! Hardware check for the auxiliary task lifecycle rules that cannot
+//! be tested on the host, because they need a real audio system.
+//!
+//! Run by `scripts/smoke-test.sh`, which asserts on the line this
+//! prints from `cleanup`. It covers three things:
+//!
+//! - a task created in the `setup` of an audio system that is then
+//!   dropped without ever being started is retired with it, so
+//!   scheduling its handle from a *later* audio system does nothing;
+//! - a task belonging to the running audio system still works;
+//! - creating a task from `cleanup` — which runs inside the teardown —
+//!   fails instead of handing back a task that is about to be deleted.
+//!
+//! Cross-compile and run on the board (see docs/cross-compile.md):
+//!
+//! ```sh
+//! cargo build -p bela --release --target aarch64-unknown-linux-gnu --example task_lifecycle
+//! ```
+
+#![cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only the fallback main is reachable off-device; the application code should still compile and lint"
+    )
+)]
+
+use core::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(bela_device))]
+use std::process::ExitCode;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use bela::{AuxiliaryTask, BelaApplication, Context, Error, rt_println};
+
+/// Creates the task whose handle is then used after its audio system
+/// is gone. Never started, only initialised and dropped.
+struct Abandoned {
+    runs: Arc<AtomicU64>,
+    handle: Arc<Mutex<Option<AuxiliaryTask>>>,
+}
+
+unsafe impl BelaApplication for Abandoned {
+    fn setup(&mut self, _context: &mut Context) -> bool {
+        let runs = Arc::clone(&self.runs);
+        match AuxiliaryTask::new("bela-rs-abandoned", 50, move || {
+            runs.fetch_add(1, Ordering::Relaxed);
+        }) {
+            Ok(task) => {
+                // Hand the handle out, as a Send handle could be handed
+                // to any other thread.
+                *self.handle.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
+                true
+            }
+            Err(error) => {
+                rt_println!("lifecycle: could not create the abandoned task: {error}");
+                false
+            }
+        }
+    }
+
+    fn render(&mut self, _context: &mut Context) {}
+}
+
+/// Runs for real, scheduling both the stale handle and one of its own.
+struct Survivor {
+    stale: Option<AuxiliaryTask>,
+    stale_runs: Arc<AtomicU64>,
+    fresh: Option<AuxiliaryTask>,
+    fresh_runs: Arc<AtomicU64>,
+    blocks: u64,
+    interval: u64,
+}
+
+// Safety: render counts, schedules and nothing else.
+unsafe impl BelaApplication for Survivor {
+    fn setup(&mut self, context: &mut Context) -> bool {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the sample rate is a small positive number"
+        )]
+        let sample_rate_hz = context.audio_sample_rate() as u64;
+        self.interval = (sample_rate_hz / context.audio_frames().max(1) as u64).max(1);
+
+        let runs = Arc::clone(&self.fresh_runs);
+        self.fresh = AuxiliaryTask::new("bela-rs-survivor", 50, move || {
+            runs.fetch_add(1, Ordering::Relaxed);
+        })
+        .ok();
+        self.fresh.is_some()
+    }
+
+    fn render(&mut self, context: &mut Context) {
+        self.blocks += 1;
+        if self.blocks % self.interval != 0 {
+            return;
+        }
+        if let Some(stale) = &self.stale {
+            stale.schedule(context);
+        }
+        if let Some(fresh) = &self.fresh {
+            fresh.schedule(context);
+        }
+    }
+
+    fn cleanup(&mut self, _context: &mut Context) {
+        // `cleanup` runs inside the teardown, so this must fail.
+        let created = AuxiliaryTask::new("bela-rs-in-cleanup", 50, || {});
+        let cleanup_create = match created {
+            Err(Error::TaskCreateWhileStopping) => "rejected",
+            Err(_) => "failed-otherwise",
+            Ok(_) => "created",
+        };
+        rt_println!(
+            "lifecycle: stale-runs={} fresh-runs={} cleanup-create={}",
+            self.stale_runs.load(Ordering::Relaxed),
+            self.fresh_runs.load(Ordering::Relaxed),
+            cleanup_create
+        );
+    }
+}
+
+#[cfg(bela_device)]
+fn main() -> Result<(), Error> {
+    use bela::{Bela, Settings};
+
+    let stale_runs = Arc::new(AtomicU64::new(0));
+    let handle = Arc::new(Mutex::new(None));
+
+    // Initialised, never started, then dropped — a teardown all the
+    // same, and the task created in its setup goes with it.
+    drop(Bela::new(
+        Abandoned {
+            runs: Arc::clone(&stale_runs),
+            handle: Arc::clone(&handle),
+        },
+        &Settings::new(),
+    )?);
+    rt_println!("lifecycle: abandoned audio system dropped without starting");
+
+    let stale = handle.lock().unwrap_or_else(PoisonError::into_inner).take();
+    Bela::run(
+        Survivor {
+            stale,
+            stale_runs,
+            fresh: None,
+            fresh_runs: Arc::new(AtomicU64::new(0)),
+            blocks: 0,
+            interval: 1,
+        },
+        &Settings::new(),
+    )
+}
+
+#[cfg(not(bela_device))]
+fn main() -> ExitCode {
+    eprintln!("This example must be cross-compiled for Bela Gem (aarch64-unknown-linux-gnu).");
+    ExitCode::FAILURE
+}

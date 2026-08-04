@@ -32,6 +32,13 @@ fn main() -> Result<(), bela::Error> {
 }
 ```
 
+Work that must not happen in `render` — file and network I/O,
+expensive calculations, anything that allocates or blocks — goes into
+an `AuxiliaryTask`, which `render` triggers with a real-time safe
+`schedule()` call. The callback owns its state and shares with `render`
+through atomics or a lock-free queue; see
+[`examples/aux_task.rs`](examples/aux_task.rs).
+
 Debugging output from the audio thread goes through `rt_println!`,
 which formats into a fixed-size stack buffer and hands it to Bela's
 real-time print function — `println!` allocates and blocks, and is
