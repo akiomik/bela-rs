@@ -21,7 +21,16 @@ PATHS="/root/Bela/include /root/Bela/lib /usr/evl /usr/local/lib \
 mkdir -p "$DEST"
 # -R keeps the absolute paths, -l/-K preserve the many symlinks Debian
 # uses without following them out of the tree.
-rsync -azR --delete --links --keep-dirlinks "$HOST:$PATHS" "$DEST/"
+#
+# No -z: the board reaches the host over USB 2.0 either way, so gzip on
+# its Cortex-A53 is the bottleneck rather than the link. Dropping it cut
+# a full sync from 163 s to about 40 s (see docs/board-network.md).
+#
+# --chmod=ug-s drops setuid/setgid bits, which a sysroot never needs.
+# Keeping them makes rsync fail on files like utempter, whose setgid
+# bit an unprivileged user on the host cannot reproduce; that failure
+# aborts this script before the symlinks below are created.
+rsync -aR --chmod=ug-s --delete --links --keep-dirlinks "$HOST:$PATHS" "$DEST/"
 
 # Debian merges /lib into /usr/lib, and the linker resolves the ELF
 # interpreter and the linker scripts through that path.
