@@ -72,6 +72,8 @@ audio callback boundary aborts the process either way.
 
 - [Cross-compilation setup](docs/cross-compile.md)
 - [Board facts](docs/board-facts.md) — measured values from the actual board
+- [Connecting the board over Ethernet](docs/board-network.md) — USB
+  Ethernet adapter setup, and why it is not a transfer speedup
 - [Release procedure](docs/release.md)
 - [Changelog](CHANGELOG.md) / [Contributing](CONTRIBUTING.md)
 
