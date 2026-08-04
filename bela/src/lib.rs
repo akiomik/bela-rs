@@ -32,10 +32,11 @@
 //! and blocks, and is forbidden in `render`.
 //!
 //! Whether `render` fits within its block deadline is answered by
-//! [`CpuMonitor`], which reports how much of each block the audio
-//! thread uses, and by [`CpuTimer`], which measures one section of
-//! `render` at a time. Without them the first sign of running out of
-//! headroom is a dropout, after the fact.
+//! [`Settings::cpu_monitoring`], which makes [`Context::cpu_usage`]
+//! report how much of each block the audio thread uses, and by
+//! [`CpuTimer`], which measures one section of `render` at a time.
+//! Without them the first sign of running out of headroom is a
+//! dropout, after the fact.
 //!
 //! [`Bela`] itself calls into `libbela` and therefore only exists when
 //! compiling for the device target (`aarch64-unknown-linux-gnu`); the
@@ -61,7 +62,7 @@ mod util;
 
 pub use application::BelaApplication;
 pub use context::{Context, PinMode};
-pub use cpu::{CpuMonitor, CpuSection, CpuTimer, CpuUsage};
+pub use cpu::{CpuSection, CpuTimer, CpuUsage};
 pub use error::Error;
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;

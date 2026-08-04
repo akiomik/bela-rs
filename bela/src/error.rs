@@ -27,9 +27,11 @@ pub enum Error {
     /// This is what a `cleanup` callback gets: it runs inside that
     /// teardown.
     TaskCreateWhileStopping,
-    /// `Bela_cpuMonitoringInit` failed, or the crate was built for a
-    /// target with no audio thread to monitor.
+    /// `Bela_cpuMonitoringInit` failed.
     CpuMonitoring,
+    /// The requested CPU monitoring acquisition cycle does not fit in a
+    /// C `int`, which is how libbela takes it.
+    CpuMonitoringCycle(u32),
 }
 
 impl fmt::Display for Error {
@@ -49,6 +51,11 @@ impl fmt::Display for Error {
                 "auxiliary tasks cannot be created while the audio system is stopping"
             ),
             Self::CpuMonitoring => write!(f, "Bela_cpuMonitoringInit failed"),
+            Self::CpuMonitoringCycle(count) => write!(
+                f,
+                "the CPU monitoring cycle is {count} measurements, \
+                 which does not fit in the C int libbela takes"
+            ),
         }
     }
 }

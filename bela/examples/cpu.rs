@@ -2,16 +2,16 @@
 //! how much of that goes into one measured section of `render`.
 //!
 //! `render` synthesises a bank of sine oscillators, which is there to
-//! use a visible and adjustable amount of CPU. A `CpuMonitor` covers
-//! the whole audio thread — Bela's own bracketing of the block — and a
-//! `CpuTimer` covers just the oscillator bank, so the two numbers can
-//! be compared: the difference is what the rest of the audio thread
-//! costs.
+//! use a visible and adjustable amount of CPU. `Settings::cpu_monitoring`
+//! turns on Bela's own bracketing of the whole audio thread, read back
+//! with `Context::cpu_usage`, and a `CpuTimer` covers just the
+//! oscillator bank, so the two numbers can be compared: the difference
+//! is what the rest of the audio thread costs.
 //!
-//! The reporting happens on an auxiliary task, since printing is not
-//! work for the audio thread. The section percentage is handed over
-//! through an atomic, the whole-thread one is read straight from
-//! libbela by the task.
+//! The printing happens on an auxiliary task, since it is not work for
+//! the audio thread. Both percentages are read in `render` — the audio
+//! thread's counters may only be read from a Bela callback — and handed
+//! to the task through atomics, which is the pattern to copy.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
@@ -34,9 +34,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use bela::{
-    AUDIO_PRIORITY, AuxiliaryTask, BelaApplication, Context, CpuMonitor, CpuTimer, rt_println,
-};
+use bela::{AUDIO_PRIORITY, AuxiliaryTask, BelaApplication, Context, CpuTimer, rt_println};
 
 /// Enough oscillators to be measurable, few enough to leave headroom.
 const OSCILLATORS: usize = 64;
@@ -51,14 +49,18 @@ const MEASUREMENTS_PER_CYCLE: u32 = 2000;
 /// The report runs below the audio thread, so it can never delay it.
 const TASK_PRIORITY: i32 = AUDIO_PRIORITY - 20;
 
+/// The two percentages `render` publishes for the task to print, each
+/// as `f32::to_bits`.
+#[derive(Debug, Default)]
+struct Published {
+    thread: AtomicU32,
+    section: AtomicU32,
+}
+
 struct Load {
-    /// Bela's own measurement of the whole audio thread.
-    monitor: Option<CpuMonitor>,
     /// This application's measurement of the oscillator bank alone.
     timer: CpuTimer,
-    /// The section percentage, as `f32::to_bits`, published by `render`
-    /// and read by the task.
-    section: Arc<AtomicU32>,
+    published: Arc<Published>,
     task: Option<AuxiliaryTask>,
     phases: [f32; OSCILLATORS],
     phase_increments: [f32; OSCILLATORS],
@@ -69,11 +71,8 @@ struct Load {
 impl Load {
     fn new() -> Self {
         Self {
-            monitor: None,
-            timer: CpuTimer::new(
-                NonZeroU32::new(MEASUREMENTS_PER_CYCLE).expect("the cycle length is a constant"),
-            ),
-            section: Arc::new(AtomicU32::new(0)),
+            timer: CpuTimer::new(cycle()),
+            published: Arc::new(Published::default()),
             task: None,
             phases: [0.0; OSCILLATORS],
             phase_increments: [0.0; OSCILLATORS],
@@ -84,10 +83,14 @@ impl Load {
     }
 }
 
+const fn cycle() -> NonZeroU32 {
+    NonZeroU32::new(MEASUREMENTS_PER_CYCLE).expect("the cycle length is a non-zero constant")
+}
+
 // Safety: render does arithmetic, writes to the context buffers, reads
-// a clock through the CPU timer and stores to an atomic — no
-// allocation, blocking, system calls or panicking code paths. The
-// printing happens on the task's thread.
+// a clock through the CPU timer and stores to atomics — no allocation,
+// blocking, system calls or panicking code paths. The printing happens
+// on the task's thread.
 unsafe impl BelaApplication for Load {
     fn setup(&mut self, context: &mut Context) -> bool {
         let sample_rate = context.audio_sample_rate();
@@ -108,32 +111,19 @@ unsafe impl BelaApplication for Load {
         let sample_rate_hz = sample_rate as u64;
         self.blocks_per_report = (sample_rate_hz / context.audio_frames().max(1) as u64).max(1);
 
-        // Before audio starts, which is what enabling requires: `setup`
-        // runs inside Bela_initAudio, and the audio thread only decides
-        // whether monitoring is on when Bela_startAudio spawns it.
-        let cycle =
-            NonZeroU32::new(MEASUREMENTS_PER_CYCLE).expect("the cycle length is a constant");
-        match CpuMonitor::enable(cycle) {
-            Ok(monitor) => self.monitor = Some(monitor),
-            Err(error) => {
-                rt_println!("setup: could not enable CPU monitoring: {error}");
-                return false;
-            }
+        if context.cpu_usage().is_none() {
+            rt_println!("setup: CPU monitoring is off; run with Settings::cpu_monitoring");
+            return false;
         }
 
-        // The task owns what it prints: the monitor is a copyable
-        // token, and the section percentage arrives through the atomic.
-        let monitor = self.monitor;
-        let section = Arc::clone(&self.section);
+        // The callback owns everything it touches: the percentages
+        // arrive through the atomics, because the audio thread's
+        // counters cannot be read from this thread.
+        let published = Arc::clone(&self.published);
         let task = AuxiliaryTask::new("bela-rs-cpu", TASK_PRIORITY, move || {
-            let section = f32::from_bits(section.load(Ordering::Relaxed));
-            if let Some(monitor) = monitor {
-                rt_println!(
-                    "cpu: audio thread {}; oscillators {:.1}%",
-                    monitor.usage(),
-                    section
-                );
-            }
+            let thread = f32::from_bits(published.thread.load(Ordering::Relaxed));
+            let section = f32::from_bits(published.section.load(Ordering::Relaxed));
+            rt_println!("cpu: audio thread {thread:.1}%; oscillators {section:.1}%");
         });
 
         match task {
@@ -184,20 +174,29 @@ unsafe impl BelaApplication for Load {
         if self.blocks % self.blocks_per_report != 0 {
             return;
         }
-        self.section
+        // Read here, on the audio thread, and handed to the task as
+        // plain numbers.
+        let thread = context.cpu_usage().map_or(0.0, |usage| usage.percentage());
+        self.published
+            .thread
+            .store(thread.to_bits(), Ordering::Relaxed);
+        self.published
+            .section
             .store(self.timer.usage().percentage().to_bits(), Ordering::Relaxed);
         if let Some(task) = &self.task {
             task.schedule(context);
         }
     }
 
-    fn cleanup(&mut self, _context: &mut Context) {
-        let section = self.timer.usage();
-        if let Some(monitor) = self.monitor {
-            rt_println!("cleanup: audio thread {}", monitor.usage());
+    fn cleanup(&mut self, context: &mut Context) {
+        // Sound from `cleanup` too: libbela has joined the audio thread
+        // by the time this runs, so nothing is writing the counters.
+        if let Some(usage) = context.cpu_usage() {
+            rt_println!("cleanup: audio thread {usage}");
         }
         rt_println!(
-            "cleanup: oscillators {section}; {} blocks rendered",
+            "cleanup: oscillators {}; {} blocks rendered",
+            self.timer.usage(),
             self.blocks
         );
     }
@@ -205,7 +204,7 @@ unsafe impl BelaApplication for Load {
 
 #[cfg(bela_device)]
 fn main() -> Result<(), bela::Error> {
-    bela::Bela::run(Load::new(), &bela::Settings::new())
+    bela::Bela::run(Load::new(), &bela::Settings::new().cpu_monitoring(cycle()))
 }
 
 #[cfg(not(bela_device))]

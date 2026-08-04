@@ -4,6 +4,7 @@ use core::time::Duration;
 use std::thread;
 
 use crate::application::{BelaApplication, trampoline};
+use crate::cpu;
 use crate::error::Error;
 use crate::settings::{self, Settings};
 use crate::task;
@@ -34,10 +35,26 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::Init`] when `Bela_initAudio` fails, e.g. when
-    /// the audio hardware is unavailable or already in use, and
+    /// the audio hardware is unavailable or already in use,
     /// [`Error::ThreadCountUnsupported`] when more than one render
-    /// thread is requested.
+    /// thread is requested, and [`Error::CpuMonitoringCycle`] or
+    /// [`Error::CpuMonitoring`] when
+    /// [`Settings::cpu_monitoring`] asks for something libbela cannot
+    /// serve.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
+        // Checked before anything is allocated or initialised, so a
+        // cycle libbela cannot take costs nothing to reject.
+        let monitoring = settings
+            .cpu_monitoring_cycle()
+            .map(cpu::check_cycle)
+            .transpose()?;
+        // Before Bela_initAudio, because the `setup` callback runs
+        // inside that call and should already see the answer that
+        // `Context::cpu_usage` will give for the rest of the run. The
+        // priming tic this takes is what the audio thread's first
+        // reading is measured from, so everything from here to
+        // `start` is startup time that reading includes.
+        cpu::apply_monitoring(monitoring)?;
         let app = Box::into_raw(Box::new(application));
         let ret = unsafe {
             let raw = bela_sys::Bela_InitSettings_alloc();

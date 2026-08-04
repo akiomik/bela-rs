@@ -14,27 +14,42 @@ and this project adheres to
   / `Bela_cpuMonitoringGet` / `Bela_cpuTic` / `Bela_cpuToc`. It answers
   whether `render` fits within its block deadline, which until now only
   showed up as dropouts and `Context::underrun_count` after the fact.
-  `CpuMonitor::enable` turns on the monitoring libbela does for the
-  whole audio thread; `CpuTimer` measures a section of `render` with
-  counters the application owns, bracketed either by `tic`/`toc` or by
-  the `measure()` guard, both real-time safe. Both are read as a
-  `CpuUsage`, which implements `Display` for printing from an
-  auxiliary task or from `cleanup`.
+  `Settings::cpu_monitoring` turns on the monitoring libbela does for
+  the whole audio thread and `Context::cpu_usage` reads it;
+  `CpuTimer` measures a section of `render` with counters the
+  application owns, bracketed either by `tic`/`toc` or by the
+  `measure()` guard, both real-time safe. Both are read as a
+  `CpuUsage`, which implements `Display`.
+  Those two shapes are a soundness requirement rather than a
+  preference. The audio thread's counters are one unsynchronised
+  structure inside libbela: reading them from another thread while it
+  runs is a data race, which is undefined behaviour no matter how
+  sensible the values look, and turning monitoring on resets that same
+  structure. So enabling is a setting, applied by `Bela::new` before
+  `Bela_initAudio` — early enough that `setup` already sees it, and
+  long before an audio thread exists — and reading needs the
+  `&Context` only a Bela callback has: `setup` runs before the audio
+  thread starts, `render` runs on it, and `cleanup` runs after libbela
+  has joined it. To report from an auxiliary task, publish the reading
+  from `render` through an atomic.
   The cycle length is a `NonZeroU32`, which is also how the API avoids
   the count that the C documentation says disables monitoring:
-  `Bela_cpuMonitoringInit(0)` returns without doing anything, so there
-  is no disabling to expose. Enabling has to happen before the audio
-  thread starts, since that is when libbela decides whether to measure
-  at all.
+  `Bela_cpuMonitoringInit(0)` returns without doing anything, so
+  turning it off clears the count directly, and leaving
+  `Settings::cpu_monitoring` unset means off rather than "whatever the
+  last audio system left behind". A cycle too large for the C `int`
+  libbela takes is refused with `Error::CpuMonitoringCycle` instead of
+  being saturated into a different cycle than the one asked for.
   Bela measures each period from the previous tic, and a first tic has
   only a zeroed timestamp to measure from — the whole monotonic clock.
   `CpuTimer` throws its first measurement away, so every reading it
-  gives counts; `CpuMonitor` cannot, because libbela takes that tic, so
-  its first cycle also counts the audio system starting up. Measured on
-  the board: a first reading of 11.1% against a steady 19.0%
-- `bela/examples/cpu.rs`, running a bank of 64 sine oscillators with a
-  `CpuMonitor` over the whole audio thread and a `CpuTimer` over the
-  oscillators alone, reported once a second from an auxiliary task.
+  gives counts; the audio thread's cannot, because libbela takes that
+  tic, so its first cycle also counts the audio system starting up.
+  Measured on the board: a first reading of 9.8% against a steady 19.0%
+- `bela/examples/cpu.rs`, running a bank of 64 sine oscillators with
+  monitoring over the whole audio thread and a `CpuTimer` over the
+  oscillators alone, both read in `render` and reported once a second
+  from an auxiliary task through atomics — the pattern to copy.
   `scripts/smoke-test.sh` runs it and checks that both readings are
   percentages of a block and that the measured section stays within the
   thread that runs it
