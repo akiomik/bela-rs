@@ -22,14 +22,16 @@ and this project adheres to
 
 ### Fixed
 
-- The Bela Gem documentation on `BlockContext`, `RenderContext` and
-  `Settings` said the analog outputs are part of the audio outputs,
-  reachable as `audio_write` with the channel offset by +2. Measured on
-  a Gem Stereo, that board has no analog outputs at all:
-  `analog_out_channels()` is 0 however many the settings ask for, and
+- The Bela Gem documentation on the context types and `Settings` said
+  the analog outputs are part of the audio outputs, reachable as
+  `audio_write` with the channel offset by +2. Measured on a Gem
+  Stereo, that board has no analog outputs at all:
+  `analog_out_channels()` is 0 for every channel count it accepts, and
   `audio_out_channels()` stays 2 rather than 2 plus them. The +2 offset
   belongs to a Gem Multi, which has the outputs, and is now documented
-  as the unmeasured claim it is.
+  as the unmeasured claim it is. `RenderContext` says the same as
+  `BlockContext`, since what a board reports does not depend on which
+  callback is asking.
 - `Settings::num_analog_out_channels` did not say that libbela refuses
   a number different from `num_analog_in_channels`, which fails
   `Bela_initAudio` — and a failed initialisation costs the process its

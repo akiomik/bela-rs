@@ -36,8 +36,12 @@ REMOTE_DIR="/tmp/bela-rs-probe-io"
 # What the board says it is comes first: every run after it is an audio
 # system configured against that hardware, and a log that opens with
 # the wrong board makes the rest of it worthless.
-ALL_RUNS="hardware defaults uniform-off no-analog no-digital analog-out
-          channels-4 uniform-off-4 uniform-off-2 period-16 period-256"
+# Kept on one line per assignment: the membership tests below match on
+# " $run " against " $ALL_RUNS ", which a folded line would break for
+# whichever run ends up next to the newline.
+ALL_RUNS="hardware defaults uniform-off no-analog no-digital analog-out"
+ALL_RUNS="$ALL_RUNS channels-4 channels-2 uniform-off-4 uniform-off-2"
+ALL_RUNS="$ALL_RUNS period-16 period-256"
 
 # The arguments each run passes to the probe. Kept next to the names so
 # that the summary and the command are never out of step.
@@ -61,11 +65,14 @@ run_arguments() {
   # count has to be set on both directions at once, because asking for
   # a different number of each is refused.
   channels-4) echo "context --analog-in 4 --analog-out 4" ;;
+  channels-2) echo "context --analog-in 2 --analog-out 2" ;;
   uniform-off-4) echo "context --uniform off --analog-in 4 --analog-out 4" ;;
   uniform-off-2) echo "context --uniform off --analog-in 2 --analog-out 2" ;;
   # Either side of the 128-frame boundary where libbela splits `render`
   # onto a second thread (docs/board-facts.md). The analog frame count
-  # is worth having from both.
+  # is worth having from both. 16 is also the default period, so this
+  # run doubles as a check that asking for what the board would have
+  # chosen anyway changes nothing.
   period-16) echo "context --period 16" ;;
   period-256) echo "context --period 256" ;;
   *) return 1 ;;
@@ -211,7 +218,8 @@ for run in $RUNS; do
   echo
   echo "Run: $run ($(run_arguments "$run"))"
   log="$LOG_DIR/$run.log"
-  # shellcheck disable=SC2046 # the arguments are meant to split into words
+  # The arguments go over as one string and are split by the shell on
+  # the board, which is where they have to be words.
   remote "sh $REMOTE_DIR/run-remote.sh $RUN_TIMEOUT $(run_arguments "$run")" > "$log" ||
     echo "probe-exit=ssh-failed" >> "$log"
   sed 's/^/    /' "$log"
@@ -232,9 +240,15 @@ for run in $RUNS; do
       detail="$detail audio[$(field "$log" setup-audio)]"
       # The block is only worth a line of its own when it disagrees
       # with `setup`; that disagreement is the reason both are asked.
+      # A block line that never arrived is a third thing — a run that
+      # did not get that far, or output that was lost — and reporting
+      # it as a disagreement would invent a finding.
       for domain in audio analog digital; do
-        if [ "$(field "$log" "setup-$domain")" != "$(field "$log" "block-$domain")" ]; then
-          detail="$detail BLOCK-${domain}[$(field "$log" "block-$domain")]"
+        block="$(field "$log" "block-$domain")"
+        if [ -z "$block" ]; then
+          detail="$detail BLOCK-${domain}[missing]"
+        elif [ "$(field "$log" "setup-$domain")" != "$block" ]; then
+          detail="$detail BLOCK-${domain}[$block]"
         fi
       done
     fi

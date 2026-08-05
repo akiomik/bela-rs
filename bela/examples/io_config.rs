@@ -130,6 +130,12 @@ impl BelaApplication for Report {
             context.digital_channels(),
             context.digital_sample_rate()
         );
+        rt_println!(
+            "io-config: block-threads=this:{},count:{},counted:{}",
+            context.as_sys().thisThread,
+            context.as_sys().threadCount,
+            context.thread_count()
+        );
     }
 
     // Silence: this probe is about how the audio system was configured,
@@ -183,9 +189,19 @@ fn report_context(phase: &str, context: &SetupContext) {
             context.digital_sample_rate()
         ),
     );
+    // Raw as well as counted. `thread_count()` reads a `threadCount`
+    // of 0 as 1, which is a `BelaContext`'s other way of spelling one
+    // render thread — so the crate's number cannot say which of the
+    // two libbela wrote, and a record of board behaviour wants the
+    // field as it stands.
     report(
         &format!("{phase}-threads"),
-        &context.thread_count().to_string(),
+        &format!(
+            "this:{},count:{},counted:{}",
+            context.as_sys().thisThread,
+            context.as_sys().threadCount,
+            context.thread_count()
+        ),
     );
 }
 
@@ -302,6 +318,10 @@ mod probes {
         // which is what `Settings`'s "unset fields keep the values
         // produced by `Bela_defaultSettings()`" means in practice.
         let raw = unsafe { Bela_InitSettings_alloc() };
+        if raw.is_null() {
+            report("defaults", "alloc-failed");
+            return;
+        }
         unsafe { Bela_defaultSettings(raw) };
         let defaults = unsafe { &*raw };
         report(

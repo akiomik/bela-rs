@@ -278,6 +278,7 @@ measurement and is not recorded here yet.
   | 8 | off | 8 | 22050 |
   | 4 | on | 16 | 44100 |
   | 4 | off | 16 | 44100 |
+  | 2 | on | 16 | 44100 |
   | 2 | off | 32 | 88200 |
 
   Audio stayed at 16 frames and 44100 Hz in every row, and the digital
@@ -294,8 +295,17 @@ measurement and is not recorded here yet.
 - **The period size does not change any of this.** At 16 and at 256
   frames — either side of the 128-frame boundary where libbela moves
   `render` behind a context FIFO — the analog and digital frame counts
-  equal the audio one, and `thisThread`/`threadCount` report a single
-  render thread.
+  equal the audio one.
+- **A one-thread run leaves `threadCount` at 0, not 1.** With no
+  `threadCount` asked for, `Bela_defaultSettings` reports 1 but the
+  `BelaContext` that comes back carries `threadCount = 0` and
+  `thisThread = 0`, in `setup` and in the block alike, at every period
+  size and channel count tried. So a context spells "one render
+  thread" as a zero, which is why `BlockContext::thread_count` reads 0
+  as 1 and why the crate's number cannot be used to tell the two
+  apart. `thisThread` was only read from `setup` and `render_pre`,
+  both of which run on the main audio thread; what a secondary render
+  thread reports is measured by `examples/parallel` instead.
 
 ## Operations
 
