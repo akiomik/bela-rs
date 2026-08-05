@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `Bela::new`, `Bela::run`, `BelaApplication::setup` and `Error::Init`
+  now say what a failed `Bela_initAudio` leaves behind. It fails
+  partway through, nothing undoes what it had already taken, and the
+  audio hardware stays held — so a second `Bela::new` in the same
+  process, which is still allowed to run, has been seen on a board to
+  report `Mcasp::start() called while already running` and then
+  segfault. The reachable way to get there is a `setup` callback
+  returning `false`, which fails the initialisation after the hardware
+  is up. Treating `Error::Init` as fatal to the process was already the
+  only safe reading; now it is written down.
+
 ## [0.2.0] - 2026-08-05
 
 ### Added

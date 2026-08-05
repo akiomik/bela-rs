@@ -33,6 +33,13 @@ use crate::context::Context;
 pub unsafe trait BelaApplication: Send {
     /// Called once before audio rendering starts. Return `false` to
     /// abort startup.
+    ///
+    /// Aborting fails [`Bela::new`](crate::Bela::new) with
+    /// [`Error::Init`](crate::Error::Init), and does so after libbela
+    /// has brought the audio hardware up — which, as that method
+    /// documents, leaves the process unable to build another audio
+    /// system. So abort to end the program, not to try again with
+    /// different settings.
     fn setup(&mut self, _context: &mut Context) -> bool {
         true
     }

@@ -53,6 +53,29 @@ impl<T: BelaApplication> Bela<T> {
     /// [`Error::CpuMonitoringPeriodSize`] or [`Error::CpuMonitoring`]
     /// when [`Settings::cpu_monitoring`] asks for something that cannot
     /// be served.
+    ///
+    /// # A failed initialisation is fatal to the process
+    ///
+    /// [`Error::Init`] means `Bela_initAudio` failed partway through,
+    /// and libbela keeps no record of how far it got. Whatever the
+    /// attempt had already taken is still held — up to and including
+    /// the audio hardware, and the CPU monitoring counters this crate
+    /// turns on just before the call when [`Settings::cpu_monitoring`]
+    /// asked for them — and this crate does not call
+    /// `Bela_cleanupAudio` to hand any of it back: nothing says that
+    /// call is meaningful against an initialisation that never
+    /// finished.
+    ///
+    /// The process-wide claim is released on the way out, so a second
+    /// `Bela::new` is allowed to run. It should not be relied on. On a
+    /// Bela Gem the next attempt reports `Mcasp::start() called while
+    /// already running`, fails to allocate its pipes and then
+    /// segfaults; see "Audio thread" in `docs/board-facts.md`. Treat
+    /// this error as a reason to leave the process, not to retry in it.
+    ///
+    /// The ordinary way to arrive here is a
+    /// [`setup`](BelaApplication::setup) callback returning `false`,
+    /// which fails the initialisation after the hardware is up.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         Self::init(application, settings, None)
     }
@@ -239,7 +262,9 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::Init`] or [`Error::Start`] when the audio
-    /// system fails to initialise or start.
+    /// system fails to initialise or start. What an [`Error::Init`]
+    /// leaves behind is described on [`new`](Bela::new); it is fatal to
+    /// the process here too.
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
         Self::new(application, settings)?.until_stopped()
     }
