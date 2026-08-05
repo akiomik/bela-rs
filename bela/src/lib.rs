@@ -38,6 +38,13 @@
 //! Without them the first sign of running out of headroom is a
 //! dropout, after the fact.
 //!
+//! The codec's own volume controls — the line out level, the headphone
+//! level and the gain of the preamplifier ahead of the ADC — are set
+//! through the [`Bela`] handle, with
+//! [`set_line_out_level`](Bela::set_line_out_level) and its siblings.
+//! They can be set before audio starts as well as while it runs, which
+//! is what [`Bela::until_stopped`] leaves room for.
+//!
 //! A built binary stays reconfigurable through Bela's standard
 //! command-line options — `--period`, `--verbose`, `--use-analog` and
 //! the rest, the same ones every other way of writing a Bela program
@@ -61,6 +68,7 @@ mod cmdline;
 mod context;
 mod cpu;
 mod error;
+mod level;
 mod print;
 mod settings;
 mod singleton;
@@ -75,6 +83,7 @@ pub use cmdline::print_usage;
 pub use context::{Context, PinMode};
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
+pub use level::{Channel, MAX_DECIBELS};
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
 #[cfg(bela_device)]

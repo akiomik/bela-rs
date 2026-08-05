@@ -60,6 +60,24 @@ pub enum Error {
     /// A command-line argument contained a NUL byte, which a C string
     /// cannot carry.
     CommandLineNul,
+    /// `Bela_setLineOutLevel` failed with the contained return code,
+    /// e.g. for a channel the codec does not have.
+    LineOutLevel(i32),
+    /// `Bela_setHpLevel` failed with the contained return code, e.g.
+    /// for a channel the codec does not have.
+    HeadphoneLevel(i32),
+    /// `Bela_setAudioInputGain` failed with the contained return code.
+    AudioInputGain(i32),
+    /// `Bela_muteSpeakers` failed with the contained return code.
+    MuteSpeakers(i32),
+    /// A level or gain was not a number of decibels libbela can convert
+    /// into register values: not finite, or larger in magnitude than
+    /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
+    ///
+    /// The conversion on the C side is a cast to `int`, which is
+    /// undefined behaviour for those values, so they are refused before
+    /// the call rather than passed on.
+    Decibels,
 }
 
 impl fmt::Display for Error {
@@ -105,6 +123,20 @@ impl fmt::Display for Error {
             Self::CommandLineNul => {
                 write!(f, "a command-line argument contains a NUL byte")
             }
+            Self::LineOutLevel(code) => {
+                write!(f, "Bela_setLineOutLevel failed with code {code}")
+            }
+            Self::HeadphoneLevel(code) => write!(f, "Bela_setHpLevel failed with code {code}"),
+            Self::AudioInputGain(code) => {
+                write!(f, "Bela_setAudioInputGain failed with code {code}")
+            }
+            Self::MuteSpeakers(code) => write!(f, "Bela_muteSpeakers failed with code {code}"),
+            Self::Decibels => write!(
+                f,
+                "a level must be a finite number of decibels of at most {max} in magnitude, \
+                 which is what libbela can convert into register values",
+                max = crate::MAX_DECIBELS
+            ),
         }
     }
 }

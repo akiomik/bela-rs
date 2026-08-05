@@ -31,6 +31,7 @@ pub struct Settings {
     stop_button_pin: Option<i32>,
     thread_count: Option<u32>,
     cpu_monitoring: Option<NonZeroU32>,
+    begin_muted: Option<bool>,
 }
 
 impl Settings {
@@ -165,6 +166,28 @@ impl Settings {
         self
     }
 
+    /// Whether the speaker amplifiers come up muted.
+    ///
+    /// The one level control that has to be a setting: [`Bela::start`]
+    /// unmutes the amplifiers unless this asked otherwise, so a
+    /// [`Bela::mute_speakers`] call before it is undone again. Everything
+    /// else the codec can be told — the line out level, the headphone
+    /// level and the input gain — is a call on the [`Bela`] handle,
+    /// which reaches the hardware in the same state when made before
+    /// [`Bela::start`].
+    ///
+    /// A Bela Gem Stereo has no amplifier mute pin, so this has no
+    /// effect there; see [`Bela::mute_speakers`].
+    ///
+    /// [`Bela`]: crate::Bela
+    /// [`Bela::start`]: crate::Bela::start
+    /// [`Bela::mute_speakers`]: crate::Bela::mute_speakers
+    #[must_use]
+    pub const fn begin_muted(mut self, muted: bool) -> Self {
+        self.begin_muted = Some(muted);
+        self
+    }
+
     /// The requested acquisition cycle for the audio thread, if any.
     #[cfg_attr(
         not(bela_device),
@@ -219,6 +242,9 @@ impl Settings {
         }
         if let Some(v) = self.thread_count {
             raw.threadCount = v;
+        }
+        if let Some(v) = self.begin_muted {
+            raw.beginMuted = c_int::from(v);
         }
     }
 }
@@ -311,12 +337,26 @@ mod tests {
             .detect_underruns(false)
             .high_performance_mode(true)
             .uniform_sample_rate(false)
+            .begin_muted(true)
             .apply_to(&mut raw);
 
         assert_eq!(raw.useDigital, 1);
         assert_eq!(raw.detectUnderruns, 0);
         assert_eq!(raw.highPerformanceMode, 1);
         assert_eq!(raw.uniformSampleRate, 0);
+        assert_eq!(raw.beginMuted, 1);
+    }
+
+    #[test]
+    fn coming_up_unmuted_is_still_said_out_loud() {
+        // Bela's default, but an application that says so should not
+        // depend on a board's configured `CL=` line agreeing.
+        let mut raw = fake_defaults();
+        raw.beginMuted = 1;
+
+        Settings::new().begin_muted(false).apply_to(&mut raw);
+
+        assert_eq!(raw.beginMuted, 0);
     }
 
     #[test]

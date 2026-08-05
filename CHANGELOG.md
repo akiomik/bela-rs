@@ -10,6 +10,52 @@ and this project adheres to
 
 ### Added
 
+- The codec's levels and gain in the `bela` crate, wrapping
+  `Bela_setLineOutLevel`, `Bela_setHpLevel`, `Bela_setAudioInputGain`
+  and `Bela_muteSpeakers`. `Bela::set_line_out_level`,
+  `Bela::set_headphone_level`, `Bela::set_audio_input_gain` and
+  `Bela::mute_speakers` take a `Channel` — one channel or all of them —
+  and report what the codec made of the call. They are the analogue
+  volume controls, so they change what the hardware does with the
+  signal without `render` knowing anything about it: attenuating the
+  line out, or turning the preamplifier ahead of the ADC up for a quiet
+  source rather than scaling in software, which would only amplify the
+  noise the ADC already digitised. The deprecated halves of the C API
+  (`Bela_setDacLevel`, `Bela_setAdcLevel`, `Bela_setPgaGain`,
+  `Bela_setHeadphoneLevel` and their all-channel spellings) are not
+  wrapped; each is a call to one of the four above.
+  They live on the `Bela` handle rather than in `Settings`, which the
+  `BelaChannelGainArray` fields of `BelaInitSettings` might suggest.
+  Measured on the board: libbela applies those arrays by calling
+  exactly these functions from inside `Bela_initAudio`, and the codec
+  only writes its registers once audio starts — so a call between
+  `Bela::new` and `Bela::start` reaches the hardware in the same state
+  and at the same moment, while a settings-time copy would only add
+  storage and a second way to say it. Being on the handle also keeps
+  them away from `render`, where an I²C write has no place.
+  A level has to be a finite number of decibels of at most
+  `MAX_DECIBELS` in magnitude, or the call fails with
+  `Error::Decibels` before reaching libbela: libbela converts decibels
+  into register values with a C cast to `int`, which is undefined
+  behaviour for a NaN or a value that does not fit, and every clamp on
+  the C side is a comparison a NaN slips through. That limit is far
+  outside any codec's range — what the codec cannot do it clamps, as
+  before. See `examples/levels.rs`
+
+- `Bela::until_stopped`, which was the second half of `Bela::run` and
+  is now public: it starts the audio system, blocks until a stop is
+  requested and shuts down, so a program that has something to say
+  between `Bela::new` and the run loop — setting a level, above all —
+  no longer has to reimplement the loop and its signal handling to get
+  that window
+
+- `Settings::begin_muted`, wrapping the `beginMuted` init setting: the
+  one level control that cannot be a call, since `Bela_startAudio`
+  unmutes the speaker amplifiers unless it was asked not to. A Bela Gem
+  Stereo has no amplifier mute pin (measured: `ampMutePin` is -1), so
+  neither this nor `Bela::mute_speakers` has any effect there; both are
+  wrapped for the Bela hardware that does have one, and say so
+
 - Bela's standard command-line options, wrapping `Bela_getopt_long` and
   `Bela_usage`. `Bela::run_with_args` and `Bela::new_with_args` take the
   argument list a program was started with and apply `--period`,
