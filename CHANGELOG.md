@@ -258,6 +258,20 @@ and this project adheres to
 
 ### Changed
 
+- `cargo xtask` declares its command line with clap instead of parsing
+  it by hand. The grammar had been written twice — once as a parser,
+  once as the usage text claiming to describe it — with nothing tying
+  the two together and tests on only one of them; now the help is
+  generated from the declaration the parsing comes from. Every line
+  accepted before is still accepted, and `--sysroot` still overrides
+  `BELA_SYSROOT` with the last one winning. What is new: `--help` and
+  `-h` at both levels, `--board=<host>` and `--sysroot=<dir>` (the
+  attached form the old parser rejected), a bare `cargo xtask` showing
+  the help rather than an error, and rejections that name the argument
+  at fault instead of reprinting the whole usage. The MSRV job excludes
+  `xtask`, because clap tracks an MSRV of its own that has nothing to
+  do with what this project promises its users
+
 - `xtask` is a workspace member instead of a standalone package, so the
   fmt, clippy and MSRV runs cover it and it shares the workspace lints
   and lockfile. It had been excluded to keep bindgen out of ordinary
