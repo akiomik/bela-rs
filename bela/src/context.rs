@@ -52,6 +52,16 @@ impl Context {
     /// for the duration of `'a`. The buffer pointers inside must be
     /// either null or valid for the lengths implied by the frame and
     /// channel counts.
+    ///
+    /// The result stands in for the context of a Bela callback, and
+    /// some accessors take it as proof of being in one. For as long as
+    /// it exists, the caller must be somewhere a callback could be:
+    /// specifically, [`cpu_usage`](Context::cpu_usage) reads counters
+    /// that libbela's audio thread writes without synchronisation, so
+    /// calling it requires either that no audio thread is running or
+    /// that this is that thread — which is what `setup`, `render` and
+    /// `cleanup` guarantee, and what a context conjured up elsewhere
+    /// does not.
     pub unsafe fn from_mut_ptr<'a>(ptr: *mut BelaContext) -> &'a mut Self {
         // repr(transparent) makes the cast sound.
         unsafe { &mut *ptr.cast::<Self>() }

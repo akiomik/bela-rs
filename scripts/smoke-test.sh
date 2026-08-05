@@ -23,10 +23,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
-# `print` carries the numeric checks and `task_lifecycle` the auxiliary
-# task ones; the others only have to start, keep running and stop
-# cleanly.
-EXAMPLES="print sine passthrough aux_task task_lifecycle"
+# `print` carries the numeric checks, `task_lifecycle` the auxiliary
+# task ones and `cpu` the CPU monitoring ones; the others only have to
+# start, keep running and stop cleanly. `monitoring_rules` is not here:
+# it answers one question per run and exits, so it is driven separately
+# below rather than run for the duration.
+EXAMPLES="print sine passthrough aux_task task_lifecycle cpu"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5
@@ -260,6 +262,106 @@ else
     pass "task_lifecycle: creating a task from cleanup was refused"
   else
     fail "task_lifecycle: creating a task from cleanup was $cleanup_create"
+  fi
+fi
+
+# CPU monitoring. The numbers themselves depend on the board and on
+# what else it is doing, so the checks are on the relationships that
+# have to hold whatever they are: both readings are real percentages,
+# and the measured section is part of the audio thread it runs on.
+log="$LOG_DIR/cpu.log"
+# cleanup: audio thread 8.4% busy, averaged over 2000 measurements
+thread="$(awk '/^cleanup: audio thread/ { print $4 + 0; exit }' "$log" 2>/dev/null || true)"
+# cleanup: oscillators 5.1% busy, averaged over 2000 measurements; 12075 blocks rendered
+section="$(awk '/^cleanup: oscillators/ { print $3 + 0; exit }' "$log" 2>/dev/null || true)"
+reports="$(grep -c '^cpu: ' "$log" 2>/dev/null || true)"
+
+if [ -z "$thread" ] || [ -z "$section" ]; then
+  fail "cpu: no cleanup summary"
+else
+  if awk -v t="$thread" 'BEGIN { exit !(t > 0 && t <= 100) }'; then
+    pass "cpu: the audio thread reported ${thread}% busy"
+  else
+    fail "cpu: the audio thread reported ${thread}%, which is not a percentage of a block"
+  fi
+
+  # A percentage of the same block period, so it cannot exceed the
+  # thread's — allowing for the two cycles not being aligned and for
+  # the one decimal place the report prints.
+  if awk -v s="$section" -v t="$thread" 'BEGIN { exit !(s > 0 && s <= t + 1) }'; then
+    pass "cpu: the measured section reported ${section}%, within the thread's ${thread}%"
+  else
+    fail "cpu: the measured section reported ${section}%, against the thread's ${thread}%"
+  fi
+fi
+
+if [ "${reports:-0}" -gt 0 ]; then
+  pass "cpu: the reporting task ran $reports time(s)"
+else
+  fail "cpu: the reporting task never ran"
+fi
+
+# Above a period size libbela can render natively, it moves `render` to
+# its own FIFO thread while the counters stay with the core audio
+# thread, so monitoring has to be refused rather than read across the
+# two. Only the board can confirm it: the split is internal to libbela.
+guard="$(sed -n 's/^fifo-guard: //p' "$log" 2>/dev/null | head -1)"
+case "$guard" in
+"refused at "*) pass "cpu: monitoring $guard, where render moves off the measured thread" ;;
+"") fail "cpu: no fifo-guard line" ;;
+*) fail "cpu: monitoring was $guard at a period size that moves render off the measured thread" ;;
+esac
+
+# The CPU monitoring rules that only libbela can answer. One audio
+# system per run and no `Bela::run`, so these are driven directly rather
+# than through the loop above: the board does not survive several audio
+# systems in one process. See the example's header.
+if [ ! -x "$BIN_DIR/monitoring_rules" ]; then
+  fail "monitoring_rules: not built at $BIN_DIR/monitoring_rules"
+else
+  scp -q -o ConnectTimeout=10 "$BIN_DIR/monitoring_rules" "$HOST:$REMOTE_DIR/monitoring_rules"
+  remote "chmod +x $REMOTE_DIR/monitoring_rules"
+
+  # Runs one check and returns what it printed.
+  rules() {
+    remote "cd $REMOTE_DIR && ./monitoring_rules $1 2>&1" || echo "rules: run-failed"
+  }
+
+  # That the refusal checked above uses the *right* limit. libbela
+  # prints the gFifoFactor it picked under `verbose`: 1 while `render`
+  # still runs on the thread the counters belong to, more once it does
+  # not. Each probe is its own process, so its output is its own.
+  limit="$(awk '/^pub const MAX_MONITORED_PERIOD_SIZE/ { print $NF + 0 }' \
+    "$ROOT/bela/src/cpu.rs" | head -1)"
+  at_limit="$(rules "fifo-probe $limit" | sed -n 's/^gFifoFactor: //p' | head -1)"
+  above_limit="$(rules "fifo-probe $((limit * 2))" | sed -n 's/^gFifoFactor: //p' | head -1)"
+
+  if [ -z "$at_limit" ] || [ -z "$above_limit" ]; then
+    fail "monitoring_rules: libbela reported no gFifoFactor (got '$at_limit' / '$above_limit')"
+  elif [ "$at_limit" != 1 ]; then
+    fail "monitoring_rules: gFifoFactor is $at_limit at the limit of $limit frames, so render already \
+runs off the measured thread there"
+  elif [ "$above_limit" = 1 ]; then
+    fail "monitoring_rules: gFifoFactor is still 1 at $((limit * 2)) frames, so the limit of $limit is \
+lower than the hardware needs"
+  else
+    pass "monitoring_rules: gFifoFactor is 1 at the limit of $limit frames and $above_limit above it"
+  fi
+
+  second_new="$(rules second-new | sed -n 's/^rules: second-new=//p' | head -1)"
+  if [ "$second_new" = refused ]; then
+    pass "monitoring_rules: a second audio system was refused"
+  else
+    fail "monitoring_rules: a second audio system was ${second_new:-not reported}"
+  fi
+
+  requested="$(rules "monitoring on" | sed -n 's/^rules: monitoring=//p' | head -1)"
+  unset_to="$(rules "monitoring off" | sed -n 's/^rules: monitoring=//p' | head -1)"
+  if [ "$requested" = some ] && [ "$unset_to" = none ]; then
+    pass "monitoring_rules: monitoring was on when asked for and off when not"
+  else
+    fail "monitoring_rules: expected some/none when asked for and not, got \
+${requested:-nothing}/${unset_to:-nothing}"
   fi
 fi
 

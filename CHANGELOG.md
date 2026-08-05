@@ -10,6 +10,85 @@ and this project adheres to
 
 ### Added
 
+- `Bela` now enforces the "only one at a time" rule it documented:
+  the process-wide claim on the audio system is taken atomically by
+  `Bela::new`, and a second one fails with `Error::AudioSystemExists`
+  instead of reaching into libbela's globals — from this thread or any
+  other. That matters beyond tidiness now that setting an audio system
+  up touches the CPU monitoring counters before `Bela_initAudio` gets
+  a chance to refuse, which a second setup would race against the
+  first audio system's thread. The claim is released when the `Bela`
+  is dropped, including when construction fails partway through or a
+  panic unwinds through it
+
+- CPU monitoring in the `bela` crate, wrapping `Bela_cpuMonitoringInit`
+  / `Bela_cpuMonitoringGet` / `Bela_cpuTic` / `Bela_cpuToc`. It answers
+  whether `render` fits within its block deadline, which until now only
+  showed up as dropouts and `Context::underrun_count` after the fact.
+  `Settings::cpu_monitoring` turns on the monitoring libbela does for
+  the whole audio thread and `Context::cpu_usage` reads it;
+  `CpuTimer` measures a section of `render` with counters the
+  application owns, bracketed either by `tic`/`toc` or by the
+  `measure()` guard, both real-time safe. Both are read as a
+  `CpuUsage`, which implements `Display`.
+  Those two shapes are a soundness requirement rather than a
+  preference. The audio thread's counters are one unsynchronised
+  structure inside libbela: reading them from another thread while it
+  runs is a data race, which is undefined behaviour no matter how
+  sensible the values look, and turning monitoring on resets that same
+  structure. So enabling is a setting, applied by `Bela::new` before
+  `Bela_initAudio` — early enough that `setup` already sees it, and
+  long before an audio thread exists — and reading needs the
+  `&Context` only a Bela callback has: `setup` runs before the audio
+  thread starts, `render` runs on it, and `cleanup` runs after libbela
+  has joined it. To report from an auxiliary task, publish the reading
+  from `render` through an atomic.
+  That `render` runs on the measured thread stops being true at large
+  period sizes, where libbela keeps the counters on the core audio
+  thread and moves `render` to a FIFO thread of its own. Nothing in the
+  context distinguishes the two arrangements, so monitoring is refused
+  above `MAX_MONITORED_PERIOD_SIZE` with
+  `Error::CpuMonitoringPeriodSize` rather than read across threads.
+  Measured on the board: `gFifoFactor` is 1 at 16, 32, 64 and 128
+  frames and 2 at 256, recorded in `docs/board-facts.md`
+  The cycle length is a `NonZeroU32`, which is also how the API avoids
+  the count that the C documentation says disables monitoring:
+  `Bela_cpuMonitoringInit(0)` returns without doing anything, so
+  turning it off clears the count directly, and leaving
+  `Settings::cpu_monitoring` unset means off rather than "whatever the
+  last audio system left behind". A cycle too large for the C `int`
+  libbela takes is refused with `Error::CpuMonitoringCycle` instead of
+  being saturated into a different cycle than the one asked for.
+  Bela measures each period from the previous tic, and a first tic has
+  only a zeroed timestamp to measure from — the whole monotonic clock.
+  `CpuTimer` throws its first measurement away, so every reading it
+  gives counts; the audio thread's cannot, because libbela takes that
+  tic, so its first cycle also counts the audio system starting up.
+  Measured on the board: a first reading of 9.8% against a steady 19.0%
+- `bela/examples/cpu.rs`, running a bank of 64 sine oscillators with
+  monitoring over the whole audio thread and a `CpuTimer` over the
+  oscillators alone, both read in `render` and reported once a second
+  from an auxiliary task through atomics — the pattern to copy.
+  `scripts/smoke-test.sh` runs it and checks that both readings are
+  percentages of a block, that the measured section stays within the
+  thread that runs it, and that monitoring is refused at a period size
+  where `render` would move off that thread — a rule only the board can
+  confirm, since the split happens inside libbela
+- `bela/examples/monitoring_rules.rs`, the hardware checks for the
+  monitoring rules the host cannot reach, driven one per run by
+  `scripts/smoke-test.sh`: that `MAX_MONITORED_PERIOD_SIZE` is the
+  limit the *hardware* has rather than one that drifted from it (the
+  refusal alone would keep passing, since it only consults the
+  constant), that a second `Bela::new` is refused, and that leaving
+  `cpu_monitoring` unset really means off rather than whatever the last
+  audio system left behind.
+  One check per process, because the board does not survive several
+  audio systems in one: bringing four or five up and tearing them down
+  again ends in a bus error, and an initialisation aborted from `setup`
+  leaves libbela holding hardware it will not take back, so the next
+  one fails with `Mcasp::start() called while already running` and then
+  segfaults
+
 - `AuxiliaryTask` in the `bela` crate: a safe wrapper over
   `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work
   that must not happen in `render` (I/O, allocation, long

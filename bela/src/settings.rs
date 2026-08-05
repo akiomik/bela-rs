@@ -1,4 +1,5 @@
 use core::ffi::c_int;
+use core::num::NonZeroU32;
 
 use bela_sys::BelaInitSettings;
 
@@ -29,6 +30,7 @@ pub struct Settings {
     uniform_sample_rate: Option<bool>,
     stop_button_pin: Option<i32>,
     thread_count: Option<u32>,
+    cpu_monitoring: Option<NonZeroU32>,
 }
 
 impl Settings {
@@ -134,6 +136,45 @@ impl Settings {
     pub const fn thread_count(mut self, threads: u32) -> Self {
         self.thread_count = Some(threads);
         self
+    }
+
+    /// Measures how much of each block the audio thread uses,
+    /// averaging over `measurements_per_cycle` blocks.
+    ///
+    /// [`Context::cpu_usage`](crate::Context::cpu_usage) reads the
+    /// result; without this it returns `None`. The cycle length trades
+    /// responsiveness against noise: at 44.1 kHz and 16 frames per
+    /// block, a block is about 0.36 ms, so 2000 blocks is a reading
+    /// roughly every 0.7 s.
+    ///
+    /// # Why it is a setting
+    ///
+    /// Turning monitoring on resets counters the audio thread owns, and
+    /// libbela decides whether to measure at all when that thread
+    /// starts. Both make this something to say before audio exists, so
+    /// it is applied by [`Bela::new`](crate::Bela::new) — which is also
+    /// what keeps it out of reach of code that could race with a
+    /// running audio thread.
+    ///
+    /// Note that this one is *not* applied by
+    /// [`apply_to`](Settings::apply_to): it is a separate C call rather
+    /// than a field of `BelaInitSettings`.
+    #[must_use]
+    pub const fn cpu_monitoring(mut self, measurements_per_cycle: NonZeroU32) -> Self {
+        self.cpu_monitoring = Some(measurements_per_cycle);
+        self
+    }
+
+    /// The requested acquisition cycle for the audio thread, if any.
+    #[cfg_attr(
+        not(bela_device),
+        allow(
+            dead_code,
+            reason = "only the device-gated audio system applies it; still unit-tested on the host"
+        )
+    )]
+    pub(crate) const fn cpu_monitoring_cycle(&self) -> Option<NonZeroU32> {
+        self.cpu_monitoring
     }
 
     /// Applies the overrides to a raw `BelaInitSettings`, leaving unset
@@ -276,6 +317,28 @@ mod tests {
         assert_eq!(raw.detectUnderruns, 0);
         assert_eq!(raw.highPerformanceMode, 1);
         assert_eq!(raw.uniformSampleRate, 0);
+    }
+
+    #[test]
+    fn cpu_monitoring_is_recorded_but_not_an_init_setting() {
+        let cycle = NonZeroU32::new(2000).expect("2000 is not zero");
+        let settings = Settings::new().cpu_monitoring(cycle);
+        assert_eq!(settings.cpu_monitoring_cycle(), Some(cycle));
+        assert_eq!(
+            Settings::new().cpu_monitoring_cycle(),
+            None,
+            "monitoring should be off unless it was asked for"
+        );
+
+        // It is a separate C call, so it must leave BelaInitSettings
+        // alone; the audio system applies it itself.
+        let mut raw = fake_defaults();
+        let untouched = fake_defaults();
+        settings.apply_to(&mut raw);
+        assert_eq!(raw.periodSize, untouched.periodSize);
+        assert_eq!(raw.useAnalog, untouched.useAnalog);
+        assert_eq!(raw.uniformSampleRate, untouched.uniformSampleRate);
+        assert_eq!(raw.stopButtonPin, untouched.stopButtonPin);
     }
 
     #[test]

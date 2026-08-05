@@ -31,6 +31,13 @@
 //! hands it to Bela's real-time print function — `println!` allocates
 //! and blocks, and is forbidden in `render`.
 //!
+//! Whether `render` fits within its block deadline is answered by
+//! [`Settings::cpu_monitoring`], which makes [`Context::cpu_usage`]
+//! report how much of each block the audio thread uses, and by
+//! [`CpuTimer`], which measures one section of `render` at a time.
+//! Without them the first sign of running out of headroom is a
+//! dropout, after the fact.
+//!
 //! [`Bela`] itself calls into `libbela` and therefore only exists when
 //! compiling for the device target (`aarch64-unknown-linux-gnu`); the
 //! rest of the crate — [`BelaApplication`], [`Context`], [`Settings`] —
@@ -44,9 +51,11 @@
 
 mod application;
 mod context;
+mod cpu;
 mod error;
 mod print;
 mod settings;
+mod singleton;
 #[cfg(bela_device)]
 mod system;
 mod task;
@@ -54,6 +63,7 @@ mod util;
 
 pub use application::BelaApplication;
 pub use context::{Context, PinMode};
+pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
