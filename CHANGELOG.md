@@ -8,18 +8,29 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `examples/init_failure`, a hardware probe for what a failed
+  `Bela_initAudio` leaves behind. It runs one question per process —
+  fail an initialisation and stop; fail one and try another; fail one
+  and call `Bela_cleanupAudio`, both from outside the crate and through
+  the C API in the order a fix would use; build and drop several audio
+  systems in a row — so that the answers can be attributed to the run
+  that produced them.
+
 ### Changed
 
 - `Bela::new`, `Bela::run`, `BelaApplication::setup` and `Error::Init`
   now say what a failed `Bela_initAudio` leaves behind. It fails
   partway through, nothing undoes what it had already taken, and the
   audio hardware stays held — so a second `Bela::new` in the same
-  process, which is still allowed to run, has been seen on a board to
-  report `Mcasp::start() called while already running` and then
-  segfault. The reachable way to get there is a `setup` callback
-  returning `false`, which fails the initialisation after the hardware
-  is up. Treating `Error::Init` as fatal to the process was already the
-  only safe reading; now it is written down.
+  process, which is still allowed to run, reports
+  `Mcasp::start() called while already running` and then segfaults. The
+  reachable way to get there is a `setup` callback returning `false`,
+  which fails the initialisation after the hardware is up. What is
+  poisoned is the process and not the board: a new process gets a
+  working audio system with nothing to reset in between, so the error
+  is a reason to exit rather than to retry in place.
 
 ## [0.2.0] - 2026-08-05
 

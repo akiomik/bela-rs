@@ -108,6 +108,20 @@ audio ran at the sample rate it reported and shut down cleanly on
 SIGINT. `bela_daemon` is stopped for the duration and restarted
 afterwards.
 
+There is also a probe, which is not a check:
+
+```sh
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-init-failure.sh [user@host] [probe...]
+```
+
+It measures what a failed `Bela_initAudio` leaves behind by producing
+the crash on purpose. Nothing about it passes or fails — it answers
+questions, and the answers belong in
+[docs/board-facts.md](docs/board-facts.md), which is why it is separate
+from the smoke test. Run it when a claim in that file about the
+initialisation lifecycle needs checking against a board, not as part of
+the routine before pushing.
+
 After updating a board image, also check that the vendored headers
 still match what the board now ships:
 

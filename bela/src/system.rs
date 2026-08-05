@@ -62,16 +62,20 @@ impl<T: BelaApplication> Bela<T> {
     /// the audio hardware, and the CPU monitoring counters this crate
     /// turns on just before the call when [`Settings::cpu_monitoring`]
     /// asked for them — and this crate does not call
-    /// `Bela_cleanupAudio` to hand any of it back: nothing says that
-    /// call is meaningful against an initialisation that never
-    /// finished.
+    /// `Bela_cleanupAudio` to hand any of it back, because on that path
+    /// the call itself segfaults. That is measured rather than assumed,
+    /// including in the order this method would have to make the call;
+    /// see "Audio thread" in `docs/board-facts.md`.
     ///
     /// The process-wide claim is released on the way out, so a second
-    /// `Bela::new` is allowed to run. It should not be relied on. On a
-    /// Bela Gem the next attempt reports `Mcasp::start() called while
-    /// already running`, fails to allocate its pipes and then
-    /// segfaults; see "Audio thread" in `docs/board-facts.md`. Treat
-    /// this error as a reason to leave the process, not to retry in it.
+    /// `Bela::new` is allowed to run. It will not work: on a Bela Gem
+    /// it reports `Mcasp::start() called while already running`, fails
+    /// to allocate its pipes and then segfaults, in every run measured.
+    ///
+    /// What is poisoned is this process, not the board. A new process
+    /// gets a working audio system straight away, with nothing to reset
+    /// in between — so treat this error as a reason to exit, and leave
+    /// retrying to whatever started the program.
     ///
     /// The ordinary way to arrive here is a
     /// [`setup`](BelaApplication::setup) callback returning `false`,

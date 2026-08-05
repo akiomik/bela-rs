@@ -27,14 +27,15 @@
 //! # One check per run
 //!
 //! Each invocation brings up at most one audio system and exits. That
-//! is not tidiness: this board does not survive several of them in one
-//! process. Bringing four or five up and tearing them down again ends
-//! in a bus error, and an initialisation aborted from `setup` leaves
-//! libbela holding hardware it will not take back — the next one fails
-//! with `Mcasp::start() called while already running` and then
-//! segfaults. Separate processes are also what makes the output
-//! unambiguous, since libbela's C `printf` and Rust's `println!`
-//! buffer independently.
+//! is not tidiness: two of these checks abort the initialisation from
+//! `setup`, and a failed `Bela_initAudio` leaves libbela's globals in
+//! that process still believing the audio system is up. The next
+//! `Bela::new` in it reports `Mcasp::start() called while already
+//! running` and segfaults, and `Bela_cleanupAudio` segfaults too, so
+//! there is nothing to do with such a process but leave it
+//! (`docs/board-facts.md`, #30). Separate processes are also what makes
+//! the output unambiguous, since libbela's C `printf` and Rust's
+//! `println!` buffer independently.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
@@ -196,7 +197,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: monitoring_rules (fifo-probe <frames> | second-new | monitoring on|off)\n\
-                 one check per run: this board does not survive several audio systems in one process"
+                 one check per run: two of these abort from `setup`, which poisons the process"
             );
             return ExitCode::FAILURE;
         }

@@ -406,8 +406,9 @@ fi
 
 # The CPU monitoring rules that only libbela can answer. One audio
 # system per run and no `Bela::run`, so these are driven directly rather
-# than through the loop above: the board does not survive several audio
-# systems in one process. See the example's header.
+# than through the loop above: two of these checks abort the
+# initialisation from `setup`, which poisons the process they run in.
+# See the example's header.
 if [ ! -x "$BIN_DIR/monitoring_rules" ]; then
   fail "monitoring_rules: not built at $BIN_DIR/monitoring_rules"
 else
