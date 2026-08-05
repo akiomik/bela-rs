@@ -2,10 +2,20 @@
 
 ## Language
 
-Repository deliverables — documentation, code comments, commit
-messages — are written in English. Local working notes that are not
-meant to be published belong outside the repository (or in paths
-listed in `.gitignore`).
+Everything published is written in English. That is the whole of what
+reaches GitHub, not only the files in the tree:
+
+- documentation, code comments and changelog entries;
+- commit messages;
+- pull request titles and bodies, and issue titles and bodies;
+- comments on pull requests and issues, review replies included.
+
+The question to ask is where something will be read, not what kind of
+thing it is. A review reply is as public as a page of documentation and
+is read by the same people, so it is written the same way.
+
+Local working notes that are not meant to be published belong outside
+the repository (or in paths listed in `.gitignore`).
 
 ## Commit messages
 
