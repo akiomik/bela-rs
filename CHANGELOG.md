@@ -10,27 +10,6 @@ and this project adheres to
 
 ### Added
 
-- CI job measuring test coverage with `cargo llvm-cov` and uploading it
-  to Codecov, with `llvm-tools-preview` added to the pinned toolchain so
-  that `cargo llvm-cov --workspace` reproduces the CI numbers locally.
-  It measures the host build, like the test job: the device-only code
-  behind the `bela_device` cfg is not compiled there, so it is absent
-  from the report rather than counted as untested. The generated
-  `bela-sys/src/bindings.rs` is excluded in `.github/codecov.yml`
-
-- `cargo xtask check-vendor --board [user@host]`, which compares
-  `bela-sys/vendor/bela` with the files on a board and exits non-zero
-  on drift. The vendored headers are pinned to the Bela version of a
-  particular board image and `bela-sys/src/bindings.rs` is committed,
-  so installing a new image moves the ABI on the board while the
-  bindings keep describing the old one — silently, and as far as
-  `BelaContext` field offsets. The check reports the `BELA_*_VERSION`
-  macros on both sides as the cheap first signal, diffs every vendored
-  file for the answer that actually decides it, and names the fix
-  (`scripts/update-vendor.sh --board`, then `cargo xtask bindgen`). It
-  needs a board, so it stays outside CI: it is the check to run after
-  updating a board image, and a step in `docs/release.md`
-
 - The codec's levels and gain in the `bela` crate, wrapping
   `Bela_setLineOutLevel`, `Bela_setHpLevel`, `Bela_setAudioInputGain`
   and `Bela_muteSpeakers`. `Bela::set_line_out_level`,
@@ -62,21 +41,18 @@ and this project adheres to
   the C side is a comparison a NaN slips through. That limit is far
   outside any codec's range — what the codec cannot do it clamps, as
   before. See `examples/levels.rs`
-
 - `Bela::until_stopped`, which was the second half of `Bela::run` and
   is now public: it starts the audio system, blocks until a stop is
   requested and shuts down, so a program that has something to say
   between `Bela::new` and the run loop — setting a level, above all —
   no longer has to reimplement the loop and its signal handling to get
   that window
-
 - `Settings::begin_muted`, wrapping the `beginMuted` init setting: the
   one level control that cannot be a call, since `Bela_startAudio`
   unmutes the speaker amplifiers unless it was asked not to. A Bela Gem
   Stereo has no amplifier mute pin (measured: `ampMutePin` is -1), so
   neither this nor `Bela::mute_speakers` has any effect there; both are
   wrapped for the Bela hardware that does have one, and say so
-
 - Bela's standard command-line options, wrapping `Bela_getopt_long` and
   `Bela_usage`. `Bela::run_with_args` and `Bela::new_with_args` take the
   argument list a program was started with and apply `--period`,
@@ -92,7 +68,6 @@ and this project adheres to
   and its argv permutation out of the API and makes anything Bela does
   not recognise an error rather than something quietly ignored. See
   `examples/command_line.rs`
-
 - `Bela` now enforces the "only one at a time" rule it documented:
   the process-wide claim on the audio system is taken atomically by
   `Bela::new`, and a second one fails with `Error::AudioSystemExists`
@@ -103,7 +78,6 @@ and this project adheres to
   first audio system's thread. The claim is released when the `Bela`
   is dropped, including when construction fails partway through or a
   panic unwinds through it
-
 - CPU monitoring in the `bela` crate, wrapping `Bela_cpuMonitoringInit`
   / `Bela_cpuMonitoringGet` / `Bela_cpuTic` / `Bela_cpuToc`. It answers
   whether `render` fits within its block deadline, which until now only
@@ -151,27 +125,7 @@ and this project adheres to
 - `bela/examples/cpu.rs`, running a bank of 64 sine oscillators with
   monitoring over the whole audio thread and a `CpuTimer` over the
   oscillators alone, both read in `render` and reported once a second
-  from an auxiliary task through atomics — the pattern to copy.
-  `scripts/smoke-test.sh` runs it and checks that both readings are
-  percentages of a block, that the measured section stays within the
-  thread that runs it, and that monitoring is refused at a period size
-  where `render` would move off that thread — a rule only the board can
-  confirm, since the split happens inside libbela
-- `bela/examples/monitoring_rules.rs`, the hardware checks for the
-  monitoring rules the host cannot reach, driven one per run by
-  `scripts/smoke-test.sh`: that `MAX_MONITORED_PERIOD_SIZE` is the
-  limit the *hardware* has rather than one that drifted from it (the
-  refusal alone would keep passing, since it only consults the
-  constant), that a second `Bela::new` is refused, and that leaving
-  `cpu_monitoring` unset really means off rather than whatever the last
-  audio system left behind.
-  One check per process, because the board does not survive several
-  audio systems in one: bringing four or five up and tearing them down
-  again ends in a bus error, and an initialisation aborted from `setup`
-  leaves libbela holding hardware it will not take back, so the next
-  one fails with `Mcasp::start() called while already running` and then
-  segfaults
-
+  from an auxiliary task through atomics — the pattern to copy
 - `AuxiliaryTask` in the `bela` crate: a safe wrapper over
   `Bela_createAuxiliaryTask` / `Bela_scheduleAuxiliaryTask`, so work
   that must not happen in `render` (I/O, allocation, long
@@ -198,21 +152,6 @@ and this project adheres to
   says to count invocations in the callback when it matters
 - `bela/examples/aux_task.rs`, reporting from a task scheduled once a
   second by `render`, including work that allocates
-- `bela/examples/task_lifecycle.rs`, a hardware check for the task
-  lifecycle rules the host tests cannot reach — a handle from an audio
-  system that was dropped without ever starting never runs, the running
-  system's own task does, and creating a task from `cleanup` is
-  refused. `scripts/smoke-test.sh` asserts on all three
-
-- `scripts/smoke-test.sh`: builds the examples, runs each of them on a
-  board and gives a single pass/fail answer. The checks are numeric
-  rather than "it did not crash" — the reported block count has to
-  match the elapsed frame count exactly and land in the window the
-  sample rate implies for the run, with no underruns — plus a clean
-  exit on SIGINT after `cleanup` ran. `bela_daemon` is stopped for the
-  duration and restarted afterwards, including on failure or Ctrl-C.
-  Needs a board, so it stays outside CI; it is now a step in
-  `docs/release.md`
 - `rt_print!` and `rt_println!` in the `bela` crate: `format!`-style
   printing that is usable from `render`. Arguments are formatted into a
   fixed-size buffer on the stack (`MESSAGE_CAPACITY`, 256 bytes) and
@@ -225,22 +164,22 @@ and this project adheres to
   for callers that already have `format_args!`
 - `bela/examples/print.rs`, printing the audio configuration from
   `setup` and a once-a-second heartbeat from `render`
-- `docs/multithreaded-rendering.md`, recording what `threadCount` does
-  on the board: `render` runs concurrently on every thread, for the
-  same block, with the same user data and the same (unpartitioned)
-  buffers
+
+### Changed
+
+- Breaking: `Bela::new` refuses a `Settings::thread_count` above 1 with
+  the new `Error::ThreadCountUnsupported`, where 0.1.0 accepted it and
+  initialised the audio system. Multithreaded rendering is the one
+  thing 0.1.0 offered that this release does not, and it is why the
+  version goes to 0.2.0. It could not stay: Bela calls `render` on all
+  render threads at once with the same user data, so the trampoline
+  handed out several `&mut T` to one application — reachable from safe
+  code, and undefined behaviour whatever the render function then did
+  with them. A trait shaped for concurrent rendering is still to be
+  designed; until it exists, `thread_count(1)` and leaving it unset are
+  the configurations this crate serves
 
 ### Fixed
-
-- `cargo xtask bindgen` writes the file `cargo fmt` would write, so
-  rerunning it on unchanged headers now leaves no diff behind. bindgen
-  ran rustfmt itself, formatting for the newest edition the bindgen
-  release knows about (2021) rather than for the workspace edition
-  (2024). The two disagree about the indentation of a wrapped return
-  type, so the task and `cargo fmt --all` each rewrote one line of the
-  other's output, and a diff after the task said nothing about whether
-  the headers had moved. Formatting is now left to `cargo fmt`, which
-  is the one CI checks and reads the edition from `Cargo.toml`
 
 - `rt_print!` and `rt_println!` stop formatting as soon as the message
   fills the buffer, instead of running the formatting machinery to the
@@ -251,125 +190,58 @@ and this project adheres to
   deadline. The output is unchanged: the message is still truncated on
   a `char` boundary and marked with `...`
 
-- `Bela::new` rejects a `Settings::thread_count` above 1 with the new
-  `Error::ThreadCountUnsupported` instead of initialising an unsound
-  setup. Bela calls `render` on all render threads at once with the
-  same user data, so the trampoline would have handed out several
-  `&mut T` to one application — reachable from safe code. A trait
-  shaped for concurrent rendering is still to be designed
-
-- `scripts/sync-sysroot.sh` no longer aborts partway through. `rsync`
-  cannot reproduce the setgid bit of files like
-  `/usr/lib/aarch64-linux-gnu/utempter/utempter` as an unprivileged
-  user on the host, and the resulting error stopped the script before
-  it created the `lib` and `ld-linux-aarch64.so.1` symlinks that
-  cross-linking needs. The sysroot now drops setuid/setgid bits, which
-  it never needs
-
-### Changed
-
-- `cargo xtask` declares its command line with clap instead of parsing
-  it by hand. The grammar had been written twice — once as a parser,
-  once as the usage text claiming to describe it — with nothing tying
-  the two together and tests on only one of them; now the help is
-  generated from the declaration the parsing comes from. Every line
-  accepted before is still accepted, and `--sysroot` still overrides
-  `BELA_SYSROOT` with the last one winning. What is new: `--help` and
-  `-h` at both levels, `--board=<host>` and `--sysroot=<dir>` (the
-  attached form the old parser rejected), a bare `cargo xtask` showing
-  the help rather than an error, and rejections that name the argument
-  at fault instead of reprinting the whole usage. The MSRV job excludes
-  `xtask`, because clap tracks an MSRV of its own that has nothing to
-  do with what this project promises its users
-
-- `xtask` is a workspace member instead of a standalone package, so the
-  fmt, clippy and MSRV runs cover it and it shares the workspace lints
-  and lockfile. It had been excluded to keep bindgen out of ordinary
-  builds, but the cost that motivated that is not there: bindgen loads
-  libclang at run time, so only `cargo xtask bindgen` needs one, and
-  nothing about `cargo check` or `cargo test` does. Being a host-only
-  task, it is excluded from the device-target and coverage jobs
-
-- `scripts/sync-sysroot.sh` no longer compresses the transfer: gzip on
-  the board's Cortex-A53 was the bottleneck rather than the link, and
-  dropping `-z` cuts a full sync from 163 s to about 40 s
-
 ## [0.1.0] - 2026-08-05
-
-First hardware-validated release. The examples cross-build on a host
-and produce sound on a Bela Gem Stereo (PocketBeagle 2, EVL real-time
-core).
 
 ### Added
 
-- `bela-sys`: `build.rs` emits the `libbela` link flags for device
+- `bela-sys`'s `build.rs` emits the `libbela` link flags for device
   targets, so device binaries link and run. Cross-linking is driven by
   `BELA_SYSROOT` together with `scripts/sync-sysroot.sh` and the linker
   wrapper in `scripts/aarch64-bela-linker.sh`
-- `bela`: `Context::this_thread` / `thread_count` and
-  `Settings::thread_count` for the multithreaded rendering added in
-  Bela 1.15
-- `bela`: `Bela::run` also handles SIGHUP, so a dropped ssh connection
-  shuts the audio system down cleanly instead of killing the process
-  outright
+- `Context::this_thread` / `thread_count` and `Settings::thread_count`
+  for the multithreaded rendering added in Bela 1.15
+- `Bela::run` also handles SIGHUP, so a dropped ssh connection shuts
+  the audio system down cleanly instead of killing the process outright
 
 ### Changed
 
-- `bela-sys`: bindings regenerated from the headers shipped on a Bela
-  Gem (Bela 1.18.0), which is newer than any published upstream branch.
+- The bindings are regenerated from the headers shipped on a Bela Gem
+  (Bela 1.18.0), which is newer than any published upstream branch.
   `BelaContext` and `BelaInitSettings` gained fields, and the bindings
-  now cover `Bela_initRtBackend`, `Bela_clock_gettime` and friends.
-  `scripts/update-vendor.sh --board` vendors from a board, and the
-  provenance file is `vendor/bela/SOURCE` (was `COMMIT`)
+  now cover `Bela_initRtBackend`, `Bela_clock_gettime` and friends
 
 ## [0.0.1] - 2026-07-27
 
-Initial release: pre-hardware. Linking against `libbela` is not wired
-up yet, so the crates compile (host and `aarch64-unknown-linux-gnu`)
-but cannot produce a runnable device binary until the board arrives.
-
 ### Added
 
-- Release workflow publishing to crates.io on version tags via Trusted
-  Publishing (the initial 0.0.1 publish is manual, as crates.io
-  requires for new crates)
-- CI job verifying the MSRV (`rust-version` in Cargo.toml), and a
-  pinned development toolchain in `rust-toolchain.toml` so that a
-  moving `stable` cannot break builds
-- Workspace-wide Clippy configuration (pedantic, nursery, cargo and
-  selected restriction lints) with the codebase cleaned up to pass it;
-  CI now also lints the device-only code for the aarch64 target
-- `bela`: `passthrough` and `sine` examples written against the safe
-  API only, with `panic = "abort"` in the workspace release profile;
-  `Bela::run` now installs SIGINT/SIGTERM handlers that request a clean
-  stop, mirroring the C example templates
-- `bela`: safe `Context` accessors following Bela Gem semantics —
+- `passthrough` and `sine` examples written against the safe API only,
+  with `panic = "abort"` in the workspace release profile; `Bela::run`
+  now installs SIGINT/SIGTERM handlers that request a clean stop,
+  mirroring the C example templates
+- Safe `Context` accessors following Bela Gem semantics —
   frame/channel/sample-rate metadata, interleaved buffer slices, indexed
   audio/analog/digital I/O with bounds checking (Rust ports of the
   `Bela.h` inline helpers, including within-block persistence of
   `analog_write` / `digital_write` and the digital direction/value bit
   layout), plus the `map` and `constrain` utilities
-- `bela`: safe wrapper core — the `unsafe` real-time trait
+- The safe wrapper core — the `unsafe` real-time trait
   `BelaApplication` (setup/render/cleanup), `extern "C"` trampolines
   bridging the C callbacks via `userData`, the `Settings` builder
   applying overrides on top of `Bela_defaultSettings()`, and the `Bela`
   RAII lifecycle (init/start/stop/cleanup, device target only behind
   the `bela_device` cfg)
-- `bela-sys`: FFI bindings to the Bela core C API (`BelaContext`,
+- FFI bindings to the Bela core C API (`BelaContext`,
   `BelaInitSettings`, `Bela_*` lifecycle and auxiliary-task functions,
-  `rt_printf`), generated with bindgen from vendored headers and
-  committed so that builds need neither libclang nor a sysroot
-- Vendored Bela headers pinned to the upstream `dev` branch
-  (Gem-era API), with `scripts/update-vendor.sh` to move the pin
-- `cargo xtask bindgen` task for regenerating the bindings
+  `rt_printf`), generated with bindgen from vendored headers pinned to
+  the upstream `dev` branch (the Gem-era API) and committed, so that
+  builds need neither libclang nor a sysroot
 - Cargo workspace scaffolding with the `bela-sys` (raw FFI) and `bela`
   (safe wrapper) crates, targeting Bela Gem on PocketBeagle 2
-  (`aarch64-unknown-linux-gnu`)
-- CI running rustfmt, clippy and tests on the host, plus `cargo check`
-  for `aarch64-unknown-linux-gnu`
+  (`aarch64-unknown-linux-gnu`). Linking against `libbela` is not
+  wired up yet, so the crates compile for host and device but cannot
+  produce a runnable device binary
 - Dual MIT / Apache-2.0 licensing
-- Documentation: cross-compilation setup draft and a board-facts
-  template for on-device measurements
+- A draft of the cross-compilation setup in `docs/cross-compile.md`
 
 [Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/akiomik/bela-rs/compare/v0.0.1...v0.1.0

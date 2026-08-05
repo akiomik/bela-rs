@@ -27,6 +27,32 @@ the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 Add entries to the `[Unreleased]` section in the same commit as the
 change itself.
 
+Notable means notable to someone using the published crates: what
+`bela` and `bela-sys` offer, how they behave, the examples that ship
+with them, and the documentation written for people building against
+them. The project's own machinery does not qualify — CI, `xtask`,
+`scripts/`, and the notes under `docs/` that record measurements and
+procedures — however welcome a change to it is; the commit and the
+pull request are where those are recorded.
+
+This applies to the released sections too. When the rule changes, the
+whole file is brought to it rather than left as a record of what each
+past release happened to think worth mentioning: a changelog read for
+what a version did is only useful if every version was written to the
+same standard.
+
+Entries carry no crate prefix. Which crate an entry is about follows
+from what it names: `bela-sys` mirrors the C API (`Bela_initAudio`,
+`BelaContext`), `bela` is the Rust one (`Bela::new`, `Settings`). Only
+where the two share a name — `build.rs`, `README.md` — does the entry
+have to say which crate it means, and it says so in its own sentence
+rather than in a marker.
+
+Keep a Changelog has no category for breaking changes, so mark one by
+opening its entry with `Breaking:`. Which heading it goes under is a
+separate question: `Removed` when a feature is gone, `Changed` when
+something that still exists behaves incompatibly.
+
 ## Releases
 
 See [docs/release.md](docs/release.md). The two crates are versioned
