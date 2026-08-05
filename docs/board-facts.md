@@ -98,15 +98,47 @@ Captured from a verbose on-board build:
   the two boundary values on every run so the constant cannot drift away
   from the hardware.
 
-- **An audio system can only be brought up once per process.** Creating
-  four or five in a row — `Bela::new` followed by dropping it — ends in
-  a bus error, and an initialisation aborted by returning `false` from
-  `setup` leaves libbela holding hardware it will not take back: the
-  next attempt reports `Mcasp::start() called while already running`,
-  fails to allocate its pipes, and segfaults. Individually each of
-  those configurations is fine, and two full cycles (what
-  `examples/task_lifecycle.rs` does) are reliable, but anything that
-  needs several is better split across processes.
+- **A failed initialisation poisons its process, and only its
+  process.** Returning `false` from `setup` fails `Bela_initAudio` with
+  1 and leaves libbela's globals in that process still believing the
+  audio system is up. What follows is not arrangement-dependent.
+  Measured by `scripts/probe-init-failure.sh`, which runs each probe in
+  a process of its own between two full audio cycles in processes of
+  their own; the three crashing cases were repeated three times each
+  and were identical every time.
+
+  | after a `setup`-aborted `Bela_initAudio` | what happens |
+  |---|---|
+  | nothing more | the process exits 0 |
+  | a second `Bela::new` | `evl_attach_thread for WSServer_40100 failed with File exists (17)`, `Error in evl_create_xbuf: 17 EEXIST`, `Unable to create pipe p_WSClient_signalMonitor40100_bin`, `Mcasp::start() called while already running`, then SIGSEGV |
+  | `Bela_cleanupAudio()` | SIGSEGV inside the call |
+  | `Bela_cleanupAudio()` then a second `Bela::new` | never reached: the cleanup call is the crash |
+
+  Two things follow. The damage is confined to the process that took
+  it — after every one of those cases, including the two that
+  segfaulted, the next process brought up an audio system and rendered
+  the expected ~2760 blocks per second, with no reboot, no restart of
+  `bela_daemon` and nothing left to kill in between. And
+  `Bela_cleanupAudio` is not the way out: on that path it is not merely
+  unhelpful, it is itself the crash. Refusing later attempts is the
+  only repair `Bela::new` can make (#30).
+
+- **Several audio systems in one process are fine, as long as each one
+  succeeds.** Twelve full cycles (`Bela::new`, `start`, render, drop)
+  in one process, and eight build-and-drop cycles with audio never
+  started, both ran clean. An earlier note here put a bus error at four
+  or five of the latter; it did not reproduce in either shape on image
+  2026-03-25. What stops a second audio system is a *failed* first one,
+  not how many there have been.
+
+- **The board does not refuse a second process.** While one process was
+  rendering, another brought up its own audio system and its `render`
+  ran at the same rate alongside it — 2759 blocks in its 1 s window,
+  against the holder's 16541 in 6 s — and both exited 0. Whether the
+  sound is right was not judged, only that both callbacks ran. So
+  "the audio hardware is unavailable or already in use" is not a
+  failure this board produces by that route, and no `Error::Init` other
+  than the `setup` abort has been measured.
 
 ## Codec levels and gain
 
