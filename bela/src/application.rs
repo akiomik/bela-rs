@@ -1,15 +1,90 @@
-use crate::context::Context;
+use crate::context::{BlockContext, CleanupContext, RenderContext, SetupContext};
+
+/// Which render thread a [`RenderState`](BelaApplication::RenderState)
+/// is being made for.
+///
+/// Handed to
+/// [`create_render_state`](BelaApplication::create_render_state), which
+/// is called once per thread, in order, before audio starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadInfo {
+    index: usize,
+    count: usize,
+}
+
+impl ThreadInfo {
+    pub(crate) const fn new(index: usize, count: usize) -> Self {
+        Self { index, count }
+    }
+
+    /// Which thread this is, in `0..count()`.
+    ///
+    /// The same number [`RenderContext::this_thread`] reports, so a
+    /// state built here and the context `render` gets are always
+    /// talking about the same thread.
+    #[must_use]
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// How many render threads there are in total.
+    #[must_use]
+    pub const fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Whether this is the only render thread.
+    ///
+    /// Worth branching on where a parallel arrangement costs something
+    /// a single-threaded one does not — an extra mixing bus, say.
+    #[must_use]
+    pub const fn is_only(&self) -> bool {
+        self.count == 1
+    }
+}
 
 /// A Bela application: user code driven by the audio system callbacks.
 ///
-/// `setup` runs once before audio starts, `render` runs for every block
-/// of frames on the real-time audio thread, and `cleanup` runs once
-/// after audio stops.
+/// The callbacks come in three groups, and the difference between them
+/// is what Bela's multithreaded rendering makes of `self`:
 ///
-/// # Safety
+/// - [`setup`](BelaApplication::setup),
+///   [`create_render_state`](BelaApplication::create_render_state) and
+///   [`cleanup`](BelaApplication::cleanup) run once, on their own,
+///   outside the real-time context.
+/// - [`render_pre`](BelaApplication::render_pre) and
+///   [`render_post`](BelaApplication::render_post) run once per block
+///   on the main audio thread, bracketing the parallel section. They
+///   see the whole block and every render state.
+/// - [`render`](BelaApplication::render) runs once per block **on every
+///   render thread at the same time**, which is why it takes `&self`.
+///   Each call gets one [`RenderState`](BelaApplication::RenderState),
+///   exclusively, and one thread's share of the output buffers.
 ///
-/// Implementing this trait is a promise that `render` is real-time
-/// safe. On the audio thread it must not:
+/// That shape is Bela's, not this crate's: with
+/// [`Settings::thread_count`](crate::Settings::thread_count) above 1,
+/// libbela calls `render` concurrently on every thread, for the same
+/// block, with the same user data and the same unpartitioned buffers.
+/// See `docs/multithreaded-rendering.md` for the measurements. One
+/// render thread is the same model with one state and one partition
+/// covering the block, so there is nothing extra to write for it.
+///
+/// # Where the mutable state goes
+///
+/// Anything `render` mutates belongs in
+/// [`RenderState`](BelaApplication::RenderState): filters, phases,
+/// per-thread scratch buffers, counters. The application itself holds
+/// what every thread reads — coefficients, tables, handles — and is
+/// shared as `&self` while rendering.
+///
+/// State that is genuinely one thing for the whole block, like an
+/// oscillator's phase, is prepared in `render_pre` and folded back in
+/// `render_post`; `examples/sine.rs` shows the pattern.
+///
+/// # Real-time safety
+///
+/// `render`, `render_pre` and `render_post` run on real-time threads.
+/// They must not:
 ///
 /// - allocate or free heap memory,
 /// - block (locks, channels, sleeping) or make system calls (including
@@ -19,20 +94,53 @@ use crate::context::Context;
 /// - panic in code paths that can actually be hit — a panic crossing
 ///   the callback boundary aborts the whole process.
 ///
-/// `setup` and `cleanup` run outside the real-time context and are not
-/// subject to these restrictions (panics still abort the process).
+/// This is an operational contract rather than a memory-safety one,
+/// which is why the trait is safe to implement: breaking it costs
+/// dropouts, not undefined behaviour. `setup`, `create_render_state`
+/// and `cleanup` run outside the real-time context and are not subject
+/// to it (panics still abort the process).
 ///
-/// All three run on a single thread: Bela's multithreaded rendering
-/// calls `render` on every thread at once, which `&mut self` cannot
-/// express, so [`Bela`](crate::Bela) rejects a
-/// [`Settings::thread_count`](crate::Settings::thread_count) above 1
-/// (`docs/multithreaded-rendering.md`).
+/// # Example
 ///
-/// Implementors must be [`Send`]: the application is moved to the audio
-/// thread after construction.
-pub unsafe trait BelaApplication: Send {
-    /// Called once before audio rendering starts. Return `false` to
-    /// abort startup.
+/// ```
+/// use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
+///
+/// struct Passthrough;
+///
+/// impl BelaApplication for Passthrough {
+///     // Nothing to carry from block to block.
+///     type RenderState = ();
+///
+///     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+///
+///     fn render(&self, _state: &mut (), context: &mut RenderContext) {
+///         let channels = context
+///             .audio_in_channels()
+///             .min(context.audio_out_channels());
+///         // Only this thread's frames; the ranges tile the block.
+///         for frame in context.audio_frame_range() {
+///             for channel in 0..channels {
+///                 let sample = context.audio_read(frame, channel);
+///                 context.audio_write(frame, channel, sample);
+///             }
+///         }
+///     }
+/// }
+/// ```
+pub trait BelaApplication: Send + Sync {
+    /// Everything `render` mutates, one per render thread.
+    ///
+    /// `()` for an application whose `render` carries nothing from one
+    /// block to the next.
+    ///
+    /// [`Send`], because the states are built on the main thread and
+    /// then used on the render threads. Not [`Sync`]: each one is only
+    /// ever reached by the thread it belongs to, and by `render_pre` /
+    /// `render_post` while no thread is rendering.
+    type RenderState: Send;
+
+    /// Called once before audio starts, before any render state is
+    /// created. Return `false` to abort startup.
     ///
     /// Aborting fails [`Bela::new`](crate::Bela::new) with
     /// [`Error::Init`](crate::Error::Init), and does so after libbela
@@ -42,155 +150,56 @@ pub unsafe trait BelaApplication: Send {
     /// [`Error::AudioSystemPoisoned`](crate::Error::AudioSystemPoisoned).
     /// So abort to end the program, not to try again with different
     /// settings.
-    fn setup(&mut self, _context: &mut Context) -> bool {
+    fn setup(&mut self, _context: &SetupContext) -> bool {
         true
     }
 
-    /// Called once per block of frames on the real-time audio thread.
-    fn render(&mut self, context: &mut Context);
+    /// Called once per render thread, after
+    /// [`setup`](BelaApplication::setup) has agreed to start, to build
+    /// that thread's [`RenderState`](BelaApplication::RenderState).
+    ///
+    /// Runs on the main thread before audio starts, so it may allocate
+    /// — a per-thread scratch buffer is the point of it — and it can
+    /// use whatever `setup` worked out.
+    ///
+    /// [`ThreadInfo::count`] is the number of threads that will render,
+    /// which is [`Settings::thread_count`](crate::Settings::thread_count)
+    /// as libbela resolved it, so an application can size a per-thread
+    /// arrangement here rather than guessing.
+    fn create_render_state(
+        &mut self,
+        thread: ThreadInfo,
+        context: &SetupContext,
+    ) -> Self::RenderState;
 
-    /// Called once after audio rendering stops.
-    fn cleanup(&mut self, _context: &mut Context) {}
-}
+    /// Called once per block, on the main audio thread, before the
+    /// render threads are woken.
+    ///
+    /// Nothing else is running: this is where the whole block and every
+    /// render state can be touched at once — reading the inputs,
+    /// clearing the outputs, handing each thread the state its share of
+    /// the block starts from.
+    fn render_pre(&mut self, _states: &mut [Self::RenderState], _context: &mut BlockContext) {}
 
-/// `extern "C"` shims installed into `BelaInitSettings`, bridging the C
-/// callbacks to a `T: BelaApplication` reached through `userData`.
-///
-/// Safety contract shared by all three: `context` must satisfy
-/// [`Context::from_mut_ptr`], and `user_data` must point to a live `T`
-/// not accessed through any other reference during the call.
-#[cfg_attr(
-    not(bela_device),
-    allow(
-        dead_code,
-        reason = "only called by the device-gated system module; still unit-tested on the host"
-    )
-)]
-pub mod trampoline {
-    use core::ffi::c_void;
+    /// Called once per block **on every render thread at the same
+    /// time**, each with its own state and its own share of the output.
+    ///
+    /// `state` is the [`RenderState`](BelaApplication::RenderState) of
+    /// [`RenderContext::this_thread`], held exclusively for the call.
+    /// `context` reads the whole block and writes only
+    /// [`RenderContext::audio_frame_range`] and its analog and digital
+    /// counterparts.
+    fn render(&self, state: &mut Self::RenderState, context: &mut RenderContext);
 
-    use bela_sys::BelaContext;
+    /// Called once per block, on the main audio thread, after the last
+    /// render thread has finished.
+    ///
+    /// The place to reduce: mix the per-thread busses down, advance the
+    /// state the block as a whole carries, publish a reading for an
+    /// [`AuxiliaryTask`](crate::AuxiliaryTask) to report.
+    fn render_post(&mut self, _states: &mut [Self::RenderState], _context: &mut BlockContext) {}
 
-    use super::BelaApplication;
-    use crate::context::Context;
-
-    pub unsafe extern "C" fn setup<T: BelaApplication>(
-        context: *mut BelaContext,
-        user_data: *mut c_void,
-    ) -> bool {
-        let app = unsafe { &mut *user_data.cast::<T>() };
-        let context = unsafe { Context::from_mut_ptr(context) };
-        app.setup(context)
-    }
-
-    pub unsafe extern "C" fn render<T: BelaApplication>(
-        context: *mut BelaContext,
-        user_data: *mut c_void,
-    ) {
-        let app = unsafe { &mut *user_data.cast::<T>() };
-        let context = unsafe { Context::from_mut_ptr(context) };
-        app.render(context);
-    }
-
-    pub unsafe extern "C" fn cleanup<T: BelaApplication>(
-        context: *mut BelaContext,
-        user_data: *mut c_void,
-    ) {
-        let app = unsafe { &mut *user_data.cast::<T>() };
-        let context = unsafe { Context::from_mut_ptr(context) };
-        app.cleanup(context);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use core::ffi::c_void;
-    use core::mem;
-
-    use bela_sys::BelaContext;
-
-    use super::*;
-
-    #[derive(Default)]
-    struct TestApp {
-        setup_ok: bool,
-        setup_calls: u32,
-        render_calls: u32,
-        cleanup_calls: u32,
-        frames_seen: u32,
-    }
-
-    unsafe impl BelaApplication for TestApp {
-        fn setup(&mut self, _context: &mut Context) -> bool {
-            self.setup_calls += 1;
-            self.setup_ok
-        }
-
-        fn render(&mut self, context: &mut Context) {
-            self.render_calls += 1;
-            self.frames_seen = context.as_sys().audioFrames;
-        }
-
-        fn cleanup(&mut self, _context: &mut Context) {
-            self.cleanup_calls += 1;
-        }
-    }
-
-    fn test_context() -> BelaContext {
-        // A hand-built context standing in for the one libbela provides.
-        let mut context: BelaContext = unsafe { mem::zeroed() };
-        context.audioFrames = 64;
-        context
-    }
-
-    #[test]
-    fn trampolines_forward_to_the_application() {
-        let mut context = test_context();
-        let mut app = TestApp {
-            setup_ok: true,
-            ..TestApp::default()
-        };
-        let user_data = (&raw mut app).cast::<c_void>();
-
-        unsafe {
-            assert!(trampoline::setup::<TestApp>(&raw mut context, user_data));
-            trampoline::render::<TestApp>(&raw mut context, user_data);
-            trampoline::render::<TestApp>(&raw mut context, user_data);
-            trampoline::cleanup::<TestApp>(&raw mut context, user_data);
-        }
-
-        assert_eq!(app.setup_calls, 1);
-        assert_eq!(app.render_calls, 2);
-        assert_eq!(app.cleanup_calls, 1);
-        assert_eq!(app.frames_seen, 64);
-    }
-
-    #[test]
-    fn setup_failure_is_reported() {
-        let mut context = test_context();
-        let mut app = TestApp::default();
-        let user_data = (&raw mut app).cast::<c_void>();
-
-        let ok = unsafe { trampoline::setup::<TestApp>(&raw mut context, user_data) };
-
-        assert!(!ok);
-        assert_eq!(app.setup_calls, 1);
-    }
-
-    #[test]
-    fn default_setup_and_cleanup_are_provided() {
-        struct RenderOnly;
-        unsafe impl BelaApplication for RenderOnly {
-            fn render(&mut self, _context: &mut Context) {}
-        }
-
-        let mut context = test_context();
-        let mut app = RenderOnly;
-        let user_data = (&raw mut app).cast::<c_void>();
-
-        unsafe {
-            assert!(trampoline::setup::<RenderOnly>(&raw mut context, user_data));
-            trampoline::cleanup::<RenderOnly>(&raw mut context, user_data);
-        }
-    }
+    /// Called once after audio rendering stops, with the render states
+    /// still intact.
+    fn cleanup(&mut self, _states: &mut [Self::RenderState], _context: &CleanupContext) {}
 }

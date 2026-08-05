@@ -37,7 +37,7 @@ use std::env;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use bela::{BelaApplication, Context, rt_println};
+use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo, rt_println};
 
 /// The application's own default block size, which the command line
 /// can override.
@@ -45,28 +45,30 @@ const PERIOD_SIZE: u32 = 32;
 
 struct Report;
 
-// Safety: setup prints through the real-time safe path and render does
-// nothing at all — no allocation, blocking, system calls or panicking
-// code paths.
-unsafe impl BelaApplication for Report {
-    fn setup(&mut self, context: &mut Context) -> bool {
+impl BelaApplication for Report {
+    type RenderState = ();
+
+    fn setup(&mut self, context: &SetupContext) -> bool {
         rt_println!(
             "setup: {} Hz, {} frames per block, {} in / {} out audio channels, \
-             {} analog in / {} analog out, {} digital",
+             {} analog in / {} analog out, {} digital, {} render thread(s)",
             context.audio_sample_rate(),
             context.audio_frames(),
             context.audio_in_channels(),
             context.audio_out_channels(),
             context.analog_in_channels(),
             context.analog_out_channels(),
-            context.digital_channels()
+            context.digital_channels(),
+            context.thread_count()
         );
         true
     }
 
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
     // Silence: this example is about how the audio system was
     // configured, not about what it renders.
-    fn render(&mut self, _context: &mut Context) {}
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 #[cfg(bela_device)]

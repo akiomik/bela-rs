@@ -87,25 +87,33 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use bela::{BelaApplication, Context};
+use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
 
 /// Refuses to start, failing `Bela_initAudio` from inside itself —
 /// after libbela has brought the hardware up.
 struct Abort;
 
-unsafe impl BelaApplication for Abort {
-    fn setup(&mut self, _context: &mut Context) -> bool {
+impl BelaApplication for Abort {
+    type RenderState = ();
+
+    fn setup(&mut self, _context: &SetupContext) -> bool {
         false
     }
 
-    fn render(&mut self, _context: &mut Context) {}
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 /// Does nothing, for the cycles that never start audio at all.
 struct Idle;
 
-unsafe impl BelaApplication for Idle {
-    fn render(&mut self, _context: &mut Context) {}
+impl BelaApplication for Idle {
+    type RenderState = ();
+
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 /// Counts the blocks it renders, so that an audio system which really
@@ -114,8 +122,12 @@ struct Count {
     blocks: Arc<AtomicU32>,
 }
 
-unsafe impl BelaApplication for Count {
-    fn render(&mut self, _context: &mut Context) {
+impl BelaApplication for Count {
+    type RenderState = ();
+
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {
         self.blocks.fetch_add(1, Ordering::Relaxed);
     }
 }

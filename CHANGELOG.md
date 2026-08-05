@@ -10,6 +10,34 @@ and this project adheres to
 
 ### Added
 
+- Multithreaded rendering. `Settings::thread_count` above 1 is served
+  again, and a Bela Gem's four cores can be used for one block. Every
+  application is written for it, whatever the thread count: `render`
+  takes `&self` and one `RenderState` of its own, and the whole of what
+  changes with a second thread is that there are two states and two
+  frame ranges instead of one.
+  The crate partitions the block, which Bela does not: it hands every
+  thread the same buffers and leaves the splitting to the application.
+  `RenderContext` reads the whole block but writes only
+  `audio_frame_range()` and its analog and digital counterparts —
+  contiguous ranges that tile the block exactly across the threads — so
+  two threads cannot reach the same output sample. The digital words
+  are bounded on the way in as well, since they carry the outputs too.
+  None of it is trusted to libbela. A callback that arrives where the
+  references it needs cannot be handed out safely — a second `render`
+  on one thread number, a `render_post` overlapping a `render`, which a
+  stop requested mid-block can produce — is refused, and the audio
+  system asked to stop, without any user code running.
+  `Bela::callback_faults` counts those refusals; it is 0 for a run that
+  behaved.
+- `examples/parallel`, which splits a bank of 192 sine oscillators
+  across the render threads and measures that the work was divided
+  rather than duplicated: per-thread frame counts that add up to one
+  block per block, no frame left unwritten, and a Linux thread id and
+  core for each. Measured on a Bela Gem, the busiest thread's share of
+  the block falls from 41.6% on one thread to 10.7% on four; see
+  `docs/multithreaded-rendering.md` for the whole table and for why the
+  audio thread's own figure falls by less.
 - `examples/init_failure`, a hardware probe for what a failed
   `Bela_initAudio` leaves behind. It runs one question per process —
   fail an initialisation and stop; fail one and try another; fail one
@@ -20,6 +48,47 @@ and this project adheres to
 
 ### Changed
 
+- Breaking: `BelaApplication` is a different trait. It is safe to
+  implement rather than `unsafe`, it carries a `RenderState` associated
+  type, `render` takes `&self` and one state, and there are two new
+  callbacks — `create_render_state`, which builds one state per render
+  thread before audio starts, and `render_pre` / `render_post`, which
+  bracket the parallel section on the main audio thread with the whole
+  block and every state to themselves. Implementors must be `Sync` as
+  well as `Send`.
+  Every existing application has to be rewritten: what `render` used to
+  mutate through `&mut self` moves into the `RenderState`, and work
+  that is one thing per block rather than per thread — an oscillator's
+  phase, a block counter — moves into `render_pre` / `render_post`.
+  `examples/sine` shows the first and `examples/print` the second.
+  The trait is no longer `unsafe` because the invariants that had to
+  hold are now enforced by the crate rather than promised by the
+  implementor. The real-time rules — no allocating, no blocking, no
+  panicking on the audio thread — are unchanged and just as important,
+  but breaking them costs dropouts rather than undefined behaviour, and
+  that is not what `unsafe` is for.
+- Breaking: `Context` is replaced by four types, one per callback
+  phase, because the phases do not have the same rights over the block.
+  `SetupContext` and `CleanupContext` describe the audio configuration
+  and expose no buffers, since there is no block in flight when they
+  run. `BlockContext` is the whole block, for `render_pre` and
+  `render_post`. `RenderContext` is what `render` gets: the whole block
+  to read, this thread's frames to write, and no `as_sys_mut` — the way
+  back to the whole output buffer is the aliasing being avoided.
+  `cpu_usage` is on the first three and not on `RenderContext`: above
+  one render thread, `render` runs on threads other than the one
+  libbela's counters belong to, and reading them from there would be
+  the data race the accessor exists to prevent. Read it in `render_pre`
+  or `render_post` and hand the number on, as `examples/cpu` does.
+  `this_thread` and `thread_count` return `usize` rather than `u32`,
+  like the other counts, and `thread_count` reports the number of
+  threads that actually render, so libbela's two spellings of one
+  thread — 0 and 1 — both come back as 1.
+- Breaking: `AuxiliaryTask` is `Sync`. An application is shared across
+  the render threads, so a handle it holds is reachable from all of
+  them, and `Bela_scheduleAuxiliaryTask` serialises on the task's own
+  mutex. `schedule` takes any of the four contexts, through the new
+  `CallbackContext` trait, rather than a `Context`.
 - Breaking: `Bela::new` refuses every attempt made after one of its own
   has failed, returning the new `Error::AudioSystemPoisoned` instead of
   trying. A `Bela_initAudio` that fails partway through leaves libbela
@@ -36,6 +105,13 @@ and this project adheres to
   callback returning `false` — the reachable way to get there, since it
   fails the initialisation after the hardware is up — is for ending a
   program rather than for trying different settings.
+
+### Removed
+
+- Breaking: `Error::ThreadCountUnsupported`, which 0.2.0 added to
+  refuse a `Settings::thread_count` above 1. There is nothing left to
+  refuse: every positive thread count goes through the same
+  `Bela::new`.
 
 ## [0.2.0] - 2026-08-05
 

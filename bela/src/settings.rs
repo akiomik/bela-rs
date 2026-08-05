@@ -3,8 +3,6 @@ use core::num::NonZeroU32;
 
 use bela_sys::BelaInitSettings;
 
-use crate::error::Error;
-
 /// Overrides applied on top of Bela's default initialisation settings.
 ///
 /// Unset fields keep the values produced by `Bela_defaultSettings()` on
@@ -127,12 +125,17 @@ impl Settings {
     /// Number of threads used for `render` (multithreaded rendering on
     /// the quad-core Bela Gem).
     ///
-    /// Values above 1 are currently rejected by
-    /// [`Bela::new`](crate::Bela::new) with
-    /// [`Error::ThreadCountUnsupported`](crate::Error::ThreadCountUnsupported):
-    /// Bela runs `render` on all threads at once over shared buffers,
-    /// which [`BelaApplication`](crate::BelaApplication) cannot express
-    /// with `&mut self`. See `docs/multithreaded-rendering.md`.
+    /// libbela creates `threads - 1` extra real-time threads and calls
+    /// [`render`](crate::BelaApplication::render) on all of them at
+    /// once, for the same block, over the same buffers. It partitions
+    /// nothing itself; the crate does, handing each thread its own
+    /// [`RenderState`](crate::BelaApplication::RenderState) and its own
+    /// share of the output frames. See
+    /// `docs/multithreaded-rendering.md`.
+    ///
+    /// More threads than the board has cores buys nothing: they render
+    /// the same block and every one of them has to finish before it
+    /// can be handed over. A Bela Gem has four.
     #[must_use]
     pub const fn thread_count(mut self, threads: u32) -> Self {
         self.thread_count = Some(threads);
@@ -255,17 +258,15 @@ fn to_c_int(value: u32) -> c_int {
     c_int::try_from(value).unwrap_or(c_int::MAX)
 }
 
-/// Checks settings the safe API cannot serve, once they are resolved
-/// against Bela's defaults.
+/// How many threads `render` will be called on, once the settings are
+/// resolved against Bela's defaults.
 ///
-/// Measured on the board: with more than one render thread, Bela calls
-/// `render` on all of them at once, passing the same user data, so the
-/// trampoline would hand out several `&mut T` to one application. See
-/// `docs/multithreaded-rendering.md`.
-///
-/// # Errors
-/// Returns [`Error::ThreadCountUnsupported`] when more than one render
-/// thread is configured.
+/// At least 1: libbela passes `threadCount` through unchanged and only
+/// creates *extra* threads above 1, so 0 and 1 both mean the one thread
+/// that always renders. This is what the audio system sizes the render
+/// states from, and what
+/// [`RenderContext::thread_count`](crate::RenderContext::thread_count)
+/// reports back.
 #[cfg_attr(
     not(bela_device),
     allow(
@@ -273,11 +274,8 @@ fn to_c_int(value: u32) -> c_int {
         reason = "only the device-gated audio system applies settings; still unit-tested on the host"
     )
 )]
-pub const fn check_supported(raw: &BelaInitSettings) -> Result<(), Error> {
-    if raw.threadCount > 1 {
-        return Err(Error::ThreadCountUnsupported(raw.threadCount));
-    }
-    Ok(())
+pub fn render_threads(raw: &BelaInitSettings) -> usize {
+    (raw.threadCount as usize).max(1)
 }
 
 #[cfg(test)]
@@ -382,24 +380,22 @@ mod tests {
     }
 
     #[test]
-    fn a_single_render_thread_is_supported() {
-        let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
-        raw.threadCount = 1;
+    fn both_spellings_of_one_render_thread_count_as_one() {
+        // libbela creates extra threads only above 1, so a threadCount
+        // of 0 renders on the one thread that always exists.
+        for spelling in [0, 1] {
+            let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
+            raw.threadCount = spelling;
 
-        assert_eq!(check_supported(&raw), Ok(()));
+            assert_eq!(render_threads(&raw), 1, "threadCount {spelling}");
+        }
     }
 
     #[test]
-    fn multithreaded_rendering_is_refused() {
-        // BelaApplication::render takes &mut self, and Bela calls it on
-        // every thread at once with the same user data.
+    fn extra_render_threads_are_counted_as_asked_for() {
         let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
         raw.threadCount = 4;
 
-        assert_eq!(
-            check_supported(&raw),
-            Err(Error::ThreadCountUnsupported(4)),
-            "more than one render thread cannot be served safely"
-        );
+        assert_eq!(render_threads(&raw), 4);
     }
 }

@@ -1,8 +1,9 @@
 # Multithreaded rendering
 
 What `threadCount` actually does on a Bela Gem, measured on the board
-on 2026-08-05 (Bela 1.18.0, Debian Bookworm image 2026-03-25, EVL
-real-time core), and what it means for the safe Rust API.
+on 2026-08-05 and again on 2026-08-06 through the safe API (Bela
+1.18.0, Debian Bookworm image 2026-03-25, EVL real-time core), and what
+it means for that API.
 
 ## Summary
 
@@ -12,9 +13,10 @@ not partition anything: splitting the work is entirely the
 application's job, using `thisThread` and `threadCount` from the
 context.
 
-That is incompatible with `BelaApplication::render(&mut self, ...)`,
-which is why `Bela::new` currently rejects a `thread_count` above 1
-(see [Consequences for the Rust API](#consequences-for-the-rust-api)).
+`BelaApplication` is shaped around that — `render` takes `&self` and one
+per-thread `RenderState`, and `RenderContext` hands out only this
+thread's frames — and the crate does the partitioning Bela does not.
+See [Consequences for the Rust API](#consequences-for-the-rust-api).
 
 ## How Bela implements it
 
@@ -35,8 +37,25 @@ From the sources on the board (`/root/Bela/core`):
   `Bela_cleanupAudio` runs `cleanup`, so neither callback overlaps
   `render`.
 - `render_pre` / `render_post` in `BelaInitSettings` are the hooks that
-  run once per block around the parallel section. They are not wrapped
-  by this crate yet.
+  run once per block around the parallel section, on the main audio
+  thread. `render_wrapper` calls them whenever they are set, whatever
+  the thread count, so they are not a multithreading-only path: with
+  one render thread the sequence is still pre, render, post.
+
+There is one thin edge in that arrangement, and the crate is built to
+survive it rather than to assume it away. The loop `render_wrapper`
+waits in is
+
+```c
+while(!allThreadsDone && !Bela_stopRequested()) { ... }
+```
+
+so a stop requested mid-block ends the wait early and `render_post` is
+called while a secondary thread may still be inside `render`. That is
+the one measured way the callback protocol can be broken, and it is why
+the crate checks the protocol with atomic claims instead of trusting
+it: a `render_post` that arrives then is refused rather than served
+with references a running `render` already holds.
 
 ## What was measured
 
@@ -77,22 +96,68 @@ record the values above. Stop `bela_daemon` first
 
 ## Consequences for the Rust API
 
-`BelaApplication::render` takes `&mut self`, and the trampoline turns
-the user-data pointer into `&mut T`. With more than one render thread
-the C side hands that same pointer to every thread at the same time, so
-several `&mut T` to one value would exist at once: undefined behaviour,
-reachable from entirely safe user code.
+A `render` that took `&mut self` could not describe this: the C side
+hands one user-data pointer to every thread at the same time, so
+several `&mut T` to one value would exist at once — undefined
+behaviour, reachable from entirely safe user code.
 
-Until a trait shaped for concurrent rendering exists, `Bela::new`
-returns [`Error::ThreadCountUnsupported`] when the effective
-`threadCount` is above 1, rather than initialising something unsound.
-`Settings::thread_count` is kept, since it is the same knob the future
-API will use.
+So `BelaApplication` is built the other way round, and one render
+thread is the degenerate case of the same model rather than a separate
+one:
 
-The shape that fits the C behaviour is a separate trait whose `render`
-takes `&self` and whose implementor is `Sync`, leaving `setup` and
-`cleanup` on `&mut self` (they are single-threaded, as measured above).
-Applications would partition by `context.this_thread()` and use
-interior mutability — atomics, or per-thread state indexed by the
-thread number — for anything they mutate. Designing it is
-[issue #25](https://github.com/akiomik/bela-rs/issues/25).
+- `render(&self, state: &mut Self::RenderState, context: &mut RenderContext)`.
+  The application is shared; everything `render` mutates lives in a
+  `RenderState`, one per thread, built by `create_render_state` before
+  audio starts.
+- `RenderContext` reads the whole block but writes only
+  `audio_frame_range()` and its analog and digital counterparts —
+  contiguous frame ranges that tile the block exactly. The crate does
+  the partitioning Bela does not; `partition` in `bela/src/context.rs`
+  is the whole of it.
+- `render_pre` and `render_post` take `&mut self`, every state, and a
+  `BlockContext` over the whole block. They are where per-block
+  preparation and mixing down belong, and the only place a
+  multithreaded application may touch frames it does not own.
+- `setup` and `cleanup` keep `&mut self`, as measured above.
+
+The digital words are the exception to "inputs are shared": they are
+the outputs too, so `RenderContext`'s digital accessors — reads
+included — are bounded by this thread's range, while `audio_in` and
+`analog_in` are not.
+
+None of that is trusted to libbela. `bela/src/runtime.rs` grants a
+non-blocking atomic claim before building any reference — one exclusive
+claim for the single-threaded phases, one slot per render thread — and
+a callback that cannot claim what it needs records a fault, requests a
+stop and returns without running user code. `Bela::callback_faults`
+reports how many times that happened; the count is 0 for a run that
+behaved.
+
+## Running it
+
+`bela/examples/parallel.rs` renders a bank of 192 sine oscillators
+split by frame, and reports what each thread did. Measured on the board
+on 2026-08-06 (same image and libbela as above), 16 frames per block at
+44.1 kHz, 6-second runs:
+
+| `thread_count` | cores used | frames per thread per block | busiest thread's share of the block | audio thread busy |
+|---|---|---|---|---|
+| 1 | 3 | 16 | 41.6% | 48.6% |
+| 2 | 3, 2 | 8 | 21.0% | 42.2% |
+| 4 | 3, 2, 1, 0 | 4 | 10.7% | 32.3% |
+
+Every run reported `rendered=expected` and `uncovered=0`: the frames
+the threads rendered add up to exactly one block per block, and a
+sentinel `render_pre` stamps into every frame was gone by
+`render_post`. So the block was divided, not rendered four times over.
+
+The work per thread falls with the thread count almost exactly — 41.6%
+to 10.7% over four threads — while the audio thread's own figure falls
+much less, from 48.6% to 32.3%. The difference is the cost of the
+arrangement itself: the main thread wakes the others, renders its own
+share, and then spins waiting for the last of them, and all of that
+counts as busy. Multithreaded rendering buys headroom, not four times
+the headroom.
+
+`scripts/smoke-test.sh` runs the same example at 1, 2 and 4 threads and
+checks the coverage and the fall in per-thread work.

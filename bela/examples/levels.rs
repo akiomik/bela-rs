@@ -31,7 +31,7 @@ use core::f32::consts::TAU;
 #[cfg(not(bela_device))]
 use std::process::ExitCode;
 
-use bela::{BelaApplication, Context};
+use bela::{BelaApplication, BlockContext, RenderContext, SetupContext, ThreadInfo};
 
 const FREQUENCY: f32 = 440.0;
 const AMPLITUDE: f32 = 0.3;
@@ -49,6 +49,8 @@ const INPUT_GAIN: f32 = 30.0;
 const MISSING_CHANNEL: usize = 64;
 
 struct Sine {
+    /// Where the next block starts; see `examples/sine.rs` for why a
+    /// phase belongs to the block rather than to a render thread.
     phase: f32,
     phase_increment: f32,
 }
@@ -62,26 +64,61 @@ impl Sine {
     }
 }
 
-// Safety: render only does arithmetic and writes to the context
-// buffers — no allocation, blocking, system calls or panicking code
-// paths. The levels are set from the main thread, before audio starts.
-unsafe impl BelaApplication for Sine {
-    fn setup(&mut self, context: &mut Context) -> bool {
+/// One thread's running phase, seeded per block by `render_pre`.
+struct Phase {
+    first_frame: usize,
+    phase: f32,
+}
+
+impl BelaApplication for Sine {
+    type RenderState = Phase;
+
+    fn setup(&mut self, context: &SetupContext) -> bool {
         self.phase_increment = TAU * FREQUENCY / context.audio_sample_rate();
         true
     }
 
-    fn render(&mut self, context: &mut Context) {
-        for frame in 0..context.audio_frames() {
-            let sample = AMPLITUDE * self.phase.sin();
+    fn create_render_state(&mut self, thread: ThreadInfo, context: &SetupContext) -> Phase {
+        let frames = context.audio_frames();
+        Phase {
+            first_frame: frames * thread.index() / thread.count(),
+            phase: 0.0,
+        }
+    }
+
+    // Real-time safe: arithmetic on values the states already hold.
+    fn render_pre(&mut self, states: &mut [Phase], _context: &mut BlockContext) {
+        for state in states {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a frame index within a block is far below f32's exact integer range"
+            )]
+            let offset = state.first_frame as f32 * self.phase_increment;
+            state.phase = self.phase + offset;
+        }
+    }
+
+    // Real-time safe: arithmetic and writes to this thread's frames —
+    // no allocation, blocking, system calls or panicking code paths.
+    // The levels are set from the main thread, before audio starts.
+    fn render(&self, state: &mut Phase, context: &mut RenderContext) {
+        for frame in context.audio_frame_range() {
+            let sample = AMPLITUDE * state.phase.sin();
             for channel in 0..context.audio_out_channels() {
                 context.audio_write(frame, channel, sample);
             }
-            self.phase += self.phase_increment;
-            if self.phase >= TAU {
-                self.phase -= TAU;
-            }
+            state.phase += self.phase_increment;
         }
+    }
+
+    // Real-time safe: one multiplication and a wrap.
+    fn render_post(&mut self, _states: &mut [Phase], context: &mut BlockContext) {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a block's frame count is far below f32's exact integer range"
+        )]
+        let advanced = context.audio_frames() as f32 * self.phase_increment;
+        self.phase = (self.phase + advanced) % TAU;
     }
 }
 

@@ -1,8 +1,13 @@
 //! Reports the audio configuration from `setup` and a heartbeat from
-//! `render`, using the real-time safe printing macros.
+//! `render_post`, using the real-time safe printing macros.
 //!
 //! Prints roughly once a second rather than once a block: formatting
 //! costs time on the audio thread.
+//!
+//! The heartbeat is counted in `render_post` rather than in `render`
+//! because a block is one block however many threads rendered it —
+//! `render_post` runs once per block, on the main audio thread, with
+//! `&mut self`, which is exactly what a per-block counter wants.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
@@ -21,7 +26,10 @@
 #[cfg(not(bela_device))]
 use std::process::ExitCode;
 
-use bela::{BelaApplication, Context, rt_println};
+use bela::{
+    BelaApplication, BlockContext, CleanupContext, RenderContext, SetupContext, ThreadInfo,
+    rt_println,
+};
 
 struct Heartbeat {
     blocks: u64,
@@ -38,10 +46,10 @@ impl Heartbeat {
     }
 }
 
-// Safety: render counts blocks and prints through the real-time safe
-// path — no allocation, blocking, system calls or panicking code paths.
-unsafe impl BelaApplication for Heartbeat {
-    fn setup(&mut self, context: &mut Context) -> bool {
+impl BelaApplication for Heartbeat {
+    type RenderState = ();
+
+    fn setup(&mut self, context: &SetupContext) -> bool {
         let frames = context.audio_frames();
         let sample_rate = context.audio_sample_rate();
         #[allow(
@@ -56,16 +64,20 @@ unsafe impl BelaApplication for Heartbeat {
 
         rt_println!(
             "setup: {sample_rate} Hz, {frames} frames per block, \
-             {} in / {} out audio channels, thread {}/{}",
+             {} in / {} out audio channels, {} render thread(s)",
             context.audio_in_channels(),
             context.audio_out_channels(),
-            context.this_thread(),
             context.thread_count()
         );
         true
     }
 
-    fn render(&mut self, context: &mut Context) {
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+
+    // Real-time safe: a counter, and a formatted line once a second.
+    fn render_post(&mut self, _states: &mut [()], context: &mut BlockContext) {
         self.blocks += 1;
         if self.blocks % self.blocks_per_report == 0 {
             rt_println!(
@@ -77,7 +89,7 @@ unsafe impl BelaApplication for Heartbeat {
         }
     }
 
-    fn cleanup(&mut self, _context: &mut Context) {
+    fn cleanup(&mut self, _states: &mut [()], _context: &CleanupContext) {
         rt_println!("cleanup: {} blocks rendered", self.blocks);
     }
 }

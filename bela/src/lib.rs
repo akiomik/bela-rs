@@ -1,18 +1,21 @@
 //! Safe Rust API for real-time audio on [Bela Gem].
 //!
 //! Built on top of the raw FFI bindings in [`bela_sys`]. User code
-//! implements the [`BelaApplication`] trait — an `unsafe` trait, because
-//! implementing it is a promise that `render` is real-time safe — and
-//! hands an instance to [`Bela::run`]:
+//! implements the [`BelaApplication`] trait and hands an instance to
+//! [`Bela::run`]:
 //!
 //! ```ignore
-//! use bela::{Bela, BelaApplication, Context, Settings};
+//! use bela::{Bela, BelaApplication, RenderContext, Settings, SetupContext, ThreadInfo};
 //!
 //! struct Passthrough;
 //!
-//! unsafe impl BelaApplication for Passthrough {
-//!     fn render(&mut self, context: &mut Context) {
-//!         // Copy audio input to audio output...
+//! impl BelaApplication for Passthrough {
+//!     type RenderState = ();
+//!
+//!     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+//!
+//!     fn render(&self, _state: &mut (), context: &mut RenderContext) {
+//!         // Copy audio input to audio output, for this thread's frames...
 //!     }
 //! }
 //!
@@ -20,6 +23,34 @@
 //!     Bela::run(Passthrough, &Settings::new().period_size(64))
 //! }
 //! ```
+//!
+//! # One application model, one or four threads
+//!
+//! Bela can render a block on several threads at once — a Bela Gem has
+//! four cores — and it does so by calling `render` on all of them
+//! simultaneously, for the same block, over the same buffers. Nothing
+//! is partitioned on the C side.
+//!
+//! [`BelaApplication`] is shaped for that, and a single render thread
+//! is the same shape with one of everything:
+//!
+//! - the application is shared as `&self` while rendering, so whatever
+//!   `render` mutates lives in a
+//!   [`RenderState`](BelaApplication::RenderState), one per thread;
+//! - [`RenderContext`] reads the whole block but writes only this
+//!   thread's [`audio_frame_range`](RenderContext::audio_frame_range),
+//!   and the ranges tile the block exactly;
+//! - [`render_pre`](BelaApplication::render_pre) and
+//!   [`render_post`](BelaApplication::render_post) bracket the parallel
+//!   section on the main audio thread, with the whole block and every
+//!   render state to themselves — where per-block preparation and
+//!   mixing down belong.
+//!
+//! [`Settings::thread_count`] chooses how many threads; nothing else
+//! about an application changes with it. What Bela actually does, and
+//! how it was measured, is in `docs/multithreaded-rendering.md`.
+//!
+//! # Everything else
 //!
 //! Work that must not happen in `render` — file and network I/O,
 //! expensive calculations, anything that allocates or blocks — belongs
@@ -31,11 +62,11 @@
 //! hands it to Bela's real-time print function — `println!` allocates
 //! and blocks, and is forbidden in `render`.
 //!
-//! Whether `render` fits within its block deadline is answered by
-//! [`Settings::cpu_monitoring`], which makes [`Context::cpu_usage`]
-//! report how much of each block the audio thread uses, and by
-//! [`CpuTimer`], which measures one section of `render` at a time.
-//! Without them the first sign of running out of headroom is a
+//! Whether rendering fits within its block deadline is answered by
+//! [`Settings::cpu_monitoring`], which makes
+//! [`BlockContext::cpu_usage`] report how much of each block the audio
+//! thread uses, and by [`CpuTimer`], which measures one section at a
+//! time. Without them the first sign of running out of headroom is a
 //! dropout, after the fact.
 //!
 //! The codec's own volume controls — the line out level, the headphone
@@ -54,8 +85,8 @@
 //!
 //! [`Bela`] itself calls into `libbela` and therefore only exists when
 //! compiling for the device target (`aarch64-unknown-linux-gnu`); the
-//! rest of the crate — [`BelaApplication`], [`Context`], [`Settings`] —
-//! is target-independent and unit-tested on the host.
+//! rest of the crate — [`BelaApplication`], the contexts, [`Settings`]
+//! — is target-independent and unit-tested on the host.
 //!
 //! Binaries should set `panic = "abort"` in their release profile: a
 //! panic crossing the audio callback boundary aborts the process either
@@ -70,6 +101,7 @@ mod cpu;
 mod error;
 mod level;
 mod print;
+mod runtime;
 mod settings;
 mod singleton;
 #[cfg(bela_device)]
@@ -77,10 +109,12 @@ mod system;
 mod task;
 mod util;
 
-pub use application::BelaApplication;
+pub use application::{BelaApplication, ThreadInfo};
 #[cfg(bela_device)]
 pub use cmdline::print_usage;
-pub use context::{Context, PinMode};
+pub use context::{
+    BlockContext, CallbackContext, CleanupContext, PinMode, RenderContext, SetupContext,
+};
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
 pub use level::{Channel, MAX_DECIBELS};

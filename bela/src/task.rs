@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use std::ffi::CString;
 use std::sync::{Mutex, PoisonError};
 
-use crate::context::Context;
+use crate::context::CallbackContext;
 use crate::error::Error;
 
 /// Priority of the audio thread. Auxiliary tasks should run below it,
@@ -139,17 +139,20 @@ fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
 /// [`Error::TaskCreateWhileStopping`] rather than handing back a task
 /// that is about to be deleted.
 ///
-/// # Not shareable
+/// # Shared, but only within a callback
 ///
-/// The handle is [`Send`], because applications are moved to the audio
-/// thread, but deliberately not [`Sync`]: sharing one by reference
-/// would put scheduling back within reach of a thread that has no
-/// business doing it.
+/// The handle is [`Send`] and [`Sync`], because an application is both
+/// and holds its tasks: with more than one render thread, every one of
+/// them reaches the same handle through `&self`. Scheduling from
+/// several at once is what libbela does itself —
+/// `Bela_scheduleAuxiliaryTask` takes the task's mutex and notifies its
+/// condition variable, and a call that cannot take the lock reports the
+/// request as lost, which is already the documented behaviour below.
 ///
-/// ```compile_fail
-/// fn assert_sync<T: Sync>() {}
-/// assert_sync::<bela::AuxiliaryTask>();
-/// ```
+/// What keeps that from being a licence to schedule from anywhere is
+/// the context [`schedule`](AuxiliaryTask::schedule) asks for: a
+/// context cannot leave the callback it was handed to, so a handle sent
+/// to an unrelated thread still has nothing to schedule with.
 ///
 /// # Example
 ///
@@ -157,15 +160,19 @@ fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
 /// use core::sync::atomic::{AtomicU64, Ordering};
 /// use std::sync::Arc;
 ///
-/// use bela::{AuxiliaryTask, BelaApplication, Context, rt_println};
+/// use bela::{
+///     AuxiliaryTask, BelaApplication, RenderContext, SetupContext, ThreadInfo, rt_println,
+/// };
 ///
 /// struct App {
 ///     task: Option<AuxiliaryTask>,
 ///     blocks: Arc<AtomicU64>,
 /// }
 ///
-/// unsafe impl BelaApplication for App {
-///     fn setup(&mut self, _context: &mut Context) -> bool {
+/// impl BelaApplication for App {
+///     type RenderState = ();
+///
+///     fn setup(&mut self, _context: &SetupContext) -> bool {
 ///         let blocks = Arc::clone(&self.blocks);
 ///         self.task = AuxiliaryTask::new("report", 50, move || {
 ///             rt_println!("{} blocks so far", blocks.load(Ordering::Relaxed));
@@ -174,7 +181,9 @@ fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
 ///         self.task.is_some()
 ///     }
 ///
-///     fn render(&mut self, context: &mut Context) {
+///     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+///
+///     fn render(&self, _state: &mut (), context: &mut RenderContext) {
 ///         let blocks = self.blocks.fetch_add(1, Ordering::Relaxed) + 1;
 ///         if blocks % 1000 == 0 {
 ///             if let Some(task) = &self.task {
@@ -199,9 +208,12 @@ pub struct AuxiliaryTask {
 }
 
 // The handle is a plain pointer into libbela's task list, and the C
-// side expects it to be used from the audio thread — which is where the
-// application, and with it this handle, ends up.
+// side expects it to be used from the audio threads — which is where
+// the application, and with it this handle, ends up. Scheduling through
+// it is Bela_scheduleAuxiliaryTask, which serialises on the task's own
+// mutex, so several render threads may hold the same handle at once.
 unsafe impl Send for AuxiliaryTask {}
+unsafe impl Sync for AuxiliaryTask {}
 
 impl AuxiliaryTask {
     /// Creates a task that runs `callback` each time it is scheduled.
@@ -298,14 +310,14 @@ impl AuxiliaryTask {
     ///
     /// # Why it takes a context
     ///
-    /// The `&Context` is a witness that this is a Bela callback —
-    /// `setup`, `render` or `cleanup` — which is the only place
-    /// scheduling is sound. Stopping the audio system frees every task,
-    /// and libbela joins the render thread before it does so, so a
-    /// schedule made from a callback can never be in flight while the
-    /// task behind it is freed. A handle sent to some other thread
-    /// (the type is [`Send`], since applications are) has no context to
-    /// schedule with, and so cannot race with that teardown.
+    /// The context is a witness that this is a Bela callback — any of
+    /// them — which is the only place scheduling is sound. Stopping the
+    /// audio system frees every task, and `Bela_stopAudio` joins the
+    /// main audio thread and then every render thread before it does
+    /// so, so a schedule made from a callback can never be in flight
+    /// while the task behind it is freed. A handle sent to some other
+    /// thread (the type is [`Send`], since applications are) has no
+    /// context to schedule with, and so cannot race with that teardown.
     ///
     /// # Requests can be lost
     ///
@@ -324,7 +336,16 @@ impl AuxiliaryTask {
     /// Once the audio system this task belongs to has stopped, every
     /// task is gone and this does nothing — `cleanup` runs after that
     /// point.
-    pub fn schedule(&self, _context: &Context) {
+    /// # First schedule of a task
+    ///
+    /// libbela forces a task's thread to start the first time the task
+    /// is scheduled, by raising and restoring its priority. Two render
+    /// threads doing that at the same time can make libbela print
+    /// `Force starting scheduled thread didn't work` on standard error;
+    /// nothing else comes of it, and the next schedule finds the thread
+    /// started. Scheduling a task once from `setup` or `render_pre`
+    /// before the render threads share it avoids the message.
+    pub fn schedule(&self, _context: &impl CallbackContext) {
         if !self.is_current() {
             return;
         }

@@ -18,13 +18,6 @@ pub enum Error {
     Init(i32),
     /// `Bela_startAudio` failed with the contained return code.
     Start(i32),
-    /// The requested number of render threads cannot be served by
-    /// [`BelaApplication`](crate::BelaApplication).
-    ///
-    /// Bela calls `render` concurrently on every thread with the same
-    /// user data, which would mean several `&mut self` to one
-    /// application at once; see `docs/multithreaded-rendering.md`.
-    ThreadCountUnsupported(u32),
     /// An auxiliary task name contained a NUL byte.
     TaskName,
     /// `Bela_createAuxiliaryTask` failed, or the crate was built for a
@@ -102,11 +95,6 @@ impl fmt::Display for Error {
         match self {
             Self::Init(code) => write!(f, "Bela_initAudio failed with code {code}"),
             Self::Start(code) => write!(f, "Bela_startAudio failed with code {code}"),
-            Self::ThreadCountUnsupported(threads) => write!(
-                f,
-                "thread_count is {threads}: BelaApplication::render would be called \
-                 concurrently on {threads} threads with &mut self"
-            ),
             Self::TaskName => write!(f, "the auxiliary task name contains a NUL byte"),
             Self::TaskCreate => write!(f, "Bela_createAuxiliaryTask failed"),
             Self::TaskCreateWhileStopping => write!(

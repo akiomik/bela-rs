@@ -30,7 +30,10 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use bela::{AuxiliaryTask, BelaApplication, Context, Error, rt_println};
+use bela::{
+    AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, Error, RenderContext,
+    SetupContext, ThreadInfo, rt_println,
+};
 
 /// Creates the task whose handle is then used after its audio system
 /// is gone. Never started, only initialised and dropped.
@@ -39,8 +42,10 @@ struct Abandoned {
     handle: Arc<Mutex<Option<AuxiliaryTask>>>,
 }
 
-unsafe impl BelaApplication for Abandoned {
-    fn setup(&mut self, _context: &mut Context) -> bool {
+impl BelaApplication for Abandoned {
+    type RenderState = ();
+
+    fn setup(&mut self, _context: &SetupContext) -> bool {
         let runs = Arc::clone(&self.runs);
         match AuxiliaryTask::new("bela-rs-abandoned", 50, move || {
             runs.fetch_add(1, Ordering::Relaxed);
@@ -58,7 +63,9 @@ unsafe impl BelaApplication for Abandoned {
         }
     }
 
-    fn render(&mut self, _context: &mut Context) {}
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 /// Runs for real, scheduling both the stale handle and one of its own.
@@ -71,9 +78,10 @@ struct Survivor {
     interval: u64,
 }
 
-// Safety: render counts, schedules and nothing else.
-unsafe impl BelaApplication for Survivor {
-    fn setup(&mut self, context: &mut Context) -> bool {
+impl BelaApplication for Survivor {
+    type RenderState = ();
+
+    fn setup(&mut self, context: &SetupContext) -> bool {
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -90,7 +98,13 @@ unsafe impl BelaApplication for Survivor {
         self.fresh.is_some()
     }
 
-    fn render(&mut self, context: &mut Context) {
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+
+    // Real-time safe: a counter and two schedules, both of which
+    // return immediately. Once per block, on the main audio thread.
+    fn render_post(&mut self, _states: &mut [()], context: &mut BlockContext) {
         self.blocks += 1;
         if self.blocks % self.interval != 0 {
             return;
@@ -103,7 +117,7 @@ unsafe impl BelaApplication for Survivor {
         }
     }
 
-    fn cleanup(&mut self, _context: &mut Context) {
+    fn cleanup(&mut self, _states: &mut [()], _context: &CleanupContext) {
         // `cleanup` runs inside the teardown, so this must fail.
         let created = AuxiliaryTask::new("bela-rs-in-cleanup", 50, || {});
         let cleanup_create = match created {

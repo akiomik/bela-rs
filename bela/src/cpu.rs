@@ -10,8 +10,8 @@
 //! There are two ways in, both read as a [`CpuUsage`]:
 //! [`Settings::cpu_monitoring`](crate::Settings::cpu_monitoring) turns
 //! on the monitoring libbela does for the whole audio thread, which
-//! [`Context::cpu_usage`] reads, and [`CpuTimer`] measures a section of
-//! `render` with counters the application owns.
+//! [`BlockContext::cpu_usage`] reads, and [`CpuTimer`] measures a
+//! section of `render` with counters the application owns.
 //!
 //! # The shape of the API is a soundness requirement
 //!
@@ -26,14 +26,23 @@
 //! Enabling is a [`Settings`](crate::Settings) field, applied by
 //! [`Bela::new`](crate::Bela::new) before an audio thread exists — the
 //! reason [`apply_monitoring`] is not public, and part of why only one
-//! audio system may exist at a time. Reading needs the `&Context` that
-//! only a Bela callback has: `setup` runs before the audio thread
-//! starts, `render` runs *on* it, and `cleanup` runs after libbela has
+//! audio system may exist at a time. Reading needs a context from one
+//! of the callbacks that run on the writing thread, or on no thread at
+//! all: `setup` runs before the audio thread starts, `render_pre` and
+//! `render_post` run *on* it, and `cleanup` runs after libbela has
 //! joined it.
 //!
-//! That last claim about `render` only holds while libbela renders on
-//! the thread it measures, which stops being true at large period
-//! sizes; [`MAX_MONITORED_PERIOD_SIZE`] covers what happens then.
+//! [`RenderContext`](crate::RenderContext) is deliberately not one of
+//! them. With more than one render thread, `render` also runs on
+//! threads libbela started for it, which are exactly the other threads
+//! the counters must not be read from; the reading belongs in
+//! `render_pre` or `render_post`, which bracket the parallel section on
+//! the main audio thread.
+//!
+//! The claim about `render_pre` and `render_post` only holds while
+//! libbela renders on the thread it measures, which stops being true at
+//! large period sizes; [`MAX_MONITORED_PERIOD_SIZE`] covers what
+//! happens then.
 //!
 //! [`CpuTimer`] has no such constraint, because its counters belong to
 //! the application rather than to libbela.
@@ -45,7 +54,7 @@ use core::time::Duration;
 
 use bela_sys::BelaCpuData;
 
-use crate::context::Context;
+use crate::context::{BlockContext, CleanupContext, SetupContext};
 use crate::error::Error;
 
 /// A reading of the CPU monitoring counters.
@@ -123,101 +132,126 @@ impl fmt::Display for CpuUsage {
     }
 }
 
-impl Context {
-    /// The audio thread's CPU usage, or `None` when monitoring was not
-    /// enabled with
-    /// [`Settings::cpu_monitoring`](crate::Settings::cpu_monitoring).
-    ///
-    /// Reports how much of the block deadline went into rendering the
-    /// block — the measurement that says whether `render` fits, rather
-    /// than [`underrun_count`](Context::underrun_count) saying
-    /// afterwards that it did not.
-    ///
-    /// Cheap, non-blocking and real-time safe: it copies a structure
-    /// libbela owns. The number only changes once per acquisition
-    /// cycle, so there is nothing to gain from reading it more often
-    /// than that.
-    ///
-    /// ```no_run
-    /// use bela::{BelaApplication, Context, rt_println};
-    ///
-    /// # struct App;
-    /// # unsafe impl BelaApplication for App {
-    /// # fn render(&mut self, _context: &mut Context) {}
-    /// fn cleanup(&mut self, context: &mut Context) {
-    ///     if let Some(usage) = context.cpu_usage() {
-    ///         rt_println!("audio thread: {usage}");
-    ///     }
-    /// }
-    /// # }
-    /// ```
-    ///
-    /// # What is being measured
-    ///
-    /// The clock is monotonic wall time, not consumed CPU cycles, so
-    /// the busy time includes anything the thread waited for: a
-    /// higher-priority thread running, a blocking call, a page fault.
-    /// On the audio thread that is the useful reading — what matters is
-    /// whether the block was finished in time, not why it was not — but
-    /// it does mean the numbers are not comparable to `top`.
-    ///
-    /// # Why it is on the context
-    ///
-    /// The `&Context` is a witness that this is a Bela callback, which
-    /// is the only place the read is sound. The counters are written by
-    /// the audio thread with no synchronisation, so reading them from
-    /// another thread would be a data race; inside a callback there is
-    /// no other thread to race with — `setup` runs before the audio
-    /// thread starts, `render` runs on it, and `cleanup` runs after
-    /// libbela has joined it. That `render` really is on the measured
-    /// thread is why monitoring is refused above
-    /// [`MAX_MONITORED_PERIOD_SIZE`](crate::MAX_MONITORED_PERIOD_SIZE)
-    /// frames.
-    ///
-    /// To report from an [`AuxiliaryTask`](crate::AuxiliaryTask),
-    /// publish the reading from `render` through an atomic and let the
-    /// task print that; `examples/cpu.rs` does exactly this. Reading it
-    /// *in* the task is what must not compile, and does not: a task
-    /// callback is `Send + 'static`, and a `&Context` is neither —
-    /// `Context` wraps libbela's raw buffer pointers, so it is not
-    /// [`Sync`] and a reference to it cannot reach another thread at
-    /// all.
-    ///
-    /// ```compile_fail,E0277
-    /// use bela::{AuxiliaryTask, Context};
-    ///
-    /// fn report_from_a_task(context: &Context) {
-    ///     let _ = AuxiliaryTask::new("report", 50, move || {
-    ///         // The task runs on its own thread, where reading the
-    ///         // counters would race the audio thread writing them.
-    ///         let _ = context.cpu_usage();
-    ///     });
-    /// }
-    /// ```
-    ///
-    /// # The first reading is low
-    ///
-    /// Bela measures each period from the previous tic, and the audio
-    /// thread's first tic has nothing to measure from but the timestamp
-    /// [`Bela::new`](crate::Bela::new) left behind when it enabled
-    /// monitoring — so the first cycle also counts everything in
-    /// between, which is the audio system starting up. Measured on the
-    /// board with `examples/cpu.rs`, that is a first reading of 9.8%
-    /// against a steady 19.0%.
-    ///
-    /// Ignore the first reading, or size the cycle so that one goes by
-    /// before anyone looks.
-    #[must_use]
-    pub fn cpu_usage(&self) -> Option<CpuUsage> {
-        monitoring_data().map(|data| CpuUsage::from_raw(&data))
-    }
+/// Puts `cpu_usage` on every context whose callback runs on the thread
+/// libbela measures, or on no thread at all.
+macro_rules! cpu_usage {
+    ($($context:ty),+ $(,)?) => {
+        $(
+            impl $context {
+                /// The audio thread's CPU usage, or `None` when
+                /// monitoring was not enabled with
+                /// [`Settings::cpu_monitoring`](crate::Settings::cpu_monitoring).
+                ///
+                /// Reports how much of the block deadline went into
+                /// rendering the block — the measurement that says
+                /// whether `render` fits, rather than `underrun_count`
+                /// saying afterwards that it did not.
+                ///
+                /// Cheap, non-blocking and real-time safe: it copies a
+                /// structure libbela owns. The number only changes once
+                /// per acquisition cycle, so there is nothing to gain
+                /// from reading it more often than that.
+                ///
+                /// ```no_run
+                /// use bela::{BelaApplication, CleanupContext, rt_println};
+                /// # use bela::{RenderContext, SetupContext, ThreadInfo};
+                ///
+                /// # struct App;
+                /// # impl BelaApplication for App {
+                /// # type RenderState = ();
+                /// # fn create_render_state(&mut self, _t: ThreadInfo, _c: &SetupContext) {}
+                /// # fn render(&self, _s: &mut (), _c: &mut RenderContext) {}
+                /// fn cleanup(&mut self, _states: &mut [()], context: &CleanupContext) {
+                ///     if let Some(usage) = context.cpu_usage() {
+                ///         rt_println!("audio thread: {usage}");
+                ///     }
+                /// }
+                /// # }
+                /// ```
+                ///
+                /// # What is being measured
+                ///
+                /// The clock is monotonic wall time, not consumed CPU
+                /// cycles, so the busy time includes anything the
+                /// thread waited for: a higher-priority thread running,
+                /// a blocking call, a page fault. On the audio thread
+                /// that is the useful reading — what matters is whether
+                /// the block was finished in time, not why it was not —
+                /// but it does mean the numbers are not comparable to
+                /// `top`.
+                ///
+                /// # Why it is on the context
+                ///
+                /// The context is a witness that this is a Bela
+                /// callback made where the read is sound. The counters
+                /// are written by the main audio thread with no
+                /// synchronisation, so reading them from another thread
+                /// would be a data race; in these callbacks there is no
+                /// other thread to race with — `setup` runs before the
+                /// audio thread starts, `render_pre` and `render_post`
+                /// run on it, and `cleanup` runs after libbela has
+                /// joined it. That those two really are on the measured
+                /// thread is why monitoring is refused above
+                /// [`MAX_MONITORED_PERIOD_SIZE`](crate::MAX_MONITORED_PERIOD_SIZE)
+                /// frames.
+                ///
+                /// [`RenderContext`](crate::RenderContext) has no
+                /// `cpu_usage` for the same reason: above one render
+                /// thread, `render` is one of the other threads.
+                ///
+                /// To report from an
+                /// [`AuxiliaryTask`](crate::AuxiliaryTask), publish the
+                /// reading through an atomic and let the task print
+                /// that; `examples/cpu.rs` does exactly this. Reading it
+                /// *in* the task is what must not compile, and does
+                /// not: a task callback is `Send + 'static`, and a
+                /// reference to a context is neither — a context wraps
+                /// libbela's raw buffer pointers, so it is not [`Sync`]
+                /// and a reference to it cannot reach another thread at
+                /// all.
+                ///
+                /// ```compile_fail,E0277
+                /// use bela::{AuxiliaryTask, BlockContext};
+                ///
+                /// fn report_from_a_task(context: &BlockContext) {
+                ///     let _ = AuxiliaryTask::new("report", 50, move || {
+                ///         // The task runs on its own thread, where reading the
+                ///         // counters would race the audio thread writing them.
+                ///         let _ = context.cpu_usage();
+                ///     });
+                /// }
+                /// ```
+                ///
+                /// # The first reading is low
+                ///
+                /// Bela measures each period from the previous tic, and
+                /// the audio thread's first tic has nothing to measure
+                /// from but the timestamp
+                /// [`Bela::new`](crate::Bela::new) left behind when it
+                /// enabled monitoring — so the first cycle also counts
+                /// everything in between, which is the audio system
+                /// starting up. Measured on the board with
+                /// `examples/cpu.rs`, that is a first reading of 9.8%
+                /// against a steady 19.0%.
+                ///
+                /// Ignore the first reading, or size the cycle so that
+                /// one goes by before anyone looks.
+                #[must_use]
+                pub fn cpu_usage(&self) -> Option<CpuUsage> {
+                    monitoring_data().map(|data| CpuUsage::from_raw(&data))
+                }
+            }
+        )+
+    };
 }
+
+cpu_usage!(SetupContext, BlockContext, CleanupContext);
 
 /// Copies the audio thread's counters, if monitoring is on.
 ///
 /// Safety: the pointer is to a static inside libbela, which outlives
-/// everything, and the caller holds a `&Context`, which means no other
-/// thread is writing it — see [`Context::cpu_usage`].
+/// everything, and the caller holds a context from a callback where no
+/// other thread is writing it — see [`BlockContext::cpu_usage`].
 #[cfg(bela_device)]
 fn monitoring_data() -> Option<BelaCpuData> {
     let data = unsafe { bela_sys::Bela_cpuMonitoringGet() };
@@ -283,7 +317,7 @@ pub fn apply_monitoring(cycle: Option<c_int>) -> Result<(), Error> {
 ///
 /// Without this an audio system that asked for monitoring would leave
 /// it on for the next one that did not, right down to a stale reading
-/// from [`Context::cpu_usage`]. The settings are meant to say what is
+/// from [`BlockContext::cpu_usage`]. The settings are meant to say what is
 /// the case, not only what to switch on.
 #[cfg(bela_device)]
 fn disable_monitoring() -> Result<(), Error> {
@@ -307,7 +341,7 @@ fn disable_monitoring() -> Result<(), Error> {
 /// context FIFO. The block size the application sees is unchanged, so
 /// nothing in the context distinguishes the two arrangements.
 ///
-/// That arrangement would put [`Context::cpu_usage`] on a different
+/// That arrangement would put [`BlockContext::cpu_usage`] on a different
 /// thread from the writer, which is the race the API exists to prevent,
 /// so monitoring is refused there rather than reading across it.
 ///
@@ -370,7 +404,7 @@ pub const fn check_cycle(measurements_per_cycle: NonZeroU32) -> Result<c_int, Er
 
 /// Measures a section of `render` chosen by the application.
 ///
-/// Where [`Context::cpu_usage`] reports the whole audio thread, this
+/// Where [`BlockContext::cpu_usage`] reports the whole audio thread, this
 /// reports one part of it — which is how you find out *what* is using
 /// the block, once the audio thread's reading says something is. Its
 /// counters belong to the timer, so several can be in use at once, one
@@ -378,7 +412,7 @@ pub const fn check_cycle(measurements_per_cycle: NonZeroU32) -> Result<c_int, Er
 /// `&self` read of memory the application owns.
 ///
 /// It measures the same thing, the same way as
-/// [`Context::cpu_usage`]: monotonic wall time, which counts waiting as
+/// [`BlockContext::cpu_usage`]: monotonic wall time, which counts waiting as
 /// busy. Reading the clock is itself a system call (a vDSO one, so no
 /// context switch, but not free), so bracketing one section per block
 /// costs nothing worth measuring, while bracketing per frame does not.
@@ -391,7 +425,7 @@ pub const fn check_cycle(measurements_per_cycle: NonZeroU32) -> Result<c_int, Er
 /// Every reading counts, including the first: the timer throws away
 /// what its own first tic measured, which is what would otherwise
 /// stretch the first cycle the way it does for the audio thread's own
-/// first reading (see [`Context::cpu_usage`]).
+/// first reading (see [`BlockContext::cpu_usage`]).
 ///
 /// # Example
 ///
@@ -401,15 +435,21 @@ pub const fn check_cycle(measurements_per_cycle: NonZeroU32) -> Result<c_int, Er
 /// ```no_run
 /// use core::num::NonZeroU32;
 ///
-/// use bela::{BelaApplication, Context, CpuTimer};
+/// use bela::{BelaApplication, CpuTimer, RenderContext, SetupContext, ThreadInfo};
 ///
-/// struct App {
-///     timer: CpuTimer,
-/// }
+/// struct App;
 ///
-/// unsafe impl BelaApplication for App {
-///     fn render(&mut self, context: &mut Context) {
-///         let _filter = self.timer.measure();
+/// impl BelaApplication for App {
+///     // The counters belong to the timer, so each render thread
+///     // carries its own rather than sharing one.
+///     type RenderState = CpuTimer;
+///
+///     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) -> CpuTimer {
+///         CpuTimer::new(NonZeroU32::new(2000).expect("2000 is not zero"))
+///     }
+///
+///     fn render(&self, timer: &mut CpuTimer, _context: &mut RenderContext) {
+///         let _filter = timer.measure();
 ///         // ... the work being measured ...
 ///     }
 /// }
@@ -774,8 +814,8 @@ mod tests {
     fn there_is_nothing_to_report_off_device() {
         use core::mem;
 
-        let mut context: bela_sys::BelaContext = unsafe { mem::zeroed() };
-        let context = unsafe { Context::from_mut_ptr(&raw mut context) };
+        let mut raw: bela_sys::BelaContext = unsafe { mem::zeroed() };
+        let context = unsafe { BlockContext::from_mut_ptr(&raw mut raw) };
 
         assert_eq!(
             context.cpu_usage(),
