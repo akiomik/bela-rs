@@ -264,18 +264,26 @@ impl<T: BelaApplication> Bela<T> {
         }
     }
 
-    /// How many callbacks this audio system has refused for breaking
-    /// the protocol its render states rely on.
+    /// How many callbacks this audio system has refused, while it was
+    /// running, for breaking the protocol its render states rely on.
     ///
     /// Zero for every run that behaved. Anything else means libbela
     /// made a callback somewhere the crate could not hand out the
     /// references [`BelaApplication`] promises — several `render` calls
-    /// with the same thread number, or a `render_post` arriving while
-    /// one was still in flight, which a stop requested mid-block can
-    /// produce. The callback was skipped and a stop requested, so this
-    /// is a reason a run ended, not damage that can be undone.
+    /// with the same thread number, say. The callback was skipped and a
+    /// stop requested, so this is a reason a run ended, not damage that
+    /// can be undone.
     ///
-    /// [`until_stopped`](Bela::until_stopped) reads it for you and
+    /// Refusals *during* a shutdown are not counted here, and are not a
+    /// fault in the same sense: libbela abandons the block it is in
+    /// when a stop arrives, which can leave a `render_post` overlapping
+    /// a `render` that has not finished. Refusing that is the guard
+    /// working. Keeping the two apart is what lets an ordinary Ctrl-C
+    /// stay an ordinary Ctrl-C, and
+    /// [`until_stopped`](Bela::until_stopped) reports the count for
+    /// those separately rather than failing on it.
+    ///
+    /// [`until_stopped`](Bela::until_stopped) reads this for you and
     /// fails with [`Error::CallbackFaults`]; this is for a program
     /// driving [`start`](Bela::start) and [`stop`](Bela::stop) itself.
     #[must_use]
@@ -369,8 +377,16 @@ impl<T: BelaApplication> Bela<T> {
     /// # Errors
     /// Returns [`Error::Start`] when the audio system fails to start,
     /// and [`Error::CallbackFaults`] when the run ended because a
-    /// callback was refused — a stop asked for by the crate rather than
-    /// by anyone else, which `Ok(())` would otherwise hide. See
+    /// callback was refused *while it was running* — a stop asked for
+    /// by the crate rather than by anyone else, which `Ok(())` would
+    /// otherwise hide.
+    ///
+    /// A callback refused during the shutdown itself is not that, and
+    /// does not fail this: libbela abandons the block it is in when a
+    /// stop arrives, and refusing a `render_post` that overlaps a
+    /// `render` still finishing is the guard doing its job on an
+    /// ordinary Ctrl-C. Those are reported on the console instead, and
+    /// mean the last block may be short. See
     /// [`callback_faults`](Bela::callback_faults).
     pub fn until_stopped(mut self) -> Result<(), Error> {
         let handler = request_stop_on_signal as extern "C" fn(c_int);
@@ -384,9 +400,27 @@ impl<T: BelaApplication> Bela<T> {
         self.stop();
         // Read once audio has stopped, so that every render, render_pre
         // and render_post of the run has been counted. The `cleanup`
-        // callback has not run yet — it runs in the drop below — but it
-        // cannot be refused: a claim is free by definition once the
-        // render threads are joined.
+        // callback runs later, in the drop below, and so is not covered
+        // by either number — nothing here could report it, since the
+        // counters go with the runtime it is dropped along with. What
+        // it could be refused for is a claim it cannot take, a thread
+        // count that disagrees, or states that were never built; the
+        // render threads are joined by now and the other two were
+        // settled in `setup`, so none of them can happen on this path.
+        //
+        // Safety: the runtime is alive until the drop below.
+        let while_stopping = unsafe { &*self.runtime }.faults_while_stopping();
+        if while_stopping != 0 {
+            // Not a failure: this is libbela abandoning the block it
+            // was in when the stop arrived, and the guard declining to
+            // hand out references over the top of it. Said out loud all
+            // the same, because an application that counts frames will
+            // see the block go missing.
+            crate::rt_println!(
+                "bela: {while_stopping} callback(s) were refused while stopping, which is how a \
+                 block in flight is abandoned; the last block may be short"
+            );
+        }
         match self.callback_faults() {
             0 => Ok(()),
             faults => Err(Error::CallbackFaults(faults)),

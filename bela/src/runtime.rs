@@ -78,6 +78,23 @@ fn request_stop() {
 #[cfg(not(bela_device))]
 const fn request_stop() {}
 
+/// Whether a stop has already been asked for, by anyone.
+///
+/// What tells an expected refusal from an anomalous one — see
+/// [`Guard::fault`]. Off-device nothing can request a stop, so every
+/// fault a test raises counts as one raised while running, which is
+/// what those tests are about.
+#[cfg(bela_device)]
+fn stop_requested() -> bool {
+    // Safety: Bela_stopRequested only reads a flag.
+    unsafe { bela_sys::Bela_stopRequested() != 0 }
+}
+
+#[cfg(not(bela_device))]
+const fn stop_requested() -> bool {
+    false
+}
+
 /// The non-blocking claims that keep the callback phases apart.
 struct Guard {
     /// [`EXCLUSIVE`] plus the number of `render` calls in flight, in
@@ -86,8 +103,12 @@ struct Guard {
     /// One flag per render thread, so that the same thread number
     /// cannot be inside `render` twice.
     busy: Box<[AtomicBool]>,
-    /// How many callbacks have been refused. Never reset.
+    /// How many callbacks have been refused while the run was live.
+    /// Never reset.
     faults: AtomicU32,
+    /// How many have been refused after a stop was already asked for,
+    /// which is a different thing entirely — see [`Guard::fault`].
+    faults_while_stopping: AtomicU32,
 }
 
 #[cfg_attr(
@@ -103,6 +124,7 @@ impl Guard {
             state: AtomicU64::new(0),
             busy: (0..threads).map(|_| AtomicBool::new(false)).collect(),
             faults: AtomicU32::new(0),
+            faults_while_stopping: AtomicU32::new(0),
         }
     }
 
@@ -115,13 +137,54 @@ impl Guard {
         self.faults.load(Ordering::Relaxed)
     }
 
-    /// Records a refused callback and asks the audio system to stop.
+    fn faults_while_stopping(&self) -> u32 {
+        self.faults_while_stopping.load(Ordering::Relaxed)
+    }
+
+    /// Records a refused callback, and asks the audio system to stop if
+    /// it is not stopping already.
     ///
-    /// Real-time safe: an atomic increment, a flag store, and — for
-    /// the first fault only, so that a run cannot be drowned in them —
-    /// one real-time safe line, since a program that stops for this
-    /// reason has no other way of finding out why.
+    /// # Two kinds of refusal
+    ///
+    /// A refusal *while the run is live* means something is wrong: the
+    /// callbacks are not arriving in a shape the render states can be
+    /// handed out for, and there is no reason to expect the next block
+    /// to be better. It is counted, reported, and the run is stopped.
+    ///
+    /// A refusal *after a stop has been asked for* is the shutdown
+    /// libbela does, seen from inside. `render_wrapper` waits for the
+    /// secondary threads in
+    /// `while(!allThreadsDone && !Bela_stopRequested())`, and the
+    /// threads themselves check the same flag just before calling
+    /// `render` — so a stop landing in between leaves one of them
+    /// inside `render` while the main thread gives up waiting and calls
+    /// `render_post`. Refusing that `render_post` is the guard working,
+    /// not a symptom: the block is being abandoned anyway. It is
+    /// counted separately, and asking for a stop that has already been
+    /// asked for would be pointless.
+    ///
+    /// Keeping the two apart is what lets an ordinary Ctrl-C stay an
+    /// ordinary Ctrl-C. Mixing them would make
+    /// [`Error::CallbackFaults`](crate::Error::CallbackFaults) fire on
+    /// a clean shutdown that happened to land in that window.
+    ///
+    /// Real-time safe either way: atomic increments, a flag read, a
+    /// flag store, and — for the first live fault only, so that a run
+    /// cannot be drowned in them — one real-time safe line, since a
+    /// program stopped for that reason has no other way of finding out
+    /// why.
     fn fault(&self) {
+        self.record_fault(stop_requested());
+    }
+
+    /// [`fault`](Guard::fault) with the answer supplied, so that both
+    /// sides of the split can be tested off-device — where nothing can
+    /// request a stop, and so nothing would ever take the second one.
+    fn record_fault(&self, while_stopping: bool) {
+        if while_stopping {
+            self.faults_while_stopping.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         if self.faults.fetch_add(1, Ordering::Relaxed) == 0 {
             crate::rt_println!(
                 "bela: a callback broke the protocol the render states rely on and was refused; \
@@ -257,13 +320,23 @@ impl<T: BelaApplication> Runtime<T> {
         }
     }
 
-    /// How many callbacks have been refused for breaking the protocol.
+    /// How many callbacks have been refused while the run was live.
     ///
     /// Zero for every run that behaved; anything else means the audio
     /// system was asked to stop because a callback arrived somewhere it
-    /// could not be served safely.
+    /// could not be served safely. See [`Guard::fault`] for what this
+    /// deliberately does not count.
     pub fn faults(&self) -> u32 {
         self.guard.faults()
+    }
+
+    /// How many callbacks have been refused after a stop was already
+    /// asked for.
+    ///
+    /// Expected rather than alarming, and usually 0 or 1: see
+    /// [`Guard::fault`].
+    pub fn faults_while_stopping(&self) -> u32 {
+        self.guard.faults_while_stopping()
     }
 
     /// Whether `threads` is the number of render states this runtime
@@ -881,6 +954,9 @@ mod tests {
                 .expect("the render thread should not panic");
         });
 
+        // A live fault here because nothing off-device can request a
+        // stop. On a board this same overlap arrives during a shutdown,
+        // where it lands in the other counter — see `Guard::fault`.
         assert_eq!(
             runtime.faults(),
             1,
@@ -988,6 +1064,26 @@ mod tests {
     }
 
     // --- The guard on its own ---
+
+    #[test]
+    fn a_refusal_while_stopping_is_counted_apart() {
+        // The shutdown libbela does can leave a `render_post`
+        // overlapping a `render` that has not finished. Refusing it is
+        // the guard working, so it must not turn an ordinary Ctrl-C
+        // into `Error::CallbackFaults`.
+        let guard = Guard::new(1);
+
+        guard.record_fault(false);
+        guard.record_fault(true);
+        guard.record_fault(true);
+
+        assert_eq!(guard.faults(), 1, "only the live refusal is a fault");
+        assert_eq!(
+            guard.faults_while_stopping(),
+            2,
+            "the refusals during the shutdown are counted, and kept apart"
+        );
+    }
 
     #[test]
     fn the_same_thread_number_cannot_render_twice() {

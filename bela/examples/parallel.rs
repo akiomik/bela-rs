@@ -23,9 +23,10 @@
 //!   own, running on a different core;
 //! - `rendered + uncovered` is exactly one block per block: every frame
 //!   was written once or not at all, rather than once per thread;
-//! - `abandoned` is at most 1, and 0 in most runs. `render_pre` stamps
-//!   every frame with a sentinel and `render_post` counts the ones left
-//!   — see "The last block" below for the only way that is not zero;
+//! - `abandoned + unfinished` is at most 1, and 0 in most runs.
+//!   `render_pre` stamps every frame with a sentinel and `render_post`
+//!   counts the ones left — see "The last block" below for the only way
+//!   those are not zero;
 //! - the audio thread's own busy percentage falls as threads are added,
 //!   for the same number of oscillators.
 //!
@@ -35,22 +36,31 @@
 //! ## The last block
 //!
 //! A stop requested part-way through a block can leave that block
-//! unfinished. libbela's secondary render threads check
-//! `Bela_stopRequested()` before taking their next block, so one of
-//! them can bow out while `render_wrapper` — which checks the same flag
-//! while waiting for them — gives up and calls `render_post` anyway.
-//! The frames that thread owned are then nobody's.
+//! unfinished, in one of two shapes. Both come from libbela's secondary
+//! render threads checking `Bela_stopRequested()` just before they call
+//! `render`, while `render_wrapper` checks the same flag as it waits
+//! for them:
 //!
-//! Measured on the board with two threads and a block of 16: one run in
-//! several ends with `uncovered=8 abandoned=1`, exactly one thread's
-//! share of exactly one block, and `rendered + uncovered` still adds up.
-//! `render_post` silences those frames rather than letting the sentinel
-//! reach the codec.
+//! - the thread checks the flag **before** rendering and bows out.
+//!   `render_post` runs and finds the frames it owned still carrying
+//!   the sentinel: `uncovered=8 abandoned=1` with two threads and a
+//!   block of 16 — one thread's share of one block, exactly.
+//! - the thread is **inside** `render` when the stop lands. The main
+//!   thread gives up waiting and calls `render_post` over the top of
+//!   it, the crate refuses that callback rather than handing out
+//!   references a running `render` already holds, and the block is
+//!   never accounted for: `unfinished=1`.
 //!
-//! That is libbela abandoning a block on the way out, not a hole in the
-//! partitioning, and it is why the check is `abandoned <= 1` rather
-//! than `uncovered == 0`. It is also why `faults` stays 0: no callback
-//! overlapped another, so there was nothing for the crate to refuse.
+//! Either way `rendered + uncovered` falls short by at most one block,
+//! never over — a frame written twice would push it over — and
+//! `render_post` silences any sentinel that is left rather than
+//! sending a NaN to the codec.
+//!
+//! `faults` stays 0 through both. The first refuses nothing at all, and
+//! the second is refused *while stopping*, which the crate counts apart
+//! from a refusal during a live run for exactly this reason: an
+//! ordinary Ctrl-C must stay an ordinary Ctrl-C. `Bela::until_stopped`
+//! prints a line about it instead of failing.
 //!
 //! Reading the thread id and the core costs two system calls, which
 //! `render` must not normally make; this example makes them on its
@@ -129,7 +139,12 @@ struct Parallel {
     /// The phases the *block* starts at, advanced once per block.
     phases: [f32; OSCILLATORS],
     phase_increments: [f32; OSCILLATORS],
-    blocks: u64,
+    /// Blocks that started, counted in `render_pre` — which is the
+    /// callback that cannot be skipped for a block the threads then
+    /// render, so it is what `expected` has to be built from.
+    started: u64,
+    /// Blocks that were also accounted for, in `render_post`.
+    finished: u64,
     /// Frames no thread wrote, over the whole run.
     uncovered: u64,
     /// Blocks that had any: at most the one abandoned on the way out.
@@ -156,7 +171,8 @@ impl Parallel {
         Self {
             phases: [0.0; OSCILLATORS],
             phase_increments: [0.0; OSCILLATORS],
-            blocks: 0,
+            started: 0,
+            finished: 0,
             uncovered: 0,
             abandoned: 0,
         }
@@ -219,6 +235,7 @@ impl BelaApplication for Parallel {
             }
         }
 
+        self.started += 1;
         // Stamped now, looked for again in `render_post`: a frame that
         // still carries it is a frame no thread claimed.
         let channels = context.audio_out_channels();
@@ -284,7 +301,7 @@ impl BelaApplication for Parallel {
             self.uncovered += uncovered;
             self.abandoned += 1;
         }
-        self.blocks += 1;
+        self.finished += 1;
     }
 
     fn cleanup(&mut self, states: &mut [Voice], context: &CleanupContext) {
@@ -303,13 +320,17 @@ impl BelaApplication for Parallel {
             );
             rendered += state.frames;
         }
-        let expected = self.blocks * context.audio_frames() as u64;
+        let frames = context.audio_frames() as u64;
+        let expected = self.started * frames;
         rt_println!(
-            "parallel: blocks={} rendered={rendered} expected={expected} uncovered={} \
-             abandoned={}",
-            self.blocks,
+            "parallel: blocks={} frames={frames} rendered={rendered} expected={expected}",
+            self.started
+        );
+        rt_println!(
+            "parallel: uncovered={} abandoned={} unfinished={}",
             self.uncovered,
-            self.abandoned
+            self.abandoned,
+            self.started - self.finished
         );
         let busy = context.cpu_usage().map_or(0.0, |usage| usage.percentage());
         rt_println!("parallel: audio-thread={busy:.1}%");

@@ -50,12 +50,20 @@ waits in is
 while(!allThreadsDone && !Bela_stopRequested()) { ... }
 ```
 
-so a stop requested mid-block ends the wait early and `render_post` is
-called while a secondary thread may still be inside `render`. That is
-the one measured way the callback protocol can be broken, and it is why
-the crate checks the protocol with atomic claims instead of trusting
-it: a `render_post` that arrives then is refused rather than served
-with references a running `render` already holds.
+and each secondary thread checks the same flag just *before* calling
+`render`. So a stop landing mid-block ends the main thread's wait early
+and can leave `render_post` overlapping a `render` that has not
+finished. That is the one measured way the callback protocol can be
+broken, and it is why the crate checks the protocol with atomic claims
+instead of trusting it: a `render_post` that arrives then is refused
+rather than served with references a running `render` already holds.
+
+It is also the ordinary way a run ends, which is why the crate counts a
+refusal made *while a stop is already pending* separately from one made
+during a live run. Only the second fails
+[`Bela::until_stopped`](../bela/src/system.rs) with
+`Error::CallbackFaults`; the first is reported on the console and means
+the last block may be short. Mixing them would make Ctrl-C an error.
 
 ## What was measured
 
@@ -162,29 +170,38 @@ the headroom.
 ### The last block is sometimes short
 
 The `while(!allThreadsDone && !Bela_stopRequested())` edge described
-above turns out to be visible from the safe API, and this is what it
-looks like. Running the example for 5 s with two threads, one run in
-several ends with
+above is visible from the safe API, and takes two shapes depending on
+where the stop lands relative to the secondary thread's own check of
+the same flag. Running the example for 5 s with two threads, one run in
+several ends in one of them.
+
+**The thread bows out before rendering.** `render_post` runs and finds
+the frames it owned still carrying the sentinel:
 
 ```
-parallel: blocks=11729 rendered=187688 expected=187696 uncovered=8 abandoned=1
+parallel: blocks=11729 frames=16 rendered=187688 expected=187696
+parallel: uncovered=8 abandoned=1 unfinished=0
 ```
 
 `uncovered=8` is exactly one thread's share of exactly one block, and
-`rendered + uncovered` still adds up. libbela's secondary threads check
-`Bela_stopRequested()` before taking their next block, so one of them
-bows out while `render_wrapper` gives up waiting and calls
-`render_post` anyway: the frames that thread owned are nobody's for
-that one block. The example silences them rather than letting its
-sentinel reach the codec.
+`rendered + uncovered` still adds up. Nothing overlapped, so nothing
+was refused.
 
-`faults` stays 0 through it, which is the right answer: nothing
-overlapped, so there was nothing to refuse. The block was abandoned on
-the way out, not raced over. It is why the smoke test asks for
-`abandoned <= 1` rather than `uncovered == 0`, and it is worth knowing
-for an application that counts frames rendered rather than blocks: the
-last block of a multithreaded run may be partly silent.
+**The thread is inside `render` when the stop lands.** The main thread
+gives up waiting and calls `render_post` over the top of it, the crate
+refuses that callback, and the block is never accounted for:
+`unfinished=1`, with `rendered + uncovered` short by up to one block.
+`Bela::until_stopped` prints a line about the refusal and still returns
+`Ok(())`, because this is what a clean shutdown looks like from inside.
+
+Either way the shortfall is at most one block and never negative — a
+frame written twice would push `rendered + uncovered` *past* `expected`
+— which is what the smoke test checks, along with
+`abandoned + unfinished <= 1`. It is worth knowing for an application
+that counts frames rather than blocks: the last block of a
+multithreaded run may be partly silent, and its `render_post` may not
+run at all.
 
 `scripts/smoke-test.sh` runs the same example at 1, 2 and 4 threads and
-checks the coverage identity, the abandoned-block bound, the fault
+checks the coverage identity, the cut-short-block bound, the live fault
 count and the fall in per-thread work.

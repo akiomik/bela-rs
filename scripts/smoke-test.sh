@@ -514,12 +514,16 @@ else
     # parallel path rests on and the only check for it that runs on a
     # board.
     faults="$(sed -n 's/^parallel: faults=\([0-9]*\).*/\1/p' "$log" | head -1)"
-    # parallel: blocks=14705 rendered=235280 expected=235280 uncovered=0 abandoned=0
+    # parallel: blocks=14705 frames=16 rendered=235280 expected=235280
     summary="$(awk '/^parallel: blocks=/ { print; exit }' "$log" 2>/dev/null || true)"
+    block_frames="$(echo "$summary" | sed -n 's/.*frames=\([0-9]*\).*/\1/p')"
     rendered="$(echo "$summary" | sed -n 's/.*rendered=\([0-9]*\).*/\1/p')"
     expected="$(echo "$summary" | sed -n 's/.*expected=\([0-9]*\).*/\1/p')"
-    uncovered="$(echo "$summary" | sed -n 's/.*uncovered=\([0-9]*\).*/\1/p')"
-    abandoned="$(echo "$summary" | sed -n 's/.*abandoned=\([0-9]*\).*/\1/p')"
+    # parallel: uncovered=0 abandoned=0 unfinished=0
+    coverage="$(awk '/^parallel: uncovered=/ { print; exit }' "$log" 2>/dev/null || true)"
+    uncovered="$(echo "$coverage" | sed -n 's/.*uncovered=\([0-9]*\).*/\1/p')"
+    abandoned="$(echo "$coverage" | sed -n 's/.*abandoned=\([0-9]*\).*/\1/p')"
+    unfinished="$(echo "$coverage" | sed -n 's/.*unfinished=\([0-9]*\).*/\1/p')"
     # The busiest thread's share of the block, which is what has to fall
     # as threads are added: they render at the same time, so the block
     # is only finished when the last of them is.
@@ -545,24 +549,32 @@ $(echo "$cpus" | tr -d ' ') core(s), so the work was not spread"
       fail "parallel: $threads thread(s): ${faults:-no} callback fault(s) reported"
     fi
 
-    # Every frame was written once or not at all: a frame written twice
+    # Every frame was written once or not at all. A frame written twice
     # would push `rendered` past `expected` without lowering
-    # `uncovered`, so the sum is the check that the block was divided.
-    if [ -z "$rendered" ] || [ -z "$expected" ] || [ -z "$abandoned" ]; then
+    # `uncovered`, so a negative shortfall is the duplication check; a
+    # shortfall of up to one block is the stop landing mid-block, which
+    # the example's header describes in both of its shapes. `abandoned`
+    # is one of them and `unfinished` the other, and they are mutually
+    # exclusive, so their sum is "blocks cut short on the way out".
+    if [ -z "$rendered" ] || [ -z "$expected" ] || [ -z "$abandoned" ] ||
+      [ -z "$unfinished" ] || [ -z "$block_frames" ]; then
       fail "parallel: $threads thread(s): no summary line"
-    elif [ "$((rendered + uncovered))" != "$expected" ]; then
-      fail "parallel: $threads thread(s): $rendered rendered + $uncovered uncovered is not the \
-$expected frames of the run — the block was duplicated or lost"
-    elif [ "$abandoned" -le 1 ]; then
-      # A stop requested mid-block can leave the last one unfinished:
-      # libbela's secondary threads check the flag before taking a
-      # block, and `render_wrapper` stops waiting for them. See the
-      # example's header.
-      pass "parallel: $threads thread(s): $rendered frames rendered for $expected, \
-$abandoned block(s) abandoned on the way out"
     else
-      fail "parallel: $threads thread(s): $abandoned blocks were left unfinished, which is more \
-than the one a stop can abandon"
+      shortfall=$((expected - rendered - uncovered))
+      cut_short=$((abandoned + unfinished))
+      if [ "$shortfall" -lt 0 ]; then
+        fail "parallel: $threads thread(s): $rendered rendered + $uncovered uncovered is more \
+than the $expected frames of the run — a frame was written twice"
+      elif [ "$shortfall" -gt "$block_frames" ] || [ "$cut_short" -gt 1 ]; then
+        fail "parallel: $threads thread(s): $shortfall frames over $cut_short block(s) went \
+unaccounted for, which is more than the one block a stop can cut short"
+      elif [ "$cut_short" -eq 0 ]; then
+        pass "parallel: $threads thread(s): $rendered frames rendered for $expected, \
+every frame accounted for exactly once"
+      else
+        pass "parallel: $threads thread(s): $rendered frames rendered for $expected, with the \
+last block cut short by the stop ($shortfall frames)"
+      fi
     fi
 
     if [ -z "$section" ]; then

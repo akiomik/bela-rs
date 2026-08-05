@@ -740,7 +740,7 @@ impl RenderContext {
         let channels = self.audio_out_channels();
         assert!(channel < channels, "audio output channel out of range");
         let range = self.audio_frame_range();
-        let index = (frame - assert_frame(&range, frame, "audio")) * channels + channel;
+        let index = frame_offset(&range, frame, "audio") * channels + channel;
         self.audio_share(range)[index] = value;
     }
 
@@ -776,7 +776,7 @@ impl RenderContext {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
         let range = self.analog_frame_range();
-        let skip = frame - assert_frame(&range, frame, "analog");
+        let skip = frame_offset(&range, frame, "analog");
         for samples in self.analog_share(range).chunks_mut(channels).skip(skip) {
             samples[channel] = value;
         }
@@ -792,7 +792,7 @@ impl RenderContext {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
         let range = self.analog_frame_range();
-        let index = (frame - assert_frame(&range, frame, "analog")) * channels + channel;
+        let index = frame_offset(&range, frame, "analog") * channels + channel;
         self.analog_share(range)[index] = value;
     }
 
@@ -808,7 +808,7 @@ impl RenderContext {
     pub fn digital_read(&self, frame: usize, channel: usize) -> bool {
         let mask = digital_value_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        let index = frame - assert_frame(&range, frame, "digital");
+        let index = frame_offset(&range, frame, "digital");
         // Safety: as for `digital`, whose range this is.
         let words = unsafe { share(self.0.digital, self.digital_frames(), 1, range) };
         words[index] & mask != 0
@@ -826,7 +826,7 @@ impl RenderContext {
     pub fn digital_write(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = digital_value_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        let skip = frame - assert_frame(&range, frame, "digital");
+        let skip = frame_offset(&range, frame, "digital");
         for word in self.digital_share(range).iter_mut().skip(skip) {
             set_bits(word, mask, value);
         }
@@ -842,7 +842,7 @@ impl RenderContext {
     pub fn digital_write_once(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = digital_value_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        let index = frame - assert_frame(&range, frame, "digital");
+        let index = frame_offset(&range, frame, "digital");
         set_bits(&mut self.digital_share(range)[index], mask, value);
     }
 
@@ -855,7 +855,7 @@ impl RenderContext {
     pub fn pin_mode(&mut self, frame: usize, channel: usize, mode: PinMode) {
         let mask = digital_direction_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        let skip = frame - assert_frame(&range, frame, "digital");
+        let skip = frame_offset(&range, frame, "digital");
         for word in self.digital_share(range).iter_mut().skip(skip) {
             set_bits(word, mask, mode == PinMode::Input);
         }
@@ -870,7 +870,7 @@ impl RenderContext {
     pub fn pin_mode_once(&mut self, frame: usize, channel: usize, mode: PinMode) {
         let mask = digital_direction_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        let index = frame - assert_frame(&range, frame, "digital");
+        let index = frame_offset(&range, frame, "digital");
         set_bits(
             &mut self.digital_share(range)[index],
             mask,
@@ -1005,19 +1005,19 @@ const unsafe fn share_mut<'a, T>(
     unsafe { slice::from_raw_parts_mut(ptr.add(offset), len) }
 }
 
-/// Checks `frame` against `range` and returns where the range starts,
-/// which is what the caller needs to turn a block frame into an index
-/// into this thread's share.
+/// Where block `frame` sits within this thread's share of the block,
+/// which is how the indexed accessors reach it once the reference
+/// covers only that share.
 ///
 /// # Panics
 /// If `frame` is outside `range`.
 #[inline]
-fn assert_frame(range: &Range<usize>, frame: usize, domain: &str) -> usize {
+fn frame_offset(range: &Range<usize>, frame: usize, domain: &str) -> usize {
     assert!(
         range.contains(&frame),
         "{domain} frame {frame} is outside this thread's range {range:?}"
     );
-    range.start
+    frame - range.start
 }
 
 /// # Panics
