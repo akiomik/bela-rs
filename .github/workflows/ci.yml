@@ -94,6 +94,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml, which would
       # otherwise re-pin to the development toolchain.
-      - run: cargo check --workspace --all-targets
+      #
+      # xtask is excluded: the MSRV is a promise to the crates' users,
+      # and they never build a repository task. clap tracks a recent
+      # MSRV of its own within its 4.x line (1.60 to 1.85 so far), so
+      # including it would let that schedule fail a job about this
+      # project's compatibility. Contributors build xtask with the
+      # pinned toolchain from rust-toolchain.toml.
+      - run: cargo check --workspace --exclude xtask --all-targets
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
