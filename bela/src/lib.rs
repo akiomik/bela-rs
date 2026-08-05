@@ -38,6 +38,13 @@
 //! Without them the first sign of running out of headroom is a
 //! dropout, after the fact.
 //!
+//! A built binary stays reconfigurable through Bela's standard
+//! command-line options — `--period`, `--verbose`, `--use-analog` and
+//! the rest, the same ones every other way of writing a Bela program
+//! accepts. [`Bela::run_with_args`] applies them on top of
+//! [`Settings`], so the application keeps its own defaults, and
+//! [`print_usage`] prints the list.
+//!
 //! [`Bela`] itself calls into `libbela` and therefore only exists when
 //! compiling for the device target (`aarch64-unknown-linux-gnu`); the
 //! rest of the crate — [`BelaApplication`], [`Context`], [`Settings`] —
@@ -50,6 +57,7 @@
 //! [Bela Gem]: https://bela.io
 
 mod application;
+mod cmdline;
 mod context;
 mod cpu;
 mod error;
@@ -62,6 +70,8 @@ mod task;
 mod util;
 
 pub use application::BelaApplication;
+#[cfg(bela_device)]
+pub use cmdline::print_usage;
 pub use context::{Context, PinMode};
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;

@@ -1,11 +1,13 @@
 use core::ffi::{c_int, c_void};
 use core::marker::PhantomData;
 use core::time::Duration;
+use std::ffi::OsStr;
 use std::thread;
 
 use bela_sys::BelaInitSettings;
 
 use crate::application::{BelaApplication, trampoline};
+use crate::cmdline::{self, Arguments};
 use crate::cpu;
 use crate::error::Error;
 use crate::settings::{self, Settings};
@@ -52,6 +54,57 @@ impl<T: BelaApplication> Bela<T> {
     /// when [`Settings::cpu_monitoring`] asks for something that cannot
     /// be served.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
+        Self::init(application, settings, None)
+    }
+
+    /// Initialises the audio system like [`new`](Bela::new), with
+    /// Bela's standard command-line options applied on top of
+    /// `settings`.
+    ///
+    /// `args` is the whole argument list with the program name first,
+    /// as [`std::env::args_os()`] yields it; parsing starts at the
+    /// second entry, the way a C `main` does. The options are the ones
+    /// every other way of writing a Bela program accepts — `--period`,
+    /// `--verbose`, `--use-analog` and the rest, printed by
+    /// [`print_usage`](crate::print_usage) — and they are applied last,
+    /// so the application keeps the defaults it was built with but can
+    /// still be reconfigured without rebuilding.
+    ///
+    /// Options of the program's own are not part of the set: parse them
+    /// first, with whatever argument parser the program already uses,
+    /// and hand on what is left. See
+    /// [`examples/command_line.rs`][example]. An argument that is not
+    /// an option at all is ignored — `getopt` moves those to the end of
+    /// the list and never reports them, which is also what Bela's C
+    /// program templates do with them.
+    ///
+    /// # Errors
+    /// In addition to the errors [`new`](Bela::new) returns:
+    /// [`Error::CommandLine`] when an argument is not one of the
+    /// standard options, is missing its value or is otherwise rejected,
+    /// and [`Error::CommandLineNul`] when an argument contains a NUL
+    /// byte.
+    ///
+    /// [example]: https://github.com/akiomik/bela-rs/blob/main/bela/examples/command_line.rs
+    pub fn new_with_args<I, S>(application: T, settings: &Settings, args: I) -> Result<Self, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        // Before the claim: copying the arguments touches nothing an
+        // audio system owns, and a list C cannot represent is worth
+        // refusing whether or not one exists.
+        let arguments = Arguments::new(args)?;
+        Self::init(application, settings, Some(arguments))
+    }
+
+    /// Initialises the audio system, optionally letting `arguments`
+    /// have the last word on the settings.
+    fn init(
+        application: T,
+        settings: &Settings,
+        mut arguments: Option<Arguments>,
+    ) -> Result<Self, Error> {
         // First, because everything below reaches into libbela's
         // globals — including, before `Bela_initAudio` is called at
         // all, the CPU monitoring counters an audio system that is
@@ -68,16 +121,25 @@ impl<T: BelaApplication> Bela<T> {
             let raw = bela_sys::Bela_InitSettings_alloc();
             bela_sys::Bela_defaultSettings(raw);
             settings.apply_to(&mut *raw);
-            // Refuse what the safe API cannot serve rather than
-            // initialising something unsound, then turn monitoring on —
-            // both while the settings are resolved but before
+            // The command line last, so it overrides the defaults the
+            // application was built with rather than the other way
+            // around: being able to reconfigure a binary from outside
+            // is the whole point of it.
+            //
+            // Then refuse what the safe API cannot serve rather than
+            // initialising something unsound, and turn monitoring on —
+            // both once the settings are fully resolved, including
+            // whatever the command line just changed, but before
             // `Bela_initAudio`, since the `setup` callback runs inside
             // that call and should already see the answer
             // `Context::cpu_usage` will give for the rest of the run.
             // The priming tic it takes is what the audio thread's first
             // reading is measured from, so everything from here to
             // `start` is startup time that reading includes.
-            let prepared = Self::check_supported(&*raw, monitoring)
+            let prepared = arguments
+                .as_mut()
+                .map_or(Ok(()), |arguments| cmdline::parse(arguments, &mut *raw))
+                .and_then(|()| Self::check_supported(&*raw, monitoring))
                 .and_then(|()| cpu::apply_monitoring(monitoring));
             if let Err(error) = prepared {
                 bela_sys::Bela_InitSettings_free(raw);
@@ -179,16 +241,38 @@ impl<T: BelaApplication> Bela<T> {
     /// Returns [`Error::Init`] or [`Error::Start`] when the audio
     /// system fails to initialise or start.
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
-        let mut bela = Self::new(application, settings)?;
+        Self::new(application, settings)?.until_stopped()
+    }
+
+    /// Runs like [`run`](Bela::run), with Bela's standard command-line
+    /// options applied on top of `settings`.
+    ///
+    /// See [`new_with_args`](Bela::new_with_args) for what they are and
+    /// where they sit.
+    ///
+    /// # Errors
+    /// The errors of [`new_with_args`](Bela::new_with_args), plus
+    /// [`Error::Start`] when the audio system fails to start.
+    pub fn run_with_args<I, S>(application: T, settings: &Settings, args: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        Self::new_with_args(application, settings, args)?.until_stopped()
+    }
+
+    /// Starts the audio system, blocks until a stop is requested, then
+    /// shuts down.
+    fn until_stopped(mut self) -> Result<(), Error> {
         let handler = request_stop_on_signal as extern "C" fn(c_int);
         for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
             unsafe { libc::signal(signal, handler as libc::sighandler_t) };
         }
-        bela.start()?;
+        self.start()?;
         while !Self::stop_requested() {
             thread::sleep(Duration::from_millis(10));
         }
-        bela.stop();
+        self.stop();
         Ok(())
     }
 }
