@@ -24,20 +24,24 @@ this document and the release workflow, not an ad-hoc one.
 
 Version meanings while pre-1.0:
 
-- `0.0.x` — pre-hardware development releases. Note that under caret
-  semantics every `0.0.x` is incompatible with every other, which is
-  accurate for this phase.
-- `0.1.0` — reserved for the first hardware-validated release
-  ([milestone v0.1.0](https://github.com/akiomik/bela-rs/milestone/1)).
+- `0.x.y` — the current phase, from `0.1.0` (the first
+  hardware-validated release) onwards. A release that breaks the API
+  bumps the minor, one that does not bumps the patch, which is what
+  caret semantics already mean on `0.x`. The API is not settled, so
+  minor bumps are expected rather than exceptional.
+- `0.0.x` — the pre-hardware releases, a phase now over. Under caret
+  semantics every `0.0.x` was incompatible with every other, which was
+  accurate then: nothing had run on a board.
 
 ## Cutting a release
 
 1. **Bump the version** in two places (they must match):
    - `workspace.package.version` in the root `Cargo.toml`
    - the `bela-sys` dependency `version` in `bela/Cargo.toml`
-     (mandatory while on `0.0.x`, where caret requirements do not
-     cross versions; from `0.x` onwards only needed when the
-     requirement no longer matches)
+     (needed on every minor bump while pre-1.0: a caret requirement
+     on `0.x` does not cross into the next minor, so leaving it
+     behind would publish a `bela` that asks for the previous
+     `bela-sys`. Only a patch bump can leave it alone.)
 2. **Cut the changelog**: move the `[Unreleased]` content into a new
    `[X.Y.Z] - YYYY-MM-DD` section and update the comparison links at
    the bottom.
@@ -62,8 +66,11 @@ Version meanings while pre-1.0:
    cleanly. `check-vendor` confirms that the headers the published
    bindings were generated from are still the ones the board ships.
 
-5. **Commit and push** (`chore(release): prepare vX.Y.Z`), then wait
-   for CI to go green on `main`.
+5. **Open a release pull request** (`chore(release): prepare vX.Y.Z`)
+   and merge it once CI is green. `main` takes changes through a pull
+   request and requires linear history, so the release commit gets
+   there the same way as any other; the hardware checks of step 4 go
+   in the description, since CI cannot repeat them.
 6. **Tag and push the tag** — this is the publish trigger:
 
    ```sh
