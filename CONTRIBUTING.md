@@ -66,6 +66,19 @@ audio ran at the sample rate it reported and shut down cleanly on
 SIGINT. `bela_daemon` is stopped for the duration and restarted
 afterwards.
 
+After updating a board image, also check that the vendored headers
+still match what the board now ships:
+
+```sh
+cargo xtask check-vendor --board [user@host]
+```
+
+It diffs `bela-sys/vendor/bela` against the board and exits non-zero on
+drift, which is the signal to re-pin (see
+[docs/cross-compile.md](docs/cross-compile.md)). The committed bindings
+describe the vendored headers, so drift means they no longer describe
+the `libbela` they link against.
+
 ## License
 
 Unless you explicitly state otherwise, any contribution intentionally

@@ -21,6 +21,19 @@ scripts/update-vendor.sh --board          # from root@bela.local
 scripts/update-vendor.sh <branch|commit>  # from upstream git
 ```
 
+Because the pin follows a board image rather than a released version,
+a new image moves the headers on the board without changing anything
+here. After updating one, compare the two:
+
+```sh
+cargo xtask check-vendor --board          # against root@bela.local
+```
+
+It reports the `BELA_*_VERSION` macros on both sides and diffs every
+vendored file against the board's copy, exiting non-zero on drift —
+which is the signal to re-run the update script and regenerate the
+bindings below. It needs a board, so CI cannot run it.
+
 ### Why vendored files instead of a git submodule
 
 - The include closure is three files (~70 KB); a submodule would drag

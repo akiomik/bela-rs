@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Added
 
+- `cargo xtask check-vendor --board [user@host]`, which compares
+  `bela-sys/vendor/bela` with the files on a board and exits non-zero
+  on drift. The vendored headers are pinned to the Bela version of a
+  particular board image and `bela-sys/src/bindings.rs` is committed,
+  so installing a new image moves the ABI on the board while the
+  bindings keep describing the old one — silently, and as far as
+  `BelaContext` field offsets. The check reports the `BELA_*_VERSION`
+  macros on both sides as the cheap first signal, diffs every vendored
+  file for the answer that actually decides it, and names the fix
+  (`scripts/update-vendor.sh --board`, then `cargo xtask bindgen`). It
+  needs a board, so it stays outside CI: it is the check to run after
+  updating a board image, and a step in `docs/release.md`
+
 - The codec's levels and gain in the `bela` crate, wrapping
   `Bela_setLineOutLevel`, `Bela_setHpLevel`, `Bela_setAudioInputGain`
   and `Bela_muteSpeakers`. `Bela::set_line_out_level`,
