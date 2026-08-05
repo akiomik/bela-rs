@@ -77,9 +77,38 @@ HOLD_SECONDS=6
 BUSY_WAIT_SECONDS=8
 
 daemon_was_active=no
+# Whether the board has been touched yet. Until it has there is nothing
+# to put back, and an early exit should not spend three connection
+# timeouts finding that out.
+board_prepared=no
 LOG_DIR="$(mktemp -d)"
 RESULTS="$LOG_DIR/results"
 : > "$RESULTS"
+
+# Leave the board as it was found, whether the run finished, a probe
+# wedged it, or the operator interrupted. Installed straight after the
+# directory it removes, so that the argument checks below cannot leak
+# one by exiting before it.
+restore() {
+  status=$?
+  if [ "$board_prepared" = yes ]; then
+    # One connection, because an unreachable board makes each of these
+    # cost a full ConnectTimeout. The kill comes first: a probe still
+    # holding the audio device would make the next thing to run here
+    # fail for a reason of its own.
+    undo="pkill -9 -x init_failure; rm -rf $REMOTE_DIR"
+    if [ "$daemon_was_active" = yes ]; then
+      undo="$undo; systemctl start bela_daemon"
+    fi
+    # shellcheck disable=SC2029 # the remote path is meant to expand here
+    ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
+      echo "WARNING: could not restore $HOST — check for a leftover" \
+        "init_failure process, $REMOTE_DIR, and bela_daemon" >&2
+  fi
+  rm -rf "$LOG_DIR"
+  exit "$status"
+}
+trap 'restore' EXIT INT TERM
 
 if [ -z "${BELA_SYSROOT:-}" ]; then
   echo "BELA_SYSROOT is not set; see docs/cross-compile.md" >&2
@@ -95,23 +124,6 @@ for probe in $PROBES; do
     ;;
   esac
 done
-
-# Leave the board as it was found, whether the run finished, a probe
-# wedged it, or the operator interrupted.
-restore() {
-  status=$?
-  # Killed first: a probe still holding the audio device would make the
-  # next thing to run on this board fail for a reason of its own.
-  ssh -o ConnectTimeout=10 "$HOST" "pkill -9 -x init_failure" 2>/dev/null || true
-  ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR" 2>/dev/null || true
-  if [ "$daemon_was_active" = yes ]; then
-    ssh -o ConnectTimeout=10 "$HOST" "systemctl start bela_daemon" 2>/dev/null ||
-      echo "WARNING: could not restart bela_daemon on $HOST" >&2
-  fi
-  rm -rf "$LOG_DIR"
-  exit "$status"
-}
-trap 'restore' EXIT INT TERM
 
 # The image greets every ssh session with a login banner and a locale
 # warning on stderr, which would bury the output being parsed. Held back
@@ -207,6 +219,8 @@ echo "Preparing $HOST..."
 if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>/dev/null; then
   daemon_was_active=yes
 fi
+# From here on there is something to put back.
+board_prepared=yes
 remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 
 # The remote half. Bounded, because a probe that hangs holds the audio
