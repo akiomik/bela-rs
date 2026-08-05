@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+The next release is 0.2.0 rather than 0.1.1. A `Settings::thread_count`
+above 1 was accepted in 0.1.0 and is refused now, so a program that
+built and ran against 0.1.0 can stop working; see "Changed". Nothing
+else narrows what 0.1.0 offered — no public item was removed or
+renamed, no signature changed, `Error` was already `#[non_exhaustive]`
+so the new variants are compatible, the generated bindings are
+untouched, and the MSRV is unmoved.
+
 ### Added
 
 - CI job measuring test coverage with `cargo llvm-cov` and uploading it
@@ -251,13 +259,6 @@ and this project adheres to
   deadline. The output is unchanged: the message is still truncated on
   a `char` boundary and marked with `...`
 
-- `Bela::new` rejects a `Settings::thread_count` above 1 with the new
-  `Error::ThreadCountUnsupported` instead of initialising an unsound
-  setup. Bela calls `render` on all render threads at once with the
-  same user data, so the trampoline would have handed out several
-  `&mut T` to one application — reachable from safe code. A trait
-  shaped for concurrent rendering is still to be designed
-
 - `scripts/sync-sysroot.sh` no longer aborts partway through. `rsync`
   cannot reproduce the setgid bit of files like
   `/usr/lib/aarch64-linux-gnu/utempter/utempter` as an unprivileged
@@ -267,6 +268,18 @@ and this project adheres to
   it never needs
 
 ### Changed
+
+- Breaking: `Bela::new` refuses a `Settings::thread_count` above 1 with
+  the new `Error::ThreadCountUnsupported`, where 0.1.0 accepted it and
+  initialised the audio system. Multithreaded rendering is the one
+  thing 0.1.0 offered that this release does not, and it is why the
+  version goes to 0.2.0. It could not stay: Bela calls `render` on all
+  render threads at once with the same user data, so the trampoline
+  handed out several `&mut T` to one application — reachable from safe
+  code, and undefined behaviour whatever the render function then did
+  with them. A trait shaped for concurrent rendering is still to be
+  designed; until it exists, `thread_count(1)` and leaving it unset are
+  the configurations this crate serves
 
 - `cargo xtask` declares its command line with clap instead of parsing
   it by hand. The grammar had been written twice — once as a parser,
