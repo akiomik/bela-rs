@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-05
+
 ### Added
 
 - The codec's levels and gain in the `bela` crate, wrapping
@@ -243,6 +245,7 @@ and this project adheres to
 - Dual MIT / Apache-2.0 licensing
 - A draft of the cross-compilation setup in `docs/cross-compile.md`
 
-[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/akiomik/bela-rs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/akiomik/bela-rs/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/akiomik/bela-rs/releases/tag/v0.0.1
