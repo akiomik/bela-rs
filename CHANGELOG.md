@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- CI job measuring test coverage with `cargo llvm-cov` and uploading it
+  to Codecov, with `llvm-tools-preview` added to the pinned toolchain so
+  that `cargo llvm-cov --workspace` reproduces the CI numbers locally.
+  It measures the host build, like the test job: the device-only code
+  behind the `bela_device` cfg is not compiled there, so it is absent
+  from the report rather than counted as untested. The generated
+  `bela-sys/src/bindings.rs` is excluded in `.github/codecov.yml`
+
 - `cargo xtask check-vendor --board [user@host]`, which compares
   `bela-sys/vendor/bela` with the files on a board and exits non-zero
   on drift. The vendored headers are pinned to the Bela version of a
