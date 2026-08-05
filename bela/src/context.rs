@@ -94,8 +94,11 @@ macro_rules! metadata_accessors {
                     self.0.audioInChannels as usize
                 }
 
-                /// Number of audio output channels. On Bela Gem this
-                /// includes the analog outputs.
+                /// Number of audio output channels.
+                ///
+                /// On a Bela Gem Stereo this is 2, and the analog
+                /// outputs are not among them — the board has none.
+                /// See the type-level documentation.
                 #[must_use]
                 #[inline]
                 pub const fn audio_out_channels(&self) -> usize {
@@ -262,15 +265,27 @@ pub struct CleanupContext(BelaContext);
 ///
 /// # Bela Gem semantics
 ///
-/// On Bela Gem the analog outputs are part of the audio outputs: use
+/// On a Bela Gem Stereo there is nothing to write an analog output
+/// with: [`analog_out_channels`](BlockContext::analog_out_channels) is
+/// 0 however many the settings ask for, and
+/// [`audio_out_channels`](BlockContext::audio_out_channels) is 2 —
+/// the analog outputs are not folded in there either. So
+/// [`analog_write`](BlockContext::analog_write) has no channel it can
+/// take on that board, while
+/// [`analog_read`](BlockContext::analog_read) has eight. Bela's
+/// migration guide describes writing an analog output as
 /// [`audio_write`](BlockContext::audio_write) with the channel offset
-/// by +2 instead of [`analog_write`](BlockContext::analog_write), and
-/// expect [`uniform_sample_rate`](crate::Settings::uniform_sample_rate)
-/// behaviour (analog frames == audio frames) by default. Output values
-/// do not persist across blocks; the within-block persistence of
-/// [`analog_write`](BlockContext::analog_write) and
+/// by +2; that is a Gem Multi, which has the outputs, and it has not
+/// been measured here.
+///
+/// [`uniform_sample_rate`](crate::Settings::uniform_sample_rate) is on
+/// by default, so analog frames == audio frames unless it is turned
+/// off. Output values do not persist across blocks; the within-block
+/// persistence of [`analog_write`](BlockContext::analog_write) and
 /// [`digital_write`](BlockContext::digital_write) (writing from `frame`
 /// to the end of the block) is unchanged.
+///
+/// Measured on the board; see `docs/board-facts.md`.
 ///
 /// # Panics
 ///
@@ -498,8 +513,9 @@ impl BlockContext {
     }
 
     /// Sets the analog output for `channel` from `frame` to the end of
-    /// the block (`analogWrite`). Not the primary path on Bela Gem —
-    /// see the type-level documentation.
+    /// the block (`analogWrite`). A Bela Gem Stereo has no analog
+    /// outputs, so every channel is out of range there — see the
+    /// type-level documentation.
     ///
     /// # Panics
     /// If `channel` is out of range.

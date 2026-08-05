@@ -69,8 +69,20 @@ impl Settings {
 
     /// How many analog output channels to use.
     ///
-    /// Note that on Bela Gem the analog outputs are part of the audio
-    /// outputs.
+    /// # It has to match the inputs, and a Gem Stereo gives none
+    ///
+    /// libbela refuses a different number of analog inputs and outputs
+    /// — `Bela_initAudio` prints `TODO: a different number of channels
+    /// for inputs and outputs is not yet supported` and fails — so this
+    /// is only usable together with
+    /// [`num_analog_in_channels`](Settings::num_analog_in_channels) set
+    /// to the same number. A mismatch costs more than the error says:
+    /// a failed initialisation leaves the process unable to build
+    /// another audio system (see [`Bela::new`](crate::Bela::new)).
+    ///
+    /// A Bela Gem Stereo then reports 0 analog output channels
+    /// whatever was asked for, because it has none. Measured on the
+    /// board; see `docs/board-facts.md`.
     #[must_use]
     pub const fn num_analog_out_channels(mut self, channels: u32) -> Self {
         self.num_analog_out_channels = Some(channels);
@@ -108,6 +120,16 @@ impl Settings {
 
     /// Whether analog channels should be resampled to the audio sample
     /// rate. Enabled by default on Bela Gem.
+    ///
+    /// What it removes is a frame count that follows the analog
+    /// channel count rather than the block. Measured on a Gem Stereo
+    /// with 16-frame audio blocks at 44100 Hz: with it off, 8 analog
+    /// input channels give 8 analog frames at 22050 Hz, 4 give 16 at
+    /// 44100 Hz and 2 give 32 at 88200 Hz. With it on, every one of
+    /// them gives 16 frames at 44100 Hz — the audio block's own —
+    /// which is what lets one loop over
+    /// [`audio_frames`](crate::BlockContext::audio_frames) read analog
+    /// inputs as it goes. See `docs/board-facts.md`.
     #[must_use]
     pub const fn uniform_sample_rate(mut self, enabled: bool) -> Self {
         self.uniform_sample_rate = Some(enabled);
