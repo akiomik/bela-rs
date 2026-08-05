@@ -4,4 +4,6 @@
 [toolchain]
 channel = "1.91.1"
 targets = ["aarch64-unknown-linux-gnu"]
-components = ["rustfmt", "clippy"]
+# llvm-tools-preview provides the profdata/cov tooling `cargo llvm-cov`
+# drives, so coverage runs the same way locally and in CI.
+components = ["rustfmt", "clippy", "llvm-tools-preview"]

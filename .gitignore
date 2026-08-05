@@ -1,5 +1,8 @@
 target/
 
+# Coverage report written by `cargo llvm-cov --lcov --output-path`
+/lcov.info
+
 # Local working notes, not repository deliverables
 /docs/bela-rust-bindings-feasibility.md
 

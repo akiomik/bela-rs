@@ -52,6 +52,18 @@ cargo test --workspace
 cargo check --workspace --target aarch64-unknown-linux-gnu
 ```
 
+CI also measures test coverage with
+[`cargo llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and
+uploads it to Codecov. To see the same numbers locally:
+
+```sh
+cargo llvm-cov --workspace --summary-only
+```
+
+It covers the host build only — the device-only code behind the
+`bela_device` cfg is not compiled there, so it is absent from the
+report rather than counted as untested.
+
 CI stops there, because it has no board. Changes that touch the device
 path — anything under `bela::system`, the settings applied to
 `Bela_initAudio`, the examples, the linking setup — should also pass

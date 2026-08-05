@@ -1,6 +1,7 @@
 # bela-rs
 
 [![CI](https://github.com/akiomik/bela-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/akiomik/bela-rs/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/akiomik/bela-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/akiomik/bela-rs)
 ![Crates.io Version](https://img.shields.io/crates/v/bela-sys?label=bela-sys)
 ![Crates.io Version](https://img.shields.io/crates/v/bela?label=bela)
 
