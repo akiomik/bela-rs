@@ -50,7 +50,12 @@ const DIGITAL_VALUE_SHIFT: usize = 16;
 /// how a `BelaContext` can spell "one render thread".
 ///
 /// [`thread_count`]: RenderContext::thread_count
-const fn partition(len: usize, thread: usize, count: usize) -> Range<usize> {
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "ThreadInfo::frame_range is the public spelling of it, and lives in another module"
+)]
+#[inline]
+pub(crate) const fn partition(len: usize, thread: usize, count: usize) -> Range<usize> {
     let count = if count == 0 { 1 } else { count };
     if thread >= count {
         // Not a share of anything; the caller is out of range.
@@ -70,18 +75,21 @@ macro_rules! metadata_accessors {
             impl $context {
                 /// Read access to the underlying `BelaContext`.
                 #[must_use]
+                #[inline]
                 pub const fn as_sys(&self) -> &BelaContext {
                     &self.0
                 }
 
                 /// Number of audio frames per block.
                 #[must_use]
+                #[inline]
                 pub const fn audio_frames(&self) -> usize {
                     self.0.audioFrames as usize
                 }
 
                 /// Number of audio input channels.
                 #[must_use]
+                #[inline]
                 pub const fn audio_in_channels(&self) -> usize {
                     self.0.audioInChannels as usize
                 }
@@ -89,12 +97,14 @@ macro_rules! metadata_accessors {
                 /// Number of audio output channels. On Bela Gem this
                 /// includes the analog outputs.
                 #[must_use]
+                #[inline]
                 pub const fn audio_out_channels(&self) -> usize {
                     self.0.audioOutChannels as usize
                 }
 
                 /// Audio sample rate in Hz.
                 #[must_use]
+                #[inline]
                 pub const fn audio_sample_rate(&self) -> f32 {
                     self.0.audioSampleRate
                 }
@@ -102,6 +112,7 @@ macro_rules! metadata_accessors {
                 /// Number of analog frames per block; 0 if analog I/O
                 /// is disabled.
                 #[must_use]
+                #[inline]
                 pub const fn analog_frames(&self) -> usize {
                     self.0.analogFrames as usize
                 }
@@ -109,6 +120,7 @@ macro_rules! metadata_accessors {
                 /// Number of analog input channels; 0 if analog I/O is
                 /// disabled.
                 #[must_use]
+                #[inline]
                 pub const fn analog_in_channels(&self) -> usize {
                     self.0.analogInChannels as usize
                 }
@@ -116,6 +128,7 @@ macro_rules! metadata_accessors {
                 /// Number of analog output channels; 0 if analog I/O is
                 /// disabled.
                 #[must_use]
+                #[inline]
                 pub const fn analog_out_channels(&self) -> usize {
                     self.0.analogOutChannels as usize
                 }
@@ -123,6 +136,7 @@ macro_rules! metadata_accessors {
                 /// Analog sample rate in Hz; 0 if analog I/O is
                 /// disabled.
                 #[must_use]
+                #[inline]
                 pub const fn analog_sample_rate(&self) -> f32 {
                     self.0.analogSampleRate
                 }
@@ -130,6 +144,7 @@ macro_rules! metadata_accessors {
                 /// Number of digital frames per block; 0 if digital I/O
                 /// is disabled.
                 #[must_use]
+                #[inline]
                 pub const fn digital_frames(&self) -> usize {
                     self.0.digitalFrames as usize
                 }
@@ -137,12 +152,14 @@ macro_rules! metadata_accessors {
                 /// Number of digital (GPIO) channels; 0 if digital I/O
                 /// is disabled.
                 #[must_use]
+                #[inline]
                 pub const fn digital_channels(&self) -> usize {
                     self.0.digitalChannels as usize
                 }
 
                 /// Digital sample rate in Hz.
                 #[must_use]
+                #[inline]
                 pub const fn digital_sample_rate(&self) -> f32 {
                     self.0.digitalSampleRate
                 }
@@ -150,12 +167,14 @@ macro_rules! metadata_accessors {
                 /// Total audio frames elapsed as of the beginning of
                 /// this block.
                 #[must_use]
+                #[inline]
                 pub const fn audio_frames_elapsed(&self) -> u64 {
                     self.0.audioFramesElapsed
                 }
 
                 /// Number of detected underruns.
                 #[must_use]
+                #[inline]
                 pub const fn underrun_count(&self) -> u32 {
                     self.0.underrunCount
                 }
@@ -168,6 +187,7 @@ macro_rules! metadata_accessors {
                 /// other callback is made once, on the main audio
                 /// thread.
                 #[must_use]
+                #[inline]
                 pub const fn this_thread(&self) -> usize {
                     self.0.thisThread as usize
                 }
@@ -186,6 +206,7 @@ macro_rules! metadata_accessors {
                 ///
                 /// [`render`]: crate::BelaApplication::render
                 #[must_use]
+                #[inline]
                 pub const fn thread_count(&self) -> usize {
                     let count = self.0.threadCount as usize;
                     if count == 0 { 1 } else { count }
@@ -275,6 +296,21 @@ pub struct BlockContext(BelaContext);
 /// With one render thread the range is the whole block and this
 /// behaves like [`BlockContext`] minus the whole-buffer writes.
 ///
+/// # Writing a loop
+///
+/// The indexed writers work the partition out on every call, since
+/// that is what bounds the frame they were given. A loop over frames
+/// is cheaper through the slice accessors —
+/// [`audio_out`](RenderContext::audio_out) and its siblings — which
+/// work it out once:
+///
+/// ```ignore
+/// let channels = context.audio_out_channels();
+/// for samples in context.audio_out().chunks_mut(channels) {
+///     samples.fill(value);
+/// }
+/// ```
+///
 /// # What is not here
 ///
 /// - `as_sys_mut`: the raw context is the way back to the whole output
@@ -359,6 +395,7 @@ impl BlockContext {
     /// Audio input samples; empty with audio disabled. Length is
     /// `audio_frames() * audio_in_channels()`.
     #[must_use]
+    #[inline]
     pub const fn audio_in(&self) -> &[f32] {
         unsafe {
             shared(
@@ -370,6 +407,7 @@ impl BlockContext {
 
     /// Audio output samples. Length is
     /// `audio_frames() * audio_out_channels()`.
+    #[inline]
     pub const fn audio_out(&mut self) -> &mut [f32] {
         unsafe {
             exclusive(
@@ -382,6 +420,7 @@ impl BlockContext {
     /// Analog input samples; empty if analog I/O is disabled. Length
     /// is `analog_frames() * analog_in_channels()`.
     #[must_use]
+    #[inline]
     pub const fn analog_in(&self) -> &[f32] {
         unsafe {
             shared(
@@ -393,6 +432,7 @@ impl BlockContext {
 
     /// Analog output samples; empty if analog I/O is disabled. Length
     /// is `analog_frames() * analog_out_channels()`.
+    #[inline]
     pub const fn analog_out(&mut self) -> &mut [f32] {
         unsafe {
             exclusive(
@@ -406,6 +446,7 @@ impl BlockContext {
     /// `digital_*` / `pin_mode*` accessors, which encapsulate the bit
     /// layout.
     #[must_use]
+    #[inline]
     pub const fn digital(&self) -> &[u32] {
         unsafe { shared(self.0.digital, self.digital_frames()) }
     }
@@ -413,6 +454,7 @@ impl BlockContext {
     /// Mutable access to the digital I/O words. Prefer the
     /// `digital_write*` / `pin_mode*` accessors, which encapsulate the
     /// bit layout.
+    #[inline]
     pub const fn digital_mut(&mut self) -> &mut [u32] {
         unsafe { exclusive(self.0.digital, self.digital_frames()) }
     }
@@ -424,6 +466,7 @@ impl BlockContext {
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
+    #[inline]
     pub fn audio_read(&self, frame: usize, channel: usize) -> f32 {
         let channels = self.audio_in_channels();
         assert!(channel < channels, "audio input channel out of range");
@@ -435,6 +478,7 @@ impl BlockContext {
     ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
+    #[inline]
     pub fn audio_write(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.audio_out_channels();
         assert!(channel < channels, "audio output channel out of range");
@@ -446,6 +490,7 @@ impl BlockContext {
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
+    #[inline]
     pub fn analog_read(&self, frame: usize, channel: usize) -> f32 {
         let channels = self.analog_in_channels();
         assert!(channel < channels, "analog input channel out of range");
@@ -472,6 +517,7 @@ impl BlockContext {
     ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
+    #[inline]
     pub fn analog_write_once(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
@@ -483,6 +529,7 @@ impl BlockContext {
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
+    #[inline]
     pub fn digital_read(&self, frame: usize, channel: usize) -> bool {
         let mask = digital_value_mask(self.digital_channels(), channel);
         self.digital()[frame] & mask != 0
@@ -505,6 +552,7 @@ impl BlockContext {
     ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
+    #[inline]
     pub fn digital_write_once(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = digital_value_mask(self.digital_channels(), channel);
         set_bits(&mut self.digital_mut()[frame], mask, value);
@@ -542,6 +590,7 @@ impl RenderContext {
     /// ranges tile `0..audio_frames()` exactly. Empty when there are
     /// more threads than frames.
     #[must_use]
+    #[inline]
     pub const fn audio_frame_range(&self) -> Range<usize> {
         partition(self.audio_frames(), self.this_thread(), self.thread_count())
     }
@@ -553,6 +602,7 @@ impl RenderContext {
     /// two cover the same stretch of the block even when the analog
     /// frame count differs from the audio one.
     #[must_use]
+    #[inline]
     pub const fn analog_frame_range(&self) -> Range<usize> {
         partition(
             self.analog_frames(),
@@ -565,6 +615,7 @@ impl RenderContext {
     ///
     /// Split like [`audio_frame_range`](RenderContext::audio_frame_range).
     #[must_use]
+    #[inline]
     pub const fn digital_frame_range(&self) -> Range<usize> {
         partition(
             self.digital_frames(),
@@ -613,6 +664,7 @@ impl RenderContext {
     /// [`render_pre`](crate::BelaApplication::render_pre) instead,
     /// where nothing else is running.
     #[must_use]
+    #[inline]
     pub const fn digital(&self) -> &[u32] {
         let range = self.digital_frame_range();
         // Safety: the buffer is valid for `digital_frames()` words, and
@@ -630,44 +682,34 @@ impl RenderContext {
     /// index 0 is channel 0 of frame `audio_frame_range().start`, not
     /// of frame 0. [`audio_write`](RenderContext::audio_write) indexes
     /// by block frame instead, if that is easier to keep straight.
+    ///
+    /// This is the accessor to reach for in a loop over frames: it
+    /// works the partition out once, where the indexed writers work it
+    /// out on every call.
+    #[inline]
     pub const fn audio_out(&mut self) -> &mut [f32] {
         let range = self.audio_frame_range();
-        // Safety: the reference covers this thread's frames and no
-        // others, which is what keeps the concurrent calls apart.
-        unsafe {
-            share_mut(
-                self.0.audioOut,
-                self.audio_frames(),
-                self.audio_out_channels(),
-                range,
-            )
-        }
+        self.audio_share(range)
     }
 
     /// This thread's analog output samples, interleaved.
     ///
     /// The samples of the frames in
     /// [`analog_frame_range`](RenderContext::analog_frame_range); see
-    /// [`audio_out`](RenderContext::audio_out) for what index 0 means.
+    /// [`audio_out`](RenderContext::audio_out) for what index 0 means
+    /// and for why a loop should hold on to the slice.
+    #[inline]
     pub const fn analog_out(&mut self) -> &mut [f32] {
         let range = self.analog_frame_range();
-        // Safety: as for `audio_out`.
-        unsafe {
-            share_mut(
-                self.0.analogOut,
-                self.analog_frames(),
-                self.analog_out_channels(),
-                range,
-            )
-        }
+        self.analog_share(range)
     }
 
     /// This thread's digital I/O words, one per digital frame in
     /// [`digital_frame_range`](RenderContext::digital_frame_range).
+    #[inline]
     pub const fn digital_mut(&mut self) -> &mut [u32] {
         let range = self.digital_frame_range();
-        // Safety: as for `audio_out`.
-        unsafe { share_mut(self.0.digital, self.digital_frames(), 1, range) }
+        self.digital_share(range)
     }
 
     // --- Indexed access (mirrors the C helpers) ---
@@ -693,13 +735,13 @@ impl RenderContext {
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
     /// [`audio_frame_range`](RenderContext::audio_frame_range).
+    #[inline]
     pub fn audio_write(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.audio_out_channels();
         assert!(channel < channels, "audio output channel out of range");
         let range = self.audio_frame_range();
-        assert_frame(&range, frame, "audio");
-        let index = (frame - range.start) * channels + channel;
-        self.audio_out()[index] = value;
+        let index = (frame - assert_frame(&range, frame, "audio")) * channels + channel;
+        self.audio_share(range)[index] = value;
     }
 
     /// Analog input sample at `frame` for `channel` (`analogRead`).
@@ -734,9 +776,8 @@ impl RenderContext {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
         let range = self.analog_frame_range();
-        assert_frame(&range, frame, "analog");
-        let skip = frame - range.start;
-        for samples in self.analog_out().chunks_mut(channels).skip(skip) {
+        let skip = frame - assert_frame(&range, frame, "analog");
+        for samples in self.analog_share(range).chunks_mut(channels).skip(skip) {
             samples[channel] = value;
         }
     }
@@ -746,13 +787,13 @@ impl RenderContext {
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
     /// [`analog_frame_range`](RenderContext::analog_frame_range).
+    #[inline]
     pub fn analog_write_once(&mut self, frame: usize, channel: usize, value: f32) {
         let channels = self.analog_out_channels();
         assert!(channel < channels, "analog output channel out of range");
         let range = self.analog_frame_range();
-        assert_frame(&range, frame, "analog");
-        let index = (frame - range.start) * channels + channel;
-        self.analog_out()[index] = value;
+        let index = (frame - assert_frame(&range, frame, "analog")) * channels + channel;
+        self.analog_share(range)[index] = value;
     }
 
     /// Value of the digital `channel` at `frame` (`digitalRead`).
@@ -763,11 +804,14 @@ impl RenderContext {
     /// see [`digital`](RenderContext::digital) for why reading is
     /// bounded here and not for the audio and analog inputs.
     #[must_use]
+    #[inline]
     pub fn digital_read(&self, frame: usize, channel: usize) -> bool {
         let mask = digital_value_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        assert_frame(&range, frame, "digital");
-        self.digital()[frame - range.start] & mask != 0
+        let index = frame - assert_frame(&range, frame, "digital");
+        // Safety: as for `digital`, whose range this is.
+        let words = unsafe { share(self.0.digital, self.digital_frames(), 1, range) };
+        words[index] & mask != 0
     }
 
     /// Sets the digital output `channel` from `frame` to the end of
@@ -782,9 +826,8 @@ impl RenderContext {
     pub fn digital_write(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = digital_value_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        assert_frame(&range, frame, "digital");
-        let skip = frame - range.start;
-        for word in self.digital_mut().iter_mut().skip(skip) {
+        let skip = frame - assert_frame(&range, frame, "digital");
+        for word in self.digital_share(range).iter_mut().skip(skip) {
             set_bits(word, mask, value);
         }
     }
@@ -795,11 +838,12 @@ impl RenderContext {
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
     /// [`digital_frame_range`](RenderContext::digital_frame_range).
+    #[inline]
     pub fn digital_write_once(&mut self, frame: usize, channel: usize, value: bool) {
         let mask = digital_value_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        assert_frame(&range, frame, "digital");
-        set_bits(&mut self.digital_mut()[frame - range.start], mask, value);
+        let index = frame - assert_frame(&range, frame, "digital");
+        set_bits(&mut self.digital_share(range)[index], mask, value);
     }
 
     /// Sets the direction of digital `channel` from `frame` to the end
@@ -811,9 +855,8 @@ impl RenderContext {
     pub fn pin_mode(&mut self, frame: usize, channel: usize, mode: PinMode) {
         let mask = digital_direction_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        assert_frame(&range, frame, "digital");
-        let skip = frame - range.start;
-        for word in self.digital_mut().iter_mut().skip(skip) {
+        let skip = frame - assert_frame(&range, frame, "digital");
+        for word in self.digital_share(range).iter_mut().skip(skip) {
             set_bits(word, mask, mode == PinMode::Input);
         }
     }
@@ -827,12 +870,51 @@ impl RenderContext {
     pub fn pin_mode_once(&mut self, frame: usize, channel: usize, mode: PinMode) {
         let mask = digital_direction_mask(self.digital_channels(), channel);
         let range = self.digital_frame_range();
-        assert_frame(&range, frame, "digital");
+        let index = frame - assert_frame(&range, frame, "digital");
         set_bits(
-            &mut self.digital_mut()[frame - range.start],
+            &mut self.digital_share(range)[index],
             mask,
             mode == PinMode::Input,
         );
+    }
+
+    // --- This thread's share, for a range already worked out ---
+    //
+    // `partition` is two multiplications and two divisions, and the
+    // indexed accessors need the range before they can bound-check the
+    // frame. Taking it as an argument is what keeps them to one.
+
+    /// Safety: the reference covers this thread's frames and no
+    /// others, which is what keeps the concurrent calls apart.
+    #[inline]
+    const fn audio_share(&mut self, range: Range<usize>) -> &mut [f32] {
+        unsafe {
+            share_mut(
+                self.0.audioOut,
+                self.audio_frames(),
+                self.audio_out_channels(),
+                range,
+            )
+        }
+    }
+
+    /// Safety: as for [`audio_share`](RenderContext::audio_share).
+    #[inline]
+    const fn analog_share(&mut self, range: Range<usize>) -> &mut [f32] {
+        unsafe {
+            share_mut(
+                self.0.analogOut,
+                self.analog_frames(),
+                self.analog_out_channels(),
+                range,
+            )
+        }
+    }
+
+    /// Safety: as for [`audio_share`](RenderContext::audio_share).
+    #[inline]
+    const fn digital_share(&mut self, range: Range<usize>) -> &mut [u32] {
+        unsafe { share_mut(self.0.digital, self.digital_frames(), 1, range) }
     }
 }
 
@@ -866,6 +948,7 @@ callback_context!(SetupContext, CleanupContext, BlockContext, RenderContext);
 /// The clamping is for a context whose frame counts and the range
 /// derived from them disagree, which cannot happen for a range from
 /// [`partition`] but is cheaper to rule out than to reason about.
+#[inline]
 const fn samples(frames: usize, channels: usize, range: &Range<usize>) -> (usize, usize) {
     let end = if range.end < frames {
         range.end
@@ -883,6 +966,7 @@ const fn samples(frames: usize, channels: usize, range: &Range<usize>) -> (usize
 /// elements for the lifetime of the returned slice. Only the samples
 /// of `range` are covered by it, so the rest of the buffer may be
 /// borrowed elsewhere.
+#[inline]
 const unsafe fn share<'a, T>(
     ptr: *const T,
     frames: usize,
@@ -907,6 +991,7 @@ const unsafe fn share<'a, T>(
 /// `ptr` must be null or valid for reads and writes of
 /// `frames * channels` elements for the lifetime of the returned
 /// slice, with the samples of `range` unaliased.
+#[inline]
 const unsafe fn share_mut<'a, T>(
     ptr: *mut T,
     frames: usize,
@@ -920,17 +1005,24 @@ const unsafe fn share_mut<'a, T>(
     unsafe { slice::from_raw_parts_mut(ptr.add(offset), len) }
 }
 
+/// Checks `frame` against `range` and returns where the range starts,
+/// which is what the caller needs to turn a block frame into an index
+/// into this thread's share.
+///
 /// # Panics
 /// If `frame` is outside `range`.
-fn assert_frame(range: &Range<usize>, frame: usize, domain: &str) {
+#[inline]
+fn assert_frame(range: &Range<usize>, frame: usize, domain: &str) -> usize {
     assert!(
         range.contains(&frame),
         "{domain} frame {frame} is outside this thread's range {range:?}"
     );
+    range.start
 }
 
 /// # Panics
 /// If `channel` is out of range.
+#[inline]
 fn digital_value_mask(channels: usize, channel: usize) -> u32 {
     assert!(channel < channels, "digital channel out of range");
     1 << (channel + DIGITAL_VALUE_SHIFT)
@@ -938,6 +1030,7 @@ fn digital_value_mask(channels: usize, channel: usize) -> u32 {
 
 /// # Panics
 /// If `channel` is out of range.
+#[inline]
 fn digital_direction_mask(channels: usize, channel: usize) -> u32 {
     assert!(channel < channels, "digital channel out of range");
     1 << channel
@@ -946,6 +1039,7 @@ fn digital_direction_mask(channels: usize, channel: usize) -> u32 {
 /// # Safety
 /// `ptr` must be null or valid for reads of `len` elements for the
 /// lifetime of the returned slice.
+#[inline]
 const unsafe fn shared<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     if ptr.is_null() {
         &[]
@@ -957,6 +1051,7 @@ const unsafe fn shared<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 /// # Safety
 /// `ptr` must be null or valid for reads and writes of `len` elements,
 /// unaliased for the lifetime of the returned slice.
+#[inline]
 const unsafe fn exclusive<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
     if ptr.is_null() {
         &mut []
@@ -965,6 +1060,7 @@ const unsafe fn exclusive<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
     }
 }
 
+#[inline]
 const fn set_bits(word: &mut u32, mask: u32, on: bool) {
     if on {
         *word |= mask;

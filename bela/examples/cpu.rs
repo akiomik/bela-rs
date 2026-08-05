@@ -163,9 +163,8 @@ impl BelaApplication for Load {
     }
 
     fn create_render_state(&mut self, thread: ThreadInfo, context: &SetupContext) -> Bank {
-        let frames = context.audio_frames();
         Bank {
-            first_frame: frames * thread.index() / thread.count(),
+            first_frame: thread.frame_range(context.audio_frames()).start,
             phases: [0.0; OSCILLATORS],
             timer: CpuTimer::new(cycle()),
         }

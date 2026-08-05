@@ -136,6 +136,26 @@ impl Settings {
     /// More threads than the board has cores buys nothing: they render
     /// the same block and every one of them has to finish before it
     /// can be handed over. A Bela Gem has four.
+    ///
+    /// # It has to be the number libbela then renders on
+    ///
+    /// The render states are built from this value, resolved against
+    /// Bela's defaults and the command line, before `Bela_initAudio` is
+    /// called — so a libbela that went on to render on a different
+    /// number of threads would leave some of them without a state, and
+    /// the frame ranges would no longer tile the block.
+    ///
+    /// [`Bela::new`](crate::Bela::new) refuses that rather than
+    /// rendering it: the `setup` callback checks the count the context
+    /// reports and aborts if it disagrees. That fails the
+    /// initialisation with [`Error::Init`](crate::Error::Init) — which,
+    /// as `Bela::new` documents, is fatal to the *process*, so every
+    /// later `Bela::new` in it returns
+    /// [`Error::AudioSystemPoisoned`](crate::Error::AudioSystemPoisoned).
+    ///
+    /// The Bela this crate is pinned to copies `threadCount` through
+    /// unchanged, so the disagreement has not been seen; the check is
+    /// there because a future one might not.
     #[must_use]
     pub const fn thread_count(mut self, threads: u32) -> Self {
         self.thread_count = Some(threads);
@@ -145,7 +165,8 @@ impl Settings {
     /// Measures how much of each block the audio thread uses,
     /// averaging over `measurements_per_cycle` blocks.
     ///
-    /// [`Context::cpu_usage`](crate::Context::cpu_usage) reads the
+    /// [`BlockContext::cpu_usage`](crate::BlockContext::cpu_usage) reads
+    /// the
     /// result; without this it returns `None`. The cycle length trades
     /// responsiveness against noise: at 44.1 kHz and 16 frames per
     /// block, a block is about 0.36 ms, so 2000 blocks is a reading

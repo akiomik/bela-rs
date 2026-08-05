@@ -1,4 +1,6 @@
-use crate::context::{BlockContext, CleanupContext, RenderContext, SetupContext};
+use core::ops::Range;
+
+use crate::context::{BlockContext, CleanupContext, RenderContext, SetupContext, partition};
 
 /// Which render thread a [`RenderState`](BelaApplication::RenderState)
 /// is being made for.
@@ -40,6 +42,49 @@ impl ThreadInfo {
     #[must_use]
     pub const fn is_only(&self) -> bool {
         self.count == 1
+    }
+
+    /// This thread's share of `frames`, split the way
+    /// [`RenderContext`] splits a block.
+    ///
+    /// The same ranges [`RenderContext::audio_frame_range`] and its
+    /// analog and digital counterparts hand out, worked out from a
+    /// frame count rather than from a context — so a state built in
+    /// [`create_render_state`](BelaApplication::create_render_state)
+    /// can be sized and positioned for the frames it will be asked to
+    /// write, without the caller having to reproduce the split.
+    ///
+    /// Pass the count from the [`SetupContext`] of the same callback:
+    /// [`audio_frames`](SetupContext::audio_frames) for the audio
+    /// range, and its analog or digital sibling for those. Those
+    /// counts are fixed for the run — libbela has them before it calls
+    /// `setup`, and the render contexts report the same numbers — so
+    /// a range worked out here is the range `render` will be given.
+    ///
+    /// ```
+    /// # use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
+    /// # struct App;
+    /// struct Bus {
+    ///     first_frame: usize,
+    ///     samples: Vec<f32>,
+    /// }
+    ///
+    /// # impl BelaApplication for App {
+    /// # type RenderState = Bus;
+    /// fn create_render_state(&mut self, thread: ThreadInfo, context: &SetupContext) -> Bus {
+    ///     let frames = thread.frame_range(context.audio_frames());
+    ///     Bus {
+    ///         first_frame: frames.start,
+    ///         // Allocating here is fine: audio has not started.
+    ///         samples: vec![0.0; frames.len()],
+    ///     }
+    /// }
+    /// # fn render(&self, _s: &mut Bus, _c: &mut RenderContext) {}
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn frame_range(&self, frames: usize) -> Range<usize> {
+        partition(frames, self.index, self.count)
     }
 }
 
@@ -179,6 +224,13 @@ pub trait BelaApplication: Send + Sync {
     /// render state can be touched at once — reading the inputs,
     /// clearing the outputs, handing each thread the state its share of
     /// the block starts from.
+    ///
+    /// `states` is in thread order and `states.len()` is
+    /// [`BlockContext::thread_count`], so `states[n]` is the state
+    /// thread `n` will render with, and
+    /// [`ThreadInfo::frame_range`] says which frames that is. A
+    /// callback whose context disagrees with the states is refused
+    /// before it reaches here.
     fn render_pre(&mut self, _states: &mut [Self::RenderState], _context: &mut BlockContext) {}
 
     /// Called once per block **on every render thread at the same
@@ -197,6 +249,9 @@ pub trait BelaApplication: Send + Sync {
     /// The place to reduce: mix the per-thread busses down, advance the
     /// state the block as a whole carries, publish a reading for an
     /// [`AuxiliaryTask`](crate::AuxiliaryTask) to report.
+    ///
+    /// `states` is in thread order, as it is in
+    /// [`render_pre`](BelaApplication::render_pre).
     fn render_post(&mut self, _states: &mut [Self::RenderState], _context: &mut BlockContext) {}
 
     /// Called once after audio rendering stops, with the render states

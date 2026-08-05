@@ -509,11 +509,17 @@ else
     tids="$(sed -n 's/^parallel: thread=[0-9]* tid=\([0-9-]*\).*/\1/p' "$log" | sort -u | wc -l)"
     cpus="$(sed -n 's/^parallel: thread=[0-9]* tid=[0-9-]* cpu=\([0-9-]*\).*/\1/p' "$log" |
       sort -u | wc -l)"
-    # parallel: blocks=14705 rendered=235280 expected=235280 uncovered=0
+    # parallel: faults=0 — no callback was refused for arriving where
+    # the crate could not serve it safely, which is the guard the whole
+    # parallel path rests on and the only check for it that runs on a
+    # board.
+    faults="$(sed -n 's/^parallel: faults=\([0-9]*\).*/\1/p' "$log" | head -1)"
+    # parallel: blocks=14705 rendered=235280 expected=235280 uncovered=0 abandoned=0
     summary="$(awk '/^parallel: blocks=/ { print; exit }' "$log" 2>/dev/null || true)"
     rendered="$(echo "$summary" | sed -n 's/.*rendered=\([0-9]*\).*/\1/p')"
     expected="$(echo "$summary" | sed -n 's/.*expected=\([0-9]*\).*/\1/p')"
     uncovered="$(echo "$summary" | sed -n 's/.*uncovered=\([0-9]*\).*/\1/p')"
+    abandoned="$(echo "$summary" | sed -n 's/.*abandoned=\([0-9]*\).*/\1/p')"
     # The busiest thread's share of the block, which is what has to fall
     # as threads are added: they render at the same time, so the block
     # is only finished when the last of them is.
@@ -533,13 +539,30 @@ else
 $(echo "$cpus" | tr -d ' ') core(s), so the work was not spread"
     fi
 
-    if [ -z "$rendered" ] || [ -z "$expected" ]; then
-      fail "parallel: $threads thread(s): no summary line"
-    elif [ "$rendered" = "$expected" ] && [ "$uncovered" = 0 ]; then
-      pass "parallel: $threads thread(s): $rendered frames rendered for $expected, none uncovered"
+    if [ "$faults" = 0 ]; then
+      pass "parallel: $threads thread(s): no callback was refused"
     else
-      fail "parallel: $threads thread(s): $rendered frames rendered for $expected, \
-$uncovered uncovered — the block was duplicated or left with holes"
+      fail "parallel: $threads thread(s): ${faults:-no} callback fault(s) reported"
+    fi
+
+    # Every frame was written once or not at all: a frame written twice
+    # would push `rendered` past `expected` without lowering
+    # `uncovered`, so the sum is the check that the block was divided.
+    if [ -z "$rendered" ] || [ -z "$expected" ] || [ -z "$abandoned" ]; then
+      fail "parallel: $threads thread(s): no summary line"
+    elif [ "$((rendered + uncovered))" != "$expected" ]; then
+      fail "parallel: $threads thread(s): $rendered rendered + $uncovered uncovered is not the \
+$expected frames of the run — the block was duplicated or lost"
+    elif [ "$abandoned" -le 1 ]; then
+      # A stop requested mid-block can leave the last one unfinished:
+      # libbela's secondary threads check the flag before taking a
+      # block, and `render_wrapper` stops waiting for them. See the
+      # example's header.
+      pass "parallel: $threads thread(s): $rendered frames rendered for $expected, \
+$abandoned block(s) abandoned on the way out"
+    else
+      fail "parallel: $threads thread(s): $abandoned blocks were left unfinished, which is more \
+than the one a stop can abandon"
     fi
 
     if [ -z "$section" ]; then

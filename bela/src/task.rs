@@ -336,6 +336,7 @@ impl AuxiliaryTask {
     /// Once the audio system this task belongs to has stopped, every
     /// task is gone and this does nothing — `cleanup` runs after that
     /// point.
+    ///
     /// # First schedule of a task
     ///
     /// libbela forces a task's thread to start the first time the task

@@ -32,6 +32,21 @@
 //! stop, and returns without running any user code at all: no aliased
 //! reference is ever created, not even briefly.
 //!
+//! # The one thing assumed rather than checked
+//!
+//! Concurrent `render` calls must arrive with *different* `BelaContext`
+//! structs. libbela's are `BelaContextSplitter::contextMirror` copies,
+//! one per thread — measured, and the reason the buffer pointers are
+//! shared while `thisThread` is not — so each call has a struct of its
+//! own to borrow. A guard cannot check that: two threads holding
+//! distinct claims would still be holding one struct if libbela ever
+//! passed the same pointer to both.
+//!
+//! What the guard does cover is that the claim comes first. The thread
+//! number is read straight from the raw pointer, without a reference,
+//! and the claim is taken before anything is borrowed — so a `render`
+//! that is refused never touches the context at all.
+//!
 //! [`RenderState`]: crate::BelaApplication::RenderState
 
 use core::cell::UnsafeCell;
@@ -211,8 +226,11 @@ pub struct Runtime<T: BelaApplication> {
 // documentation. What crosses threads is `T` by shared reference and
 // one `T::RenderState` by exclusive reference, which is what the
 // trait's `Sync` and `Send` bounds are for.
+//
+// Only `Sync` is spelled out. `Send` follows from the fields, and
+// claiming it by hand would go on holding after a field that is not
+// `Send` was added.
 unsafe impl<T: BelaApplication> Sync for Runtime<T> {}
-unsafe impl<T: BelaApplication> Send for Runtime<T> {}
 
 #[cfg_attr(
     not(bela_device),
@@ -248,6 +266,26 @@ impl<T: BelaApplication> Runtime<T> {
         self.guard.faults()
     }
 
+    /// Whether `threads` is the number of render states this runtime
+    /// was built with, faulting if it is not.
+    ///
+    /// The states and the slots were sized from the settings, before
+    /// `Bela_initAudio` was called. A context that renders on a
+    /// different number of threads would leave some of them without
+    /// either, and the partitions the contexts hand out would not tile
+    /// the block: some frames written by two threads, some by none.
+    ///
+    /// Checked in every phase, so that `states.len()` and
+    /// `thread_count()` are the same number wherever an application
+    /// can see both.
+    fn threads_agree(&self, threads: usize) -> bool {
+        if threads == self.guard.threads() {
+            return true;
+        }
+        self.guard.fault();
+        false
+    }
+
     /// # Safety
     /// `context` must satisfy [`SetupContext::from_mut_ptr`].
     unsafe fn setup(&self, context: *mut BelaContext) -> bool {
@@ -257,11 +295,7 @@ impl<T: BelaApplication> Runtime<T> {
         // Safety: the caller's contract, and the claim above means no
         // other callback holds this context.
         let context: &SetupContext = unsafe { SetupContext::from_mut_ptr(context) };
-        if context.thread_count() != self.guard.threads() {
-            // The states and the slots were sized from the settings; a
-            // context that renders on a different number of threads
-            // would leave some of them without either.
-            self.guard.fault();
+        if !self.threads_agree(context.thread_count()) {
             return false;
         }
         if !self.states.load(Ordering::Acquire).is_null() {
@@ -293,20 +327,23 @@ impl<T: BelaApplication> Runtime<T> {
     /// # Safety
     /// `context` must satisfy [`RenderContext::from_mut_ptr`].
     unsafe fn render(&self, context: *mut BelaContext) {
-        // Safety: the caller's contract. libbela gives each render
-        // thread its own mirrored copy of the context struct, so this
-        // is the only reference to this one.
-        let context = unsafe { RenderContext::from_mut_ptr(context) };
-        if context.thread_count() != self.guard.threads() {
-            // Without this the partitions would not tile the block:
-            // some frames would be written by two threads and some by
-            // none.
-            self.guard.fault();
-            return;
-        }
-        let Some(active) = self.guard.enter_render(context.this_thread()) else {
+        // A field read through the raw pointer, not a reference: the
+        // claim below is what makes borrowing this context sound, so
+        // nothing may be borrowed ahead of it.
+        //
+        // Safety: the caller's contract.
+        let thread = unsafe { (*context).thisThread } as usize;
+        let Some(active) = self.guard.enter_render(thread) else {
             return;
         };
+        // Safety: the caller's contract, plus the claim — and libbela
+        // gives each render thread a mirrored copy of the context
+        // struct to itself, which is the assumption the module
+        // documentation names as the one the guard cannot check.
+        let context = unsafe { RenderContext::from_mut_ptr(context) };
+        if !self.threads_agree(context.thread_count()) {
+            return;
+        }
         let base = self.states.load(Ordering::Acquire);
         if base.is_null() {
             // Rendering before setup finished building the states.
@@ -337,6 +374,9 @@ impl<T: BelaApplication> Runtime<T> {
         };
         // Safety: the caller's contract, plus the claim.
         let context = unsafe { BlockContext::from_mut_ptr(context) };
+        if !self.threads_agree(context.thread_count()) {
+            return;
+        }
         // Safety: the exclusive claim.
         let app = unsafe { &mut *self.app.get() };
         app.render_pre(states, context);
@@ -353,6 +393,9 @@ impl<T: BelaApplication> Runtime<T> {
         };
         // Safety: the caller's contract, plus the claim.
         let context = unsafe { BlockContext::from_mut_ptr(context) };
+        if !self.threads_agree(context.thread_count()) {
+            return;
+        }
         // Safety: the exclusive claim.
         let app = unsafe { &mut *self.app.get() };
         app.render_post(states, context);
@@ -369,6 +412,9 @@ impl<T: BelaApplication> Runtime<T> {
         };
         // Safety: the caller's contract, plus the claim.
         let context: &CleanupContext = unsafe { CleanupContext::from_mut_ptr(context) };
+        if !self.threads_agree(context.thread_count()) {
+            return;
+        }
         // Safety: the exclusive claim.
         let app = unsafe { &mut *self.app.get() };
         app.cleanup(states, context);
@@ -651,6 +697,25 @@ mod tests {
     }
 
     #[test]
+    fn the_block_phases_and_cleanup_are_refused_before_setup() {
+        // No states exist yet, so there is no `&mut [RenderState]` to
+        // hand out — not even an empty one, which would be a different
+        // number of threads from the one the run was built for.
+        let mut fixture = Fixture::new();
+        let runtime = Runtime::new(recorder(), 1);
+        let context = &raw mut fixture.context;
+
+        unsafe {
+            runtime.render_pre(context);
+            runtime.render_post(context);
+            runtime.cleanup(context);
+        }
+
+        assert_eq!(counts(&runtime), [0, 0, 0, 0, 0], "no callback should run");
+        assert_eq!(runtime.faults(), 3);
+    }
+
+    #[test]
     fn a_second_setup_is_refused() {
         let mut fixture = Fixture::new();
         let runtime = Runtime::new(recorder(), 1);
@@ -732,7 +797,8 @@ mod tests {
 
         assert_eq!(counts(&runtime)[2], 8);
         assert_eq!(runtime.faults(), 0);
-        // Threads 2, 4, 6 and 8 own one frame each, in order.
+        // Threads 1, 3, 5 and 7 own one frame each, in order, and
+        // each writes its own number plus one.
         let channels = fixture.context.audioOutChannels as usize;
         let written: Vec<f32> = (0..4).map(|f| fixture.audio_out[f * channels]).collect();
         assert_eq!(written, vec![2.0, 4.0, 6.0, 8.0]);
@@ -790,7 +856,7 @@ mod tests {
         // up waiting for the secondary threads and calls render_post
         // over states one of them is still holding.
         let mut fixture = Fixture::with_threads(2);
-        let runtime = Arc::new(Runtime::new(Blocker::new(), 2));
+        let runtime = Arc::new(Runtime::new(Blocker::new(true), 2));
         assert!(unsafe { runtime.setup(&raw mut fixture.context) });
 
         let mut mirrors = mirrors(&fixture, 2);
@@ -829,21 +895,33 @@ mod tests {
         );
     }
 
-    /// Holds its `render` open until the test lets it go, so that
+    /// Holds one callback open until the test lets it go, so that
     /// another phase can be tried while it is in flight.
     struct Blocker {
+        /// Whether `render` is the callback that waits; `render_pre`
+        /// waits instead when this is false.
+        block_render: bool,
         inside: Arc<Barrier>,
         release: Arc<Barrier>,
+        render_calls: AtomicU32,
         post_calls: AtomicU32,
     }
 
     impl Blocker {
-        fn new() -> Self {
+        fn new(block_render: bool) -> Self {
             Self {
+                block_render,
                 inside: Arc::new(Barrier::new(2)),
                 release: Arc::new(Barrier::new(2)),
+                render_calls: AtomicU32::new(0),
                 post_calls: AtomicU32::new(0),
             }
+        }
+
+        /// Waits for the test to look, and then for it to let go.
+        fn hold(&self) {
+            self.inside.wait();
+            self.release.wait();
         }
     }
 
@@ -852,14 +930,61 @@ mod tests {
 
         fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
 
+        fn render_pre(&mut self, _states: &mut [()], _context: &mut BlockContext) {
+            if !self.block_render {
+                self.hold();
+            }
+        }
+
         fn render(&self, _state: &mut (), _context: &mut RenderContext) {
-            self.inside.wait();
-            self.release.wait();
+            self.render_calls.fetch_add(1, Ordering::Relaxed);
+            if self.block_render {
+                self.hold();
+            }
         }
 
         fn render_post(&mut self, _states: &mut [()], _context: &mut BlockContext) {
             self.post_calls.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    #[test]
+    fn a_render_arriving_while_a_block_phase_holds_the_runtime_is_refused() {
+        // The other side of the same coin: `render_pre` has the
+        // application and every state by &mut, so a render thread that
+        // woke early must not be handed one of them.
+        let mut fixture = Fixture::with_threads(2);
+        let runtime = Arc::new(Runtime::new(Blocker::new(false), 2));
+        assert!(unsafe { runtime.setup(&raw mut fixture.context) });
+
+        let mut mirrors = mirrors(&fixture, 2);
+        let app = || unsafe { &*runtime.app.get() };
+        let inside = Arc::clone(&app().inside);
+        let release = Arc::clone(&app().release);
+        let rendering = Shared(&raw mut mirrors[1]);
+        let block = Shared(&raw mut fixture.context);
+
+        thread::scope(|scope| {
+            let preparing = {
+                let runtime = Arc::clone(&runtime);
+                scope.spawn(move || {
+                    let block = block;
+                    unsafe { runtime.render_pre(block.0) };
+                })
+            };
+            // Wait until render_pre is definitely inside the callback.
+            inside.wait();
+            unsafe { runtime.render(rendering.0) };
+            release.wait();
+            preparing.join().expect("the block phase should not panic");
+        });
+
+        assert_eq!(runtime.faults(), 1, "the render must have been refused");
+        assert_eq!(
+            app().render_calls.load(Ordering::Relaxed),
+            0,
+            "render must not have run"
+        );
     }
 
     // --- The guard on its own ---

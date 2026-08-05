@@ -138,26 +138,53 @@ behaved.
 `bela/examples/parallel.rs` renders a bank of 192 sine oscillators
 split by frame, and reports what each thread did. Measured on the board
 on 2026-08-06 (same image and libbela as above), 16 frames per block at
-44.1 kHz, 6-second runs:
+44.1 kHz, 6-second runs, with every thread on a core of its own:
 
 | `thread_count` | cores used | frames per thread per block | busiest thread's share of the block | audio thread busy |
 |---|---|---|---|---|
-| 1 | 3 | 16 | 41.6% | 48.6% |
-| 2 | 3, 2 | 8 | 21.0% | 42.2% |
-| 4 | 3, 2, 1, 0 | 4 | 10.7% | 32.3% |
+| 1 | 3 | 16 | 41.4% | 48.5% |
+| 2 | 3, 2 | 8 | 20.9% | 42.1% |
+| 4 | 3, 2, 1, 0 | 4 | 10.6% | 32.2% |
 
-Every run reported `rendered=expected` and `uncovered=0`: the frames
-the threads rendered add up to exactly one block per block, and a
-sentinel `render_pre` stamps into every frame was gone by
-`render_post`. So the block was divided, not rendered four times over.
+Every run reported `rendered + uncovered = expected` and `faults=0`:
+every frame was written once or not at all — a frame written twice
+would push `rendered` past `expected` — and no callback had to be
+refused. So the block was divided, not rendered four times over.
 
-The work per thread falls with the thread count almost exactly — 41.6%
-to 10.7% over four threads — while the audio thread's own figure falls
-much less, from 48.6% to 32.3%. The difference is the cost of the
+The work per thread falls with the thread count almost exactly — 41.4%
+to 10.6% over four threads — while the audio thread's own figure falls
+much less, from 48.5% to 32.2%. The difference is the cost of the
 arrangement itself: the main thread wakes the others, renders its own
 share, and then spins waiting for the last of them, and all of that
 counts as busy. Multithreaded rendering buys headroom, not four times
 the headroom.
 
+### The last block is sometimes short
+
+The `while(!allThreadsDone && !Bela_stopRequested())` edge described
+above turns out to be visible from the safe API, and this is what it
+looks like. Running the example for 5 s with two threads, one run in
+several ends with
+
+```
+parallel: blocks=11729 rendered=187688 expected=187696 uncovered=8 abandoned=1
+```
+
+`uncovered=8` is exactly one thread's share of exactly one block, and
+`rendered + uncovered` still adds up. libbela's secondary threads check
+`Bela_stopRequested()` before taking their next block, so one of them
+bows out while `render_wrapper` gives up waiting and calls
+`render_post` anyway: the frames that thread owned are nobody's for
+that one block. The example silences them rather than letting its
+sentinel reach the codec.
+
+`faults` stays 0 through it, which is the right answer: nothing
+overlapped, so there was nothing to refuse. The block was abandoned on
+the way out, not raced over. It is why the smoke test asks for
+`abandoned <= 1` rather than `uncovered == 0`, and it is worth knowing
+for an application that counts frames rendered rather than blocks: the
+last block of a multithreaded run may be partly silent.
+
 `scripts/smoke-test.sh` runs the same example at 1, 2 and 4 threads and
-checks the coverage and the fall in per-thread work.
+checks the coverage identity, the abandoned-block bound, the fault
+count and the fall in per-thread work.

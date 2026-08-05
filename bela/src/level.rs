@@ -43,7 +43,8 @@
 //! Each call talks to the codec over I²C, which makes no promises about
 //! how long it takes; Bela's own documentation says not to call these
 //! from `render`. Taking them on the `Bela` handle keeps them out of
-//! reach there: `render` gets a [`Context`](crate::Context), and the
+//! reach there: `render` gets a
+//! [`RenderContext`](crate::RenderContext), and the
 //! handle stays with the thread that owns the audio system.
 //!
 //! # On a Bela Gem Stereo
@@ -119,7 +120,7 @@ pub enum Channel {
     /// Every channel the codec has.
     All,
     /// One channel, counted the way
-    /// [`Context::audio_out_channels`](crate::Context::audio_out_channels)
+    /// [`RenderContext::audio_out_channels`](crate::RenderContext::audio_out_channels)
     /// counts them.
     One(usize),
 }

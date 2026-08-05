@@ -274,6 +274,10 @@ impl<T: BelaApplication> Bela<T> {
     /// one was still in flight, which a stop requested mid-block can
     /// produce. The callback was skipped and a stop requested, so this
     /// is a reason a run ended, not damage that can be undone.
+    ///
+    /// [`until_stopped`](Bela::until_stopped) reads it for you and
+    /// fails with [`Error::CallbackFaults`]; this is for a program
+    /// driving [`start`](Bela::start) and [`stop`](Bela::stop) itself.
     #[must_use]
     pub fn callback_faults(&self) -> u32 {
         // Safety: the runtime is alive for as long as `self` is, and
@@ -309,7 +313,9 @@ impl<T: BelaApplication> Bela<T> {
     /// Returns [`Error::Init`] or [`Error::Start`] when the audio
     /// system fails to initialise or start. What an [`Error::Init`]
     /// leaves behind is described on [`new`](Bela::new); it is fatal to
-    /// the process here too.
+    /// the process here too. Returns [`Error::CallbackFaults`] when the
+    /// run ended because a callback was refused, so `Ok(())` means the
+    /// run was stopped by someone asking it to.
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
         Self::new(application, settings)?.until_stopped()
     }
@@ -321,8 +327,9 @@ impl<T: BelaApplication> Bela<T> {
     /// where they sit.
     ///
     /// # Errors
-    /// The errors of [`new_with_args`](Bela::new_with_args), plus
-    /// [`Error::Start`] when the audio system fails to start.
+    /// The errors of [`new_with_args`](Bela::new_with_args), plus the
+    /// [`Error::Start`] and [`Error::CallbackFaults`] of
+    /// [`run`](Bela::run).
     pub fn run_with_args<I, S>(application: T, settings: &Settings, args: I) -> Result<(), Error>
     where
         I: IntoIterator<Item = S>,
@@ -360,7 +367,11 @@ impl<T: BelaApplication> Bela<T> {
     /// [`run`](Bela::run) does; see it for what they mean over ssh.
     ///
     /// # Errors
-    /// Returns [`Error::Start`] when the audio system fails to start.
+    /// Returns [`Error::Start`] when the audio system fails to start,
+    /// and [`Error::CallbackFaults`] when the run ended because a
+    /// callback was refused — a stop asked for by the crate rather than
+    /// by anyone else, which `Ok(())` would otherwise hide. See
+    /// [`callback_faults`](Bela::callback_faults).
     pub fn until_stopped(mut self) -> Result<(), Error> {
         let handler = request_stop_on_signal as extern "C" fn(c_int);
         for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
@@ -371,7 +382,15 @@ impl<T: BelaApplication> Bela<T> {
             thread::sleep(Duration::from_millis(10));
         }
         self.stop();
-        Ok(())
+        // Read once audio has stopped, so that every render, render_pre
+        // and render_post of the run has been counted. The `cleanup`
+        // callback has not run yet — it runs in the drop below — but it
+        // cannot be refused: a claim is free by definition once the
+        // render threads are joined.
+        match self.callback_faults() {
+            0 => Ok(()),
+            faults => Err(Error::CallbackFaults(faults)),
+        }
     }
 }
 

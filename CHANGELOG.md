@@ -28,16 +28,21 @@ and this project adheres to
   on one thread number, a `render_post` overlapping a `render`, which a
   stop requested mid-block can produce — is refused, and the audio
   system asked to stop, without any user code running.
-  `Bela::callback_faults` counts those refusals; it is 0 for a run that
-  behaved.
+  `Bela::callback_faults` counts those refusals, and
+  `Bela::until_stopped` — with the `run` methods built on it — fails
+  with the new `Error::CallbackFaults` rather than reporting `Ok(())`
+  for a run the crate itself asked to stop.
 - `examples/parallel`, which splits a bank of 192 sine oscillators
   across the render threads and measures that the work was divided
-  rather than duplicated: per-thread frame counts that add up to one
-  block per block, no frame left unwritten, and a Linux thread id and
-  core for each. Measured on a Bela Gem, the busiest thread's share of
-  the block falls from 41.6% on one thread to 10.7% on four; see
-  `docs/multithreaded-rendering.md` for the whole table and for why the
-  audio thread's own figure falls by less.
+  rather than duplicated: per-thread frame counts that account for
+  every frame exactly once, and a Linux thread id and core for each.
+  Measured on a Bela Gem, the busiest thread's share of the block falls
+  from 41.4% on one thread to 10.6% on four; see
+  `docs/multithreaded-rendering.md` for the whole table, for why the
+  audio thread's own figure falls by less, and for the one thing the
+  example turned up that reading libbela's sources had only suggested —
+  a stop requested mid-block can leave the final block partly
+  unrendered.
 - `examples/init_failure`, a hardware probe for what a failed
   `Bela_initAudio` leaves behind. It runs one question per process —
   fail an initialisation and stop; fail one and try another; fail one

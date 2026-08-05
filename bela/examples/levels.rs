@@ -79,9 +79,11 @@ impl BelaApplication for Sine {
     }
 
     fn create_render_state(&mut self, thread: ThreadInfo, context: &SetupContext) -> Phase {
-        let frames = context.audio_frames();
+        // The same frames `RenderContext::audio_frame_range` will hand
+        // this thread. They do not change from block to block, so the
+        // split is worked out once here rather than on every one.
         Phase {
-            first_frame: frames * thread.index() / thread.count(),
+            first_frame: thread.frame_range(context.audio_frames()).start,
             phase: 0.0,
         }
     }
