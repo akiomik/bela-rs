@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-06
+
 ### Added
 
 - Multithreaded rendering. `Settings::thread_count` above 1 is served
@@ -363,7 +365,8 @@ and this project adheres to
 - Dual MIT / Apache-2.0 licensing
 - A draft of the cross-compilation setup in `docs/cross-compile.md`
 
-[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/akiomik/bela-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/akiomik/bela-rs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/akiomik/bela-rs/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/akiomik/bela-rs/releases/tag/v0.0.1
