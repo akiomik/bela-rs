@@ -52,6 +52,10 @@ fn main() {
     }
 }
 
+#[allow(
+    clippy::exit,
+    reason = "a usage error is reported to the caller as exit code 2"
+)]
 fn usage() -> ! {
     eprintln!("usage:");
     eprintln!("  cargo xtask bindgen [--sysroot <dir>]");

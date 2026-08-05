@@ -258,6 +258,14 @@ and this project adheres to
 
 ### Changed
 
+- `xtask` is a workspace member instead of a standalone package, so the
+  fmt, clippy and MSRV runs cover it and it shares the workspace lints
+  and lockfile. It had been excluded to keep bindgen out of ordinary
+  builds, but the cost that motivated that is not there: bindgen loads
+  libclang at run time, so only `cargo xtask bindgen` needs one, and
+  nothing about `cargo check` or `cargo test` does. Being a host-only
+  task, it is excluded from the device-target and coverage jobs
+
 - `scripts/sync-sysroot.sh` no longer compresses the transfer: gzip on
   the board's Cortex-A53 was the bottleneck rather than the link, and
   dropping `-z` cuts a full sync from 163 s to about 40 s
