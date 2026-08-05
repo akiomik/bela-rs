@@ -236,8 +236,9 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: monitoring_rules (fifo-probe <frames> | second-new | monitoring on|off\n\
-                 \x20                     | poisoned)\n\
-                 one check per run: two of these abort from `setup`, which poisons the process"
+                 \x20                       | poisoned)\n\
+                 one check per run: three of these abort from `setup`, which makes \
+                 `Bela::new` give up on it"
             );
             return ExitCode::FAILURE;
         }

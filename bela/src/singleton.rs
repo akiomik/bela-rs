@@ -83,6 +83,13 @@ impl Claim {
     /// and there is no call that will make it let go. Releasing this
     /// claim as free would let the next `Bela::new` walk into that,
     /// which on a board means a segfault rather than an error.
+    ///
+    /// The state changes when this claim drops, not here, so a thread
+    /// that calls [`take`](Claim::take) in between is told
+    /// [`Error::AudioSystemExists`] and only afterwards
+    /// [`Error::AudioSystemPoisoned`]. Both refuse it, which is what
+    /// matters; publishing the poison early would mean a claim whose
+    /// `Drop` no longer describes the state it leaves.
     #[cfg_attr(
         not(bela_device),
         allow(

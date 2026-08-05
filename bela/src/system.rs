@@ -193,11 +193,13 @@ impl<T: BelaApplication> Bela<T> {
         if ret != 0 {
             // The audio system never took ownership of the callbacks.
             drop(unsafe { Box::from_raw(app) });
-            // Everything above this point can fail and leave libbela as
-            // it was; this cannot. `Bela_initAudio` got partway and
-            // there is no call that undoes it, so the claim is released
-            // as unusable rather than free and the next `new` is
-            // refused instead of segfaulting.
+            // Every failure above this point leaves libbela in a state
+            // the next attempt can resolve — CPU monitoring can be left
+            // initialised, but the next `new` applies or disables it
+            // either way. This one cannot be resolved: `Bela_initAudio`
+            // got partway and no call undoes it, so the claim is
+            // released as unusable rather than free and the next `new`
+            // is refused instead of segfaulting.
             claim.poison();
             return Err(Error::Init(ret));
         }

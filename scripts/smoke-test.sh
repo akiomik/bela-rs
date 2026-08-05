@@ -467,9 +467,12 @@ ${requested:-nothing}/${unset_to:-nothing}"
   "first-init=failed poisoned-new=refused")
     pass "monitoring_rules: a Bela::new after a failed initialisation was refused"
     ;;
-  "")
-    fail "monitoring_rules: the poisoned check printed nothing, which is what the segfault \
-it guards against looks like"
+  run-failed | "")
+    # What the failure this guards against looks like from here: the
+    # check reaches its second `Bela::new`, libbela segfaults, and the
+    # non-zero exit reaches `rules` before any line is printed.
+    fail "monitoring_rules: the poisoned check did not survive to report, which is what \
+the segfault it guards against looks like"
     ;;
   *) fail "monitoring_rules: poisoned check reported '$poisoned'" ;;
   esac
