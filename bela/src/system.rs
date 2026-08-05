@@ -293,6 +293,30 @@ impl<T: BelaApplication> Bela<T> {
         unsafe { &*self.runtime }.faults()
     }
 
+    /// How many callbacks this audio system has refused *during* a
+    /// shutdown, which is a different thing from
+    /// [`callback_faults`](Bela::callback_faults) and not a failure.
+    ///
+    /// libbela abandons the block it is in when a stop arrives: the
+    /// secondary render threads check the stop flag just before calling
+    /// `render`, and the main thread stops waiting for them on the same
+    /// flag, so a `render_post` can arrive while a `render` is still
+    /// finishing. Refusing that is the guard doing its job.
+    ///
+    /// Non-zero means the last block was cut short — some of its frames
+    /// were never rendered, and its `render_post` may not have run.
+    /// That is worth knowing for a program that counts frames rather
+    /// than blocks, which is why it can be asked.
+    /// [`until_stopped`](Bela::until_stopped) reports it on the console
+    /// instead; this is for a program driving [`start`](Bela::start) and
+    /// [`stop`](Bela::stop) itself, which has no other way to find out.
+    #[must_use]
+    pub fn callback_faults_while_stopping(&self) -> u32 {
+        // Safety: the runtime is alive for as long as `self` is, and
+        // reading the counter is an atomic load.
+        unsafe { &*self.runtime }.faults_while_stopping()
+    }
+
     /// Whether a stop has been requested (stop button, IDE, or
     /// [`Bela::request_stop`]).
     #[must_use]
@@ -408,8 +432,7 @@ impl<T: BelaApplication> Bela<T> {
         // render threads are joined by now and the other two were
         // settled in `setup`, so none of them can happen on this path.
         //
-        // Safety: the runtime is alive until the drop below.
-        let while_stopping = unsafe { &*self.runtime }.faults_while_stopping();
+        let while_stopping = self.callback_faults_while_stopping();
         if while_stopping != 0 {
             // Not a failure: this is libbela abandoning the block it
             // was in when the stop arrived, and the guard declining to

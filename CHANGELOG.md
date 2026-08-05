@@ -36,8 +36,9 @@ and this project adheres to
   run and does not fail anything: libbela abandons the block it is in
   when a stop arrives, which can leave a `render_post` overlapping a
   `render` still finishing, and refusing that is the guard working
-  rather than a symptom. Those are reported on the console, and mean
-  the last block of a multithreaded run may be short — see
+  rather than a symptom. Those are reported on the console and counted
+  by `Bela::callback_faults_while_stopping`, and mean the last block of
+  a multithreaded run may be short — see
   `docs/multithreaded-rendering.md`.
 - `examples/parallel`, which splits a bank of 192 sine oscillators
   across the render threads and measures that the work was divided

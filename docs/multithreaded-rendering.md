@@ -60,7 +60,14 @@ rather than served with references a running `render` already holds.
 
 It is also the ordinary way a run ends, which is why the crate counts a
 refusal made *while a stop is already pending* separately from one made
-during a live run. Only the second fails
+during a live run. `Bela_stopRequested` reads a `volatile` flag rather
+than an atomic one, so a thread that has not been told about the store
+by other means is not guaranteed to see it — which is why a `render`
+turned away by a block phase is classified by what *that phase* saw,
+published through the same atomic word the render had to acquire to
+find the claim held. The thread that was turned away has no reliable
+reading of its own to go on, and the useful question is whether the
+phase that turned it away was itself part of a shutdown. Only the second fails
 [`Bela::until_stopped`](../bela/src/system.rs) with
 `Error::CallbackFaults`; the first is reported on the console and means
 the last block may be short. Mixing them would make Ctrl-C an error.

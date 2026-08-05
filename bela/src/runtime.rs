@@ -84,6 +84,13 @@ const fn request_stop() {}
 /// [`Guard::fault`]. Off-device nothing can request a stop, so every
 /// fault a test raises counts as one raised while running, which is
 /// what those tests are about.
+///
+/// `Bela_stopRequested` reads `int volatile gShouldStop`, which is
+/// volatile rather than atomic: a thread that has not been told about
+/// the store by some other means is not guaranteed to see it. Every
+/// caller here is a thread that has been — see
+/// [`Guard::enter_exclusive`] for the one place that needed arranging
+/// rather than observing.
 #[cfg(bela_device)]
 fn stop_requested() -> bool {
     // Safety: Bela_stopRequested only reads a flag.
@@ -109,6 +116,13 @@ struct Guard {
     /// How many have been refused after a stop was already asked for,
     /// which is a different thing entirely — see [`Guard::fault`].
     faults_while_stopping: AtomicU32,
+    /// What the thread taking the current exclusive claim saw of the
+    /// stop flag, published by the claim itself.
+    ///
+    /// Only meaningful to a thread that has observed that claim, which
+    /// is what gives it an ordering — see
+    /// [`enter_exclusive`](Guard::enter_exclusive).
+    stopping: AtomicBool,
 }
 
 #[cfg_attr(
@@ -125,6 +139,7 @@ impl Guard {
             busy: (0..threads).map(|_| AtomicBool::new(false)).collect(),
             faults: AtomicU32::new(0),
             faults_while_stopping: AtomicU32::new(0),
+            stopping: AtomicBool::new(false),
         }
     }
 
@@ -197,14 +212,42 @@ impl Guard {
     /// Claims the runtime for a single-threaded phase, which needs
     /// every render thread to be out.
     fn enter_exclusive(&self) -> Option<Exclusive<'_>> {
+        self.enter_exclusive_seeing(stop_requested())
+    }
+
+    /// [`enter_exclusive`](Guard::enter_exclusive) with the stop flag
+    /// already read, so that both answers can be tested off-device.
+    ///
+    /// # Publishing what was seen
+    ///
+    /// A render refused because this claim is held is refused *on
+    /// another thread*, and that thread's own read of the stop flag
+    /// proves nothing: it passed its check before the flag was set, and
+    /// `gShouldStop` is volatile rather than atomic, so re-reading it
+    /// carries no guarantee of seeing the store.
+    ///
+    /// The claim itself carries the answer instead. `stopping` is
+    /// stored before the claim is taken and the claim is taken with
+    /// `AcqRel`, so a thread that loads the word with `Acquire` and
+    /// finds [`EXCLUSIVE`] set has synchronised with that store and is
+    /// guaranteed to read what this thread saw. Which is the useful
+    /// question anyway: what matters is whether the phase that turned
+    /// the render away was itself part of a shutdown.
+    fn enter_exclusive_seeing(&self, stopping: bool) -> Option<Exclusive<'_>> {
+        // Before the claim, so the claim publishes it. Meaningless
+        // until then, since only a thread that observes the claim reads
+        // it.
+        self.stopping.store(stopping, Ordering::Relaxed);
         // Only from a completely idle state: a non-zero word is either
         // another exclusive phase or a render still in flight.
         if self
             .state
-            .compare_exchange(0, EXCLUSIVE, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            self.fault();
+            // This thread is the one that read the flag, so its own
+            // reading is the right one to classify by.
+            self.record_fault(stopping);
             return None;
         }
         Some(Exclusive { guard: self })
@@ -213,7 +256,9 @@ impl Guard {
     /// Claims render slot `thread`.
     fn enter_render(&self, thread: usize) -> Option<Active<'_>> {
         let Some(busy) = self.busy.get(thread) else {
-            // A thread number the states do not reach.
+            // A thread number the states do not reach. Nothing about a
+            // shutdown produces that, so it is classified by the flag
+            // like any other anomaly.
             self.fault();
             return None;
         };
@@ -221,12 +266,16 @@ impl Guard {
         // that phase holds by &mut.
         if self
             .state
-            .fetch_update(Ordering::Acquire, Ordering::Relaxed, |state| {
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
                 (state & EXCLUSIVE == 0).then(|| state + 1)
             })
             .is_err()
         {
-            self.fault();
+            // Acquired the word above and found EXCLUSIVE set, so the
+            // store that phase made before taking it is visible here.
+            // That reading, not this thread's own, is the one that
+            // means anything.
+            self.record_fault(self.stopping.load(Ordering::Relaxed));
             return None;
         }
         if busy.swap(true, Ordering::Acquire) {
@@ -1083,6 +1132,40 @@ mod tests {
             2,
             "the refusals during the shutdown are counted, and kept apart"
         );
+    }
+
+    #[test]
+    fn a_render_turned_away_by_a_stopping_phase_is_counted_as_stopping() {
+        // The narrow shape: a secondary thread passed its own stop
+        // check before the flag was set, was slow to arrive, and finds
+        // `render_post` already holding the claim. Its own reading of
+        // the flag proves nothing — the claim's does.
+        let guard = Guard::new(2);
+        let stopping = guard
+            .enter_exclusive_seeing(true)
+            .expect("nothing is in flight");
+
+        assert!(guard.enter_render(1).is_none(), "the claim is held");
+
+        assert_eq!(guard.faults(), 0, "a shutdown is not a live fault");
+        assert_eq!(guard.faults_while_stopping(), 1);
+        drop(stopping);
+    }
+
+    #[test]
+    fn a_render_turned_away_by_a_live_phase_is_still_a_fault() {
+        // The same refusal outside a shutdown is the anomaly it looks
+        // like, and must not be excused by the same path.
+        let guard = Guard::new(2);
+        let live = guard
+            .enter_exclusive_seeing(false)
+            .expect("nothing is in flight");
+
+        assert!(guard.enter_render(1).is_none(), "the claim is held");
+
+        assert_eq!(guard.faults(), 1);
+        assert_eq!(guard.faults_while_stopping(), 0);
+        drop(live);
     }
 
     #[test]

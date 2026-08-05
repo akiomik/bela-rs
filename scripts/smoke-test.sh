@@ -519,6 +519,10 @@ else
     block_frames="$(echo "$summary" | sed -n 's/.*frames=\([0-9]*\).*/\1/p')"
     rendered="$(echo "$summary" | sed -n 's/.*rendered=\([0-9]*\).*/\1/p')"
     expected="$(echo "$summary" | sed -n 's/.*expected=\([0-9]*\).*/\1/p')"
+    # bela: 1 callback(s) were refused while stopping, ...
+    # The crate's own account of the same event, from `until_stopped`.
+    stopping_faults="$(sed -n 's/^bela: \([0-9]*\) callback(s) were refused while stopping.*/\1/p' \
+      "$log" | head -1)"
     # parallel: uncovered=0 abandoned=0 unfinished=0
     coverage="$(awk '/^parallel: uncovered=/ { print; exit }' "$log" 2>/dev/null || true)"
     uncovered="$(echo "$coverage" | sed -n 's/.*uncovered=\([0-9]*\).*/\1/p')"
@@ -563,8 +567,12 @@ $(echo "$cpus" | tr -d ' ') core(s), so the work was not spread"
       shortfall=$((expected - rendered - uncovered))
       cut_short=$((abandoned + unfinished))
       if [ "$shortfall" -lt 0 ]; then
+        # Either a frame was written twice, or a block was rendered
+        # without being counted — `expected` comes from `render_pre`,
+        # so a refused `render_pre` would take a block out of it while
+        # leaving the frames in `rendered`.
         fail "parallel: $threads thread(s): $rendered rendered + $uncovered uncovered is more \
-than the $expected frames of the run — a frame was written twice"
+than the $expected frames of the run — a frame was written twice, or a render_pre was refused"
       elif [ "$shortfall" -gt "$block_frames" ] || [ "$cut_short" -gt 1 ]; then
         fail "parallel: $threads thread(s): $shortfall frames over $cut_short block(s) went \
 unaccounted for, which is more than the one block a stop can cut short"
@@ -572,8 +580,27 @@ unaccounted for, which is more than the one block a stop can cut short"
         pass "parallel: $threads thread(s): $rendered frames rendered for $expected, \
 every frame accounted for exactly once"
       else
+        # The frames of that block that were never rendered show up as
+        # `uncovered` when its `render_post` ran and as the shortfall
+        # when it did not, so the two together are what was lost.
         pass "parallel: $threads thread(s): $rendered frames rendered for $expected, with the \
-last block cut short by the stop ($shortfall frames)"
+last block cut short by the stop ($((uncovered + shortfall)) frames)"
+      fi
+
+      # The example and the crate count the same shutdown from opposite
+      # sides: a block left unfinished is a `render_post` the crate
+      # refused, so every one of them has to appear in the crate's own
+      # tally. The reverse does not hold — a late `render` turned away
+      # by a `render_post` that did run is refused too, and finishes
+      # its block — so this is a floor, not an equality.
+      if [ "$unfinished" -eq 0 ]; then
+        pass "parallel: $threads thread(s): no block was left unfinished"
+      elif [ "${stopping_faults:-0}" -ge "$unfinished" ]; then
+        pass "parallel: $threads thread(s): $unfinished unfinished block(s), and the crate \
+reported ${stopping_faults} refusal(s) while stopping to match"
+      else
+        fail "parallel: $threads thread(s): $unfinished block(s) were left unfinished but the \
+crate reported ${stopping_faults:-no} refusal(s) while stopping — the two do not agree"
       fi
     fi
 
