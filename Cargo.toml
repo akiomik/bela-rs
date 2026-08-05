@@ -1,9 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["bela-sys", "bela"]
-# xtask is a standalone package (not a member) so that bindgen and its
-# libclang requirement stay out of ordinary builds. Run it via `cargo xtask`.
-exclude = ["xtask"]
+# xtask is a member so that the same fmt, clippy and test runs cover it.
+# Its bindgen dependency does not weigh on those: libclang is loaded at
+# run time (clang-sys `runtime` feature), so only `cargo xtask bindgen`
+# needs one. It is a host-only tool, so the device-target and coverage
+# CI jobs exclude it explicitly.
+members = ["bela-sys", "bela", "xtask"]
 
 # Device binaries must not unwind across the audio callback boundary; abort
 # is what would happen anyway, and this avoids shipping unwinding machinery.

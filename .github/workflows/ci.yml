@@ -35,7 +35,12 @@ jobs:
       # Host coverage only, like the test job: the device-only code behind
       # the `bela_device` cfg is not compiled here, so it contributes no
       # lines to the report rather than counting as uncovered.
-      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      #
+      # xtask is excluded: it is a repository task, not shipped code, and
+      # most of it drives ssh and scp against a board, which no host run
+      # can reach. Measuring it would report the coverage of the library
+      # as lower without saying anything about the library.
+      - run: cargo llvm-cov --workspace --exclude xtask --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -52,7 +57,10 @@ jobs:
       # clippy subsumes `cargo check` and does not link, so no sysroot or
       # cross-linker is needed. This also lints the device-only code
       # (`bela_device` cfg) that the host job never compiles.
-      - run: cargo clippy --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
+      #
+      # xtask is excluded: it runs on the development machine, never on a
+      # board, so cross-compiling it says nothing. The host job lints it.
+      - run: cargo clippy --workspace --exclude xtask --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
 
   docs:
     name: Docs
@@ -63,8 +71,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Documented for the device target: it includes the device-only API
       # (`bela_device` cfg) that crate-level intra-doc links point to,
-      # which would be unresolved on a host-target doc build.
-      - run: cargo doc --workspace --no-deps --target aarch64-unknown-linux-gnu
+      # which would be unresolved on a host-target doc build. xtask is
+      # excluded for the same reason as in the aarch64 clippy job.
+      - run: cargo doc --workspace --exclude xtask --no-deps --target aarch64-unknown-linux-gnu
         env:
           RUSTDOCFLAGS: -D warnings
       # Doc tests execute on the host (device binaries cannot run in CI).

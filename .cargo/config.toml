@@ -1,5 +1,5 @@
 [alias]
-xtask = "run --manifest-path xtask/Cargo.toml --"
+xtask = "run --package xtask --"
 
 # Cross-compilation settings for Bela Gem (PocketBeagle 2, aarch64).
 #

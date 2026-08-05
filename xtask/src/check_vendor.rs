@@ -13,6 +13,13 @@
 //! This needs a board, so it cannot run in CI. It is the check a human
 //! runs after updating a board image.
 
+// The exit code is this task's result — drift is reported by exiting
+// non-zero, which is what a caller (a human, or a shell script) reads.
+#![allow(
+    clippy::exit,
+    reason = "the exit status is the reported result of the check"
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs, process};
@@ -147,7 +154,7 @@ fn board_head(host: &str) -> String {
         }
     };
     if output.status.success() {
-        return String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return String::from_utf8_lossy(&output.stdout).trim().to_owned();
     }
     // ssh reports its own failures as 255, so anything else came from
     // the command it ran: a board whose `git` says nothing about the
@@ -159,7 +166,7 @@ fn board_head(host: &str) -> String {
         eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim());
         process::exit(2);
     }
-    "unknown".to_string()
+    "unknown".to_owned()
 }
 
 fn fetch(host: &str, rel: &str, scratch: &Path) -> Result<PathBuf, String> {
@@ -189,7 +196,7 @@ fn scp_error(stderr: &str) -> String {
         .filter(|line| line.starts_with("scp:"))
         .collect();
     if reported.is_empty() {
-        stderr.trim().to_string()
+        stderr.trim().to_owned()
     } else {
         reported.join("\n")
     }

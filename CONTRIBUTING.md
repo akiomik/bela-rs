@@ -49,15 +49,19 @@ Before pushing, make sure the same checks as CI pass:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo check --workspace --target aarch64-unknown-linux-gnu
+cargo check --workspace --exclude xtask --target aarch64-unknown-linux-gnu
 ```
+
+`xtask` is a workspace member, so the host checks cover it; the device
+target excludes it, because it is a task that runs on the development
+machine and never on a board.
 
 CI also measures test coverage with
 [`cargo llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and
 uploads it to Codecov. To see the same numbers locally:
 
 ```sh
-cargo llvm-cov --workspace --summary-only
+cargo llvm-cov --workspace --exclude xtask --summary-only
 ```
 
 It covers the host build only — the device-only code behind the
