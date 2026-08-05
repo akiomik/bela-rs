@@ -194,21 +194,19 @@ and this project adheres to
 
 ### Added
 
-- `bela-sys`: `build.rs` emits the `libbela` link flags for device
+- `bela-sys`'s `build.rs` emits the `libbela` link flags for device
   targets, so device binaries link and run. Cross-linking is driven by
   `BELA_SYSROOT` together with `scripts/sync-sysroot.sh` and the linker
   wrapper in `scripts/aarch64-bela-linker.sh`
-- `bela`: `Context::this_thread` / `thread_count` and
-  `Settings::thread_count` for the multithreaded rendering added in
-  Bela 1.15
-- `bela`: `Bela::run` also handles SIGHUP, so a dropped ssh connection
-  shuts the audio system down cleanly instead of killing the process
-  outright
+- `Context::this_thread` / `thread_count` and `Settings::thread_count`
+  for the multithreaded rendering added in Bela 1.15
+- `Bela::run` also handles SIGHUP, so a dropped ssh connection shuts
+  the audio system down cleanly instead of killing the process outright
 
 ### Changed
 
-- `bela-sys`: bindings regenerated from the headers shipped on a Bela
-  Gem (Bela 1.18.0), which is newer than any published upstream branch.
+- The bindings are regenerated from the headers shipped on a Bela Gem
+  (Bela 1.18.0), which is newer than any published upstream branch.
   `BelaContext` and `BelaInitSettings` gained fields, and the bindings
   now cover `Bela_initRtBackend`, `Bela_clock_gettime` and friends
 
@@ -216,23 +214,23 @@ and this project adheres to
 
 ### Added
 
-- `bela`: `passthrough` and `sine` examples written against the safe
-  API only, with `panic = "abort"` in the workspace release profile;
-  `Bela::run` now installs SIGINT/SIGTERM handlers that request a clean
-  stop, mirroring the C example templates
-- `bela`: safe `Context` accessors following Bela Gem semantics —
+- `passthrough` and `sine` examples written against the safe API only,
+  with `panic = "abort"` in the workspace release profile; `Bela::run`
+  now installs SIGINT/SIGTERM handlers that request a clean stop,
+  mirroring the C example templates
+- Safe `Context` accessors following Bela Gem semantics —
   frame/channel/sample-rate metadata, interleaved buffer slices, indexed
   audio/analog/digital I/O with bounds checking (Rust ports of the
   `Bela.h` inline helpers, including within-block persistence of
   `analog_write` / `digital_write` and the digital direction/value bit
   layout), plus the `map` and `constrain` utilities
-- `bela`: safe wrapper core — the `unsafe` real-time trait
+- The safe wrapper core — the `unsafe` real-time trait
   `BelaApplication` (setup/render/cleanup), `extern "C"` trampolines
   bridging the C callbacks via `userData`, the `Settings` builder
   applying overrides on top of `Bela_defaultSettings()`, and the `Bela`
   RAII lifecycle (init/start/stop/cleanup, device target only behind
   the `bela_device` cfg)
-- `bela-sys`: FFI bindings to the Bela core C API (`BelaContext`,
+- FFI bindings to the Bela core C API (`BelaContext`,
   `BelaInitSettings`, `Bela_*` lifecycle and auxiliary-task functions,
   `rt_printf`), generated with bindgen from vendored headers pinned to
   the upstream `dev` branch (the Gem-era API) and committed, so that

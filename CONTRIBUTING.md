@@ -41,6 +41,13 @@ past release happened to think worth mentioning: a changelog read for
 what a version did is only useful if every version was written to the
 same standard.
 
+Entries carry no crate prefix. Which crate an entry is about follows
+from what it names: `bela-sys` mirrors the C API (`Bela_initAudio`,
+`BelaContext`), `bela` is the Rust one (`Bela::new`, `Settings`). Only
+where the two share a name — `build.rs`, `README.md` — does the entry
+have to say which crate it means, and it says so in its own sentence
+rather than in a marker.
+
 Keep a Changelog has no category for breaking changes, so mark one by
 opening its entry with `Breaking:`. Which heading it goes under is a
 separate question: `Removed` when a feature is gone, `Changed` when
