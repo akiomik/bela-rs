@@ -87,3 +87,17 @@ board:
 scripts/update-vendor.sh --board
 cargo xtask bindgen --sysroot "$BELA_SYSROOT"
 ```
+
+Nothing in the build notices when the board moves ahead of the pin:
+`bela-sys/src/bindings.rs` is committed, so it keeps describing the
+ABI of the vendored headers while the `libbela` it links against is a
+different one — which can shift `BelaContext` field offsets underneath
+running code. After updating the board image, ask:
+
+```sh
+cargo xtask check-vendor --board   # or --board user@host
+```
+
+It compares every vendored file with the board's copy, prints the
+`BELA_*_VERSION` macros on both sides and a diff of whatever differs,
+and exits non-zero on drift. It needs a board, so CI cannot run it.

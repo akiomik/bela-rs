@@ -54,10 +54,13 @@ Version meanings while pre-1.0:
 
    ```sh
    BELA_SYSROOT="$PWD/bela-sysroot" scripts/smoke-test.sh
+   cargo xtask check-vendor --board
    ```
 
-   It builds the examples, runs each of them on the board and checks
-   that audio actually ran at the right rate and shut down cleanly.
+   The smoke test builds the examples, runs each of them on the board
+   and checks that audio actually ran at the right rate and shut down
+   cleanly. `check-vendor` confirms that the headers the published
+   bindings were generated from are still the ones the board ships.
 
 5. **Commit and push** (`chore(release): prepare vX.Y.Z`), then wait
    for CI to go green on `main`.

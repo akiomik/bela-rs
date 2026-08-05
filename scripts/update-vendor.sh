@@ -12,6 +12,10 @@
 #
 # After updating, regenerate the bindings (see bela-sys/README.md):
 #   cargo xtask bindgen --sysroot <aarch64-sysroot>
+#
+# To find out whether an update is due — after installing a new board
+# image, above all — compare the two:
+#   cargo xtask check-vendor --board [user@host]
 set -eu
 
 REPO_URL="https://github.com/BelaPlatform/Bela"
