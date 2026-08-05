@@ -107,12 +107,23 @@ Captured from a verbose on-board build:
   their own; each crashing case was repeated three times and was
   identical every time.
 
-  | after a `setup`-aborted `Bela_initAudio` | what happens |
+  | after a `setup`-aborted `Bela_initAudio` | what libbela does |
   |---|---|
   | nothing more | the process exits 0 |
-  | a second `Bela::new` | `evl_attach_thread for WSServer_40100 failed with File exists (17)`, `Error in evl_create_xbuf: 17 EEXIST`, `Unable to create pipe p_WSClient_signalMonitor40100_bin`, `Mcasp::start() called while already running`, then SIGSEGV |
+  | another `Bela_initAudio` | `evl_attach_thread for WSServer_40100 failed with File exists (17)`, `Error in evl_create_xbuf: 17 EEXIST`, `Unable to create pipe p_WSClient_signalMonitor40100_bin`, `Mcasp::start() called while already running`, then SIGSEGV |
   | `Bela_cleanupAudio()` | SIGSEGV inside the call, both ways it was tried |
-  | `Bela_cleanupAudio()` then a second `Bela::new` | never reached: the cleanup call is the crash |
+  | `Bela_cleanupAudio()` then another `Bela_initAudio` | never reached: the cleanup call is the crash |
+
+  That is libbela, and it has not changed. What has is that `Bela::new`
+  no longer takes you there: since the fix for #30 it releases the
+  process-wide claim as unusable and every later call returns
+  `Error::AudioSystemPoisoned`. Re-measured with the refusal in place,
+  `abort-then-new` reports `second=failed-AudioSystemPoisoned` and
+  exits 0 where it used to segfault, while `raw-cleanup`, which goes
+  round the crate to the C API, still segfaults exactly as above. The
+  rows are kept because they are what the refusal is standing in front
+  of, and what a future board image would have to be re-measured
+  against.
 
   **`Bela_cleanupAudio` was tried two ways**, because the arrangement
   could have been the crash rather than the call. `Bela.h` says it
@@ -126,13 +137,14 @@ Captured from a verbose on-board build:
   read its application intact — and the process segfaulted immediately
   afterwards regardless. So the call is the crash, not the arrangement.
 
-  Two things follow for #30. The damage is confined to the process that
-  took it: after every case above, including the ones that segfaulted,
-  the next process brought up an audio system and rendered the expected
-  ~2760 blocks per second, with no reboot, no restart of `bela_daemon`
-  and nothing left to kill in between. And `Bela_cleanupAudio` is not
-  the way out, which leaves refusing later attempts as the only repair
-  `Bela::new` can make.
+  Two things followed for #30. The damage is confined to the process
+  that took it: after every case above, including the ones that
+  segfaulted, the next process brought up an audio system and rendered
+  the expected ~2760 blocks per second, with no reboot, no restart of
+  `bela_daemon` and nothing left to kill in between. And
+  `Bela_cleanupAudio` is not the way out, which left refusing later
+  attempts as the only repair `Bela::new` could make — which is what it
+  now does.
 
   Two things also follow for anyone tempted to call it anyway. The
   callback running means calling `Bela_cleanupAudio` *after* freeing

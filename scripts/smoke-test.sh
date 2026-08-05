@@ -404,10 +404,11 @@ else
   pass "command_line: an unrecognised option was refused (exit $status)"
 fi
 
-# The CPU monitoring rules that only libbela can answer. One audio
-# system per run and no `Bela::run`, so these are driven directly rather
-# than through the loop above: two of these checks abort the
-# initialisation from `setup`, which poisons the process they run in.
+# The audio system rules that only a board can answer. One audio system
+# per run and no `Bela::run`, so these are driven directly rather than
+# through the loop above: three of these checks abort the initialisation
+# from `setup`, which makes `Bela::new` give up on the process they run
+# in, so a second check sharing one would be refused rather than run.
 # See the example's header.
 if [ ! -x "$BIN_DIR/monitoring_rules" ]; then
   fail "monitoring_rules: not built at $BIN_DIR/monitoring_rules"
@@ -456,6 +457,25 @@ lower than the hardware needs"
     fail "monitoring_rules: expected some/none when asked for and not, got \
 ${requested:-nothing}/${unset_to:-nothing}"
   fi
+
+  # The refusal after a failed initialisation. Only the board can tell
+  # it from what it replaces: without it the second `Bela::new` here is
+  # a segfault inside libbela, so a run that prints its line at all has
+  # already shown most of the answer.
+  poisoned="$(rules poisoned | sed -n 's/^rules: //p' | head -1)"
+  case "$poisoned" in
+  "first-init=failed poisoned-new=refused")
+    pass "monitoring_rules: a Bela::new after a failed initialisation was refused"
+    ;;
+  run-failed | "")
+    # What the failure this guards against looks like from here: the
+    # check reaches its second `Bela::new`, libbela segfaults, and the
+    # non-zero exit reaches `rules` before any line is printed.
+    fail "monitoring_rules: the poisoned check did not survive to report, which is what \
+the segfault it guards against looks like"
+    ;;
+  *) fail "monitoring_rules: poisoned check reported '$poisoned'" ;;
+  esac
 fi
 
 echo

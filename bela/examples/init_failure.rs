@@ -1,13 +1,12 @@
 //! Hardware probe for what a failed `Bela_initAudio` leaves behind.
 //!
-//! `Bela::new` documents the failure as fatal to the process, and the
-//! board notes record the symptom — the next attempt reports
-//! `Mcasp::start() called while already running`, fails to allocate its
-//! pipes and segfaults. Neither says *what* is still held, or whether
-//! handing it back is possible. This probe is the instrument for
-//! finding out; `scripts/probe-init-failure.sh` drives it, and the
-//! answers it gave are recorded under "Audio thread" in
-//! `docs/board-facts.md`.
+//! Written to answer #30: what a failed `Bela_initAudio` leaves behind,
+//! and whether handing it back is possible. It is not, so `Bela::new`
+//! now refuses every attempt after a failed one rather than segfaulting
+//! — and this probe stays as the instrument, because the answers are
+//! board facts and a board image can change them.
+//! `scripts/probe-init-failure.sh` drives it, and what it found is
+//! recorded under "Audio thread" in `docs/board-facts.md`.
 //!
 //! It is not a check with a right answer, so it is not part of
 //! `scripts/smoke-test.sh`: it deliberately puts the board into the
@@ -35,17 +34,23 @@
 //!   application still alive and a `cleanup` callback that reaches into
 //!   it. Without this, `abort-cleanup` alone cannot tell a call that
 //!   crashes from an arrangement that does.
-//! - `abort-then-new` — fail an initialisation, then try a full cycle in
-//!   the same process, with nothing handed back.
+//! - `abort-then-new` — fail an initialisation, then try a full cycle
+//!   in the same process. This is the sequence `Bela::new` now refuses:
+//!   it reports `failed-AudioSystemPoisoned` and exits 0 where it used
+//!   to segfault. Kept as the record of that, and as the thing to run
+//!   against a new board image.
 //! - `abort-cleanup-then-new` — fail an initialisation, hand the state
-//!   back, then try a full cycle. The candidate fix, measured before it
-//!   is written.
+//!   back, then try a full cycle. This was the candidate fix. It never
+//!   reaches the cycle: handing the state back is itself the crash,
+//!   which is what ruled it out.
 //! - `busy-probe <seconds>` — try a cycle while another process is
 //!   using the audio device, wait for it to go, and try again. Not
 //!   every `Error::Init` need be an abort from `setup`; "the hardware
 //!   is already in use" is the other one the API documents, and whether
-//!   *it* poisons the process would decide whether a refusal has to be
-//!   unconditional.
+//!   *it* poisons the process would have decided whether the refusal
+//!   has to be unconditional. This board does not produce that failure
+//!   at all — it does not refuse a second process — so the refusal is
+//!   unconditional for want of a second route to measure.
 //! - `cycles <count>` — bring an audio system all the way up, render,
 //!   and tear it down again, `count` times.
 //! - `init-cycles <count>` — build an audio system and drop it again
@@ -58,10 +63,11 @@
 //! Each invocation reports what it managed, line by line and flushed as
 //! it goes, because it may not survive to the end — a process that dies
 //! inside `Bela_cleanupAudio` still has to have said that it got there.
-//! For the same reason the interesting question is usually asked of the
-//! *next* process, not this one: the leading hypothesis in #30 is that
-//! what breaks an audio system is what the process before it left
-//! behind.
+//! For the same reason the interesting question is often asked of the
+//! *next* process rather than this one. That was #30's leading
+//! hypothesis — that what breaks an audio system is what the process
+//! before it left behind — and asking it this way is what refuted it:
+//! the next process is always fine.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
@@ -394,9 +400,9 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: init_failure (render-check [seconds] | abort | abort-cleanup\n\
-                 \x20                | raw-cleanup | abort-then-new\n\
-                 \x20                | abort-cleanup-then-new | busy-probe <seconds>\n\
-                 \x20                | cycles <count> | init-cycles <count>)\n\
+                 \x20                   | raw-cleanup | abort-then-new\n\
+                 \x20                   | abort-cleanup-then-new | busy-probe <seconds>\n\
+                 \x20                   | cycles <count> | init-cycles <count>)\n\
                  one probe per run: what is being measured is partly what the previous process left"
             );
             return ExitCode::FAILURE;

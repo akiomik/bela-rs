@@ -20,17 +20,22 @@ and this project adheres to
 
 ### Changed
 
-- `Bela::new`, `Bela::run`, `BelaApplication::setup` and `Error::Init`
-  now say what a failed `Bela_initAudio` leaves behind. It fails
-  partway through, nothing undoes what it had already taken, and the
-  audio hardware stays held — so a second `Bela::new` in the same
-  process, which is still allowed to run, reports
-  `Mcasp::start() called while already running` and then segfaults. The
-  reachable way to get there is a `setup` callback returning `false`,
-  which fails the initialisation after the hardware is up. What is
-  poisoned is the process and not the board: a new process gets a
-  working audio system with nothing to reset in between, so the error
-  is a reason to exit rather than to retry in place.
+- Breaking: `Bela::new` refuses every attempt made after one of its own
+  has failed, returning the new `Error::AudioSystemPoisoned` instead of
+  trying. A `Bela_initAudio` that fails partway through leaves libbela
+  believing an audio system is up and offers no call that puts it back —
+  `Bela_cleanupAudio` segfaults on that path — so the second attempt was
+  never going to work: on a board it segfaulted inside libbela with
+  `Mcasp::start() called while already running` rather than returning
+  anything. Where a program used to crash it now gets an error, and one
+  that retried after `Error::Init` and happened to survive is now
+  refused. Only the process is affected, and the board is untouched, so
+  a new process gets a working audio system straight away.
+  `Bela::new`, `Bela::run`, `BelaApplication::setup` and `Error::Init`
+  now say all of this: `Error::Init` is a reason to exit, and a `setup`
+  callback returning `false` — the reachable way to get there, since it
+  fails the initialisation after the hardware is up — is for ending a
+  program rather than for trying different settings.
 
 ## [0.2.0] - 2026-08-05
 

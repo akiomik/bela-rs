@@ -1,9 +1,9 @@
-//! Hardware checks for the CPU monitoring rules that cannot be tested
-//! on the host, because they need a real audio system — and, in one
-//! case, because only libbela knows the answer.
+//! Hardware checks for the audio system rules that cannot be tested on
+//! the host, because they need a real audio system — and, in one case,
+//! because only libbela knows the answer.
 //!
 //! Run by `scripts/smoke-test.sh`, which invokes it once per check and
-//! asserts on what that run prints. It covers three things:
+//! asserts on what that run prints. It covers four things:
 //!
 //! - **the period size limit is the right one** (`fifo-probe`). Above a
 //!   hardware-dependent period size libbela renders on a thread of its
@@ -23,18 +23,26 @@
 //!   "whatever the last audio system left behind". Stale counters would
 //!   report a reading nobody asked for, and would skip the period size
 //!   check that goes with asking for one.
+//! - **a failed initialisation refuses the next one** (`poisoned`).
+//!   `Bela_initAudio` failing leaves libbela believing an audio system
+//!   is up, with no call that puts it back, so `Bela::new` gives up on
+//!   the process rather than letting the next attempt segfault inside
+//!   libbela. Only a board can tell the refusal from the segfault it
+//!   replaces: on the host there is no `Bela_initAudio` to fail.
 //!
 //! # One check per run
 //!
-//! Each invocation brings up at most one audio system and exits. That
-//! is not tidiness: two of these checks abort the initialisation from
-//! `setup`, and a failed `Bela_initAudio` leaves libbela's globals in
-//! that process still believing the audio system is up. The next
-//! `Bela::new` in it reports `Mcasp::start() called while already
-//! running` and segfaults, and `Bela_cleanupAudio` segfaults too, so
-//! there is nothing to do with such a process but leave it
-//! (`docs/board-facts.md`, #30). Separate processes are also what makes
-//! the output unambiguous, since libbela's C `printf` and Rust's
+//! Each invocation brings up at most one audio system and exits. Three
+//! of these checks abort the initialisation from `setup`, and a failed
+//! `Bela_initAudio` leaves libbela's globals in that process still
+//! believing the audio system is up, with no call that puts them back
+//! (`docs/board-facts.md`). `Bela::new` gives up on such a process, so
+//! a second check sharing it would be refused rather than run.
+//!
+//! That refusal is why the arrangement is now only an arrangement.
+//! Before it, the second check was the segfault itself, and running one
+//! per process was what kept the suite alive. Separate processes also
+//! make the output unambiguous, since libbela's C `printf` and Rust's
 //! `println!` buffer independently.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
@@ -175,6 +183,36 @@ mod checks {
         };
         println!("rules: monitoring={seen}");
     }
+
+    /// Once an initialisation has failed, every later one in the same
+    /// process must be refused rather than attempted.
+    ///
+    /// This is the check the refusal exists for. Without it the second
+    /// `Bela::new` is the segfault recorded in `docs/board-facts.md`,
+    /// so a run that gets as far as printing its line has already
+    /// demonstrated most of what is being asserted.
+    pub fn poisoned() {
+        // `Abort` refuses in `setup`, which fails `Bela_initAudio`
+        // after libbela has brought the hardware up — the state there
+        // is no way back from.
+        let first = match Bela::new(Abort, &Settings::new()) {
+            Err(Error::Init(_)) => "failed",
+            Err(_) => "failed-otherwise",
+            Ok(bela) => {
+                drop(bela);
+                "created"
+            }
+        };
+        let second = match Bela::new(Idle, &Settings::new()) {
+            Err(Error::AudioSystemPoisoned) => "refused",
+            Err(_) => "failed-otherwise",
+            Ok(bela) => {
+                drop(bela);
+                "created"
+            }
+        };
+        println!("rules: first-init={first} poisoned-new={second}");
+    }
 }
 
 #[cfg(bela_device)]
@@ -194,10 +232,13 @@ fn main() -> ExitCode {
         ["second-new"] => checks::second_new(),
         ["monitoring", "on"] => checks::monitoring(true),
         ["monitoring", "off"] => checks::monitoring(false),
+        ["poisoned"] => checks::poisoned(),
         _ => {
             eprintln!(
-                "usage: monitoring_rules (fifo-probe <frames> | second-new | monitoring on|off)\n\
-                 one check per run: two of these abort from `setup`, which poisons the process"
+                "usage: monitoring_rules (fifo-probe <frames> | second-new | monitoring on|off\n\
+                 \x20                       | poisoned)\n\
+                 one check per run: three of these abort from `setup`, which makes \
+                 `Bela::new` give up on it"
             );
             return ExitCode::FAILURE;
         }
