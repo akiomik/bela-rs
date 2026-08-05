@@ -202,11 +202,17 @@ fn scp_error(stderr: &str) -> String {
     }
 }
 
-/// The `BELA_*_VERSION` macros, as `1.18.0`. A cheap first signal: it
-/// names the drift the way the Bela changelog does, while the content
-/// comparison is what actually decides it.
+/// The `BELA_*_VERSION` macros in a header file, as `1.18.0`. A cheap
+/// first signal: it names the drift the way the Bela changelog does,
+/// while the content comparison is what actually decides it.
 fn version(header: &Path) -> Option<String> {
-    let text = fs::read_to_string(header).ok()?;
+    version_in(&fs::read_to_string(header).ok()?)
+}
+
+/// The version [`version`] reads, given the text of the header. All
+/// three macros have to be there: two out of three is not a version,
+/// and reporting `1.18` for it would read as one.
+fn version_in(text: &str) -> Option<String> {
     let parts: Vec<&str> = ["MAJOR", "MINOR", "BUGFIX"]
         .iter()
         .filter_map(|part| {
@@ -226,14 +232,19 @@ fn diff(vendored: &Path, fetched: &Path, rel: &str, host: &str) -> String {
         .args(["-L", &format!("{host}:{REMOTE_ROOT}/{rel}")])
         .args([vendored, fetched])
         .output();
-    let text = match output {
-        Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
-        Err(error) => return format!("(the files differ; could not run diff: {error})"),
-    };
+    match output {
+        Ok(output) => abridge(&String::from_utf8_lossy(&output.stdout)),
+        Err(error) => format!("(the files differ; could not run diff: {error})"),
+    }
+}
 
-    let lines: Vec<&str> = text.lines().collect();
+/// A diff cut down to [`MAX_DIFF_LINES`], saying how much was left out
+/// and where to read the rest. Anything that short is passed through
+/// as it is, trailing newline included.
+fn abridge(diff: &str) -> String {
+    let lines: Vec<&str> = diff.lines().collect();
     if lines.len() <= MAX_DIFF_LINES {
-        return text;
+        return diff.to_owned();
     }
     format!(
         "{}\n({} more diff line(s); update the pin and read the change as a git diff)",
@@ -257,5 +268,144 @@ fn report(state: &str, what: &str) {
 fn indent(text: &str) {
     for line in text.lines() {
         println!("        {line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shape `Bela.h` carries the macros in, with the surrounding
+    /// lines that have to be looked past.
+    const HEADER: &str = "\
+#pragma once
+#define BELA_MAJOR_VERSION 1
+#define BELA_MINOR_VERSION 18
+#define BELA_BUGFIX_VERSION 0
+
+int Bela_initAudio(BelaInitSettings* settings, void* userData);
+";
+
+    fn repository_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask lives one level below the repository root")
+            .to_path_buf()
+    }
+
+    #[test]
+    fn a_version_is_read_from_the_three_macros() {
+        assert_eq!(version_in(HEADER), Some("1.18.0".to_owned()));
+    }
+
+    #[test]
+    fn a_partial_version_is_no_version() {
+        for missing in ["MAJOR", "MINOR", "BUGFIX"] {
+            let header: String = HEADER
+                .lines()
+                .filter(|line| !line.contains(&format!("BELA_{missing}_VERSION")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(version_in(&header), None, "without BELA_{missing}_VERSION");
+        }
+        assert_eq!(version_in(""), None);
+    }
+
+    /// The vendored header is the one the task actually reports on, so
+    /// the parsing has to hold for it and not only for a sample of it.
+    /// Which version it states is not asserted: re-pinning to a new
+    /// board image is expected to change it, and having to edit a test
+    /// for that would say nothing about whether the pin is right.
+    #[test]
+    fn the_vendored_header_states_a_version() {
+        let header = repository_root()
+            .join("bela-sys/vendor/bela")
+            .join(VERSION_HEADER);
+        assert!(version(&header).is_some(), "{}", header.display());
+    }
+
+    #[test]
+    fn scp_errors_are_reported_without_the_login_banner() {
+        let stderr = "\
+Linux bela 6.6.32 aarch64
+Last login: Wed Aug  5 12:00:00 2026
+-bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8)
+scp: /root/Bela/include/Bela.h: No such file or directory
+";
+        assert_eq!(
+            scp_error(stderr),
+            "scp: /root/Bela/include/Bela.h: No such file or directory"
+        );
+    }
+
+    /// A failure that never reached scp — an unresolvable host, say —
+    /// has no `scp:` line, and dropping everything would report it as
+    /// no failure at all.
+    #[test]
+    fn a_failure_without_an_scp_line_is_reported_whole() {
+        let stderr = "ssh: Could not resolve hostname bela.local\n";
+        assert_eq!(
+            scp_error(stderr),
+            "ssh: Could not resolve hostname bela.local"
+        );
+    }
+
+    #[test]
+    fn a_short_diff_is_left_alone() {
+        for count in [0, 1, MAX_DIFF_LINES - 1, MAX_DIFF_LINES] {
+            let diff = "-a line\n".repeat(count);
+            assert_eq!(abridge(&diff), diff, "{count} line(s)");
+        }
+    }
+
+    #[test]
+    fn a_long_diff_is_cut_down_and_says_how_much_is_missing() {
+        let lines: Vec<String> = (0..MAX_DIFF_LINES + 5)
+            .map(|line| format!("-line {line}"))
+            .collect();
+        let abridged = abridge(&format!("{}\n", lines.join("\n")));
+        let lines: Vec<&str> = abridged.lines().collect();
+
+        assert_eq!(lines.len(), MAX_DIFF_LINES + 1);
+        assert_eq!(lines[0], "-line 0");
+        assert_eq!(
+            lines[MAX_DIFF_LINES - 1],
+            format!("-line {}", MAX_DIFF_LINES - 1)
+        );
+        assert!(
+            lines[MAX_DIFF_LINES].starts_with("(5 more diff line(s);"),
+            "{:?}",
+            lines[MAX_DIFF_LINES]
+        );
+    }
+
+    /// What the task compares is whatever is vendored, so this reads
+    /// the real directory: a header added to the include closure has
+    /// to be picked up without anyone editing this crate.
+    #[test]
+    fn every_vendored_file_is_listed_once_in_order() {
+        let vendor = repository_root().join("bela-sys/vendor/bela");
+        let files = vendored_files(&vendor);
+
+        let (license, headers) = files
+            .split_last()
+            .expect("the vendor directory is not empty");
+        assert_eq!(license, "LICENSE");
+        assert!(
+            headers.iter().all(|rel| rel.starts_with("include/")),
+            "{headers:?}"
+        );
+        assert!(headers.is_sorted(), "{headers:?}");
+        assert!(
+            headers.iter().any(|rel| rel == VERSION_HEADER),
+            "{VERSION_HEADER} is the one the version is read from: {headers:?}"
+        );
+        assert!(
+            !files.iter().any(|rel| rel.ends_with("SOURCE")),
+            "SOURCE is provenance the update script writes, not a copy: {files:?}"
+        );
+        for rel in &files {
+            assert!(vendor.join(rel).is_file(), "{rel}");
+        }
     }
 }
