@@ -63,8 +63,9 @@ impl<T: BelaApplication> Bela<T> {
     /// turns on just before the call when [`Settings::cpu_monitoring`]
     /// asked for them — and this crate does not call
     /// `Bela_cleanupAudio` to hand any of it back, because on that path
-    /// the call itself segfaults; see "Audio thread" in
-    /// `docs/board-facts.md`.
+    /// the call itself segfaults. That is measured rather than assumed,
+    /// including in the order this method would have to make the call;
+    /// see "Audio thread" in `docs/board-facts.md`.
     ///
     /// The process-wide claim is released on the way out, so a second
     /// `Bela::new` is allowed to run. It will not work: on a Bela Gem

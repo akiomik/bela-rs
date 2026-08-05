@@ -12,8 +12,9 @@ and this project adheres to
 
 - `examples/init_failure`, a hardware probe for what a failed
   `Bela_initAudio` leaves behind. It runs one question per process —
-  fail an initialisation and stop; fail one and try another;
-  fail one and call `Bela_cleanupAudio`; build and drop several audio
+  fail an initialisation and stop; fail one and try another; fail one
+  and call `Bela_cleanupAudio`, both from outside the crate and through
+  the C API in the order a fix would use; build and drop several audio
   systems in a row — so that the answers can be attributed to the run
   that produced them.
 

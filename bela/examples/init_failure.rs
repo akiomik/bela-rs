@@ -26,7 +26,15 @@
 //! - `abort-cleanup` — the same, then call `Bela_cleanupAudio` directly.
 //!   This is the call `Bela::new` does not make, and the one question
 //!   the fix turns on: does handing the state back work, or is the call
-//!   itself what crashes?
+//!   itself what crashes? From outside the crate it necessarily happens
+//!   after `Bela::new` has freed the application, which is not the
+//!   order a fix would use.
+//! - `raw-cleanup` — the same question in the order a fix *would* use:
+//!   straight through the C API, mirroring `Bela::new` up to the
+//!   failing `Bela_initAudio`, then `Bela_cleanupAudio` with the
+//!   application still alive and a `cleanup` callback that reaches into
+//!   it. Without this, `abort-cleanup` alone cannot tell a call that
+//!   crashes from an arrangement that does.
 //! - `abort-then-new` — fail an initialisation, then try a full cycle in
 //!   the same process, with nothing handed back.
 //! - `abort-cleanup-then-new` — fail an initialisation, hand the state
@@ -41,9 +49,9 @@
 //! - `cycles <count>` — bring an audio system all the way up, render,
 //!   and tear it down again, `count` times.
 //! - `init-cycles <count>` — build an audio system and drop it again
-//!   without ever starting audio, `count` times. The second shape the
-//!   board notes record — four or five in a row ended in a bus error —
-//!   is this one, not `cycles`.
+//!   without ever starting audio, `count` times. An earlier board note
+//!   put a bus error at four or five of these; this is the shape it
+//!   described, and it did not reproduce.
 //!
 //! # One process per run
 //!
@@ -108,13 +116,17 @@ unsafe impl BelaApplication for Count {
 
 #[cfg(bela_device)]
 mod probes {
+    use core::ffi::c_void;
     use core::sync::atomic::{AtomicU32, Ordering};
     use core::time::Duration;
     use std::io::{self, Write};
     use std::sync::Arc;
     use std::thread;
 
-    use bela::bela_sys::Bela_cleanupAudio;
+    use bela::bela_sys::{
+        Bela_InitSettings_alloc, Bela_InitSettings_free, Bela_cleanupAudio, Bela_defaultSettings,
+        Bela_initAudio, BelaContext,
+    };
     use bela::{Bela, Error, Settings};
 
     use super::{Abort, Count, Idle};
@@ -183,6 +195,10 @@ mod probes {
     /// The call `Bela::new` does not make. Reported either side, so a
     /// process that dies inside it is distinguishable from one that
     /// survives it.
+    ///
+    /// From out here this necessarily happens *after* `Bela::new` has
+    /// freed the application, which is not the order a fix inside it
+    /// would use. [`raw_cleanup`] measures that order instead.
     fn hand_back() {
         report("cleanup", "calling");
         unsafe { Bela_cleanupAudio() };
@@ -201,24 +217,102 @@ mod probes {
         );
     }
 
+    /// One aborted initialisation and nothing else.
     pub fn abort() {
         report("abort", &abort_init());
     }
 
+    /// An aborted initialisation, then the call that might have undone
+    /// it — from outside the crate, so after the application is gone.
     pub fn abort_cleanup() {
         report("abort", &abort_init());
         hand_back();
     }
 
+    /// An aborted initialisation, then another audio system in the same
+    /// process with nothing handed back.
     pub fn abort_then_new() {
         report("abort", &abort_init());
         report("second", &outcome(cycle()));
     }
 
+    /// An aborted initialisation, the state handed back, then another
+    /// audio system in the same process.
     pub fn abort_cleanup_then_new() {
         report("abort", &abort_init());
         hand_back();
         report("second", &outcome(cycle()));
+    }
+
+    /// An application with a real allocation behind it and a `cleanup`
+    /// that reaches into it.
+    ///
+    /// [`raw_cleanup`] needs both. `Abort` is zero-sized with the
+    /// default do-nothing `cleanup`, so a callback fired over it would
+    /// touch no memory and report nothing — exactly the case that
+    /// cannot fail, which is not the one worth measuring.
+    struct RawApp {
+        marker: [u8; 64],
+        cleaned: bool,
+    }
+
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "a function pointer handed to C, which cannot be const-evaluated"
+    )]
+    unsafe extern "C" fn raw_setup(_context: *mut BelaContext, _user_data: *mut c_void) -> bool {
+        false
+    }
+
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "a function pointer handed to C, which cannot be const-evaluated"
+    )]
+    unsafe extern "C" fn raw_render(_context: *mut BelaContext, _user_data: *mut c_void) {}
+
+    unsafe extern "C" fn raw_cleanup_callback(_context: *mut BelaContext, user_data: *mut c_void) {
+        let app = unsafe { &mut *user_data.cast::<RawApp>() };
+        app.cleaned = true;
+        report("cleanup-callback", &format!("ran-marker-{}", app.marker[0]));
+    }
+
+    /// `Bela_cleanupAudio` after a failed `Bela_initAudio`, in the order
+    /// a fix inside `Bela::new` would use it.
+    ///
+    /// [`abort_cleanup`] can only make that call from outside the
+    /// crate, which is necessarily after `Bela::new` has freed the
+    /// application — so if the callback `Bela_cleanupAudio` fires were
+    /// the problem, that probe would be measuring its own arrangement
+    /// rather than the call. This one goes through the C API directly,
+    /// mirroring what `Bela::new` does up to and including the failing
+    /// `Bela_initAudio`, and hands the state back with the application
+    /// still alive.
+    pub fn raw_cleanup() {
+        let app = Box::into_raw(Box::new(RawApp {
+            marker: [7; 64],
+            cleaned: false,
+        }));
+        let ret = unsafe {
+            let raw = Bela_InitSettings_alloc();
+            Bela_defaultSettings(raw);
+            (*raw).setup = Some(raw_setup);
+            (*raw).render = Some(raw_render);
+            (*raw).cleanup = Some(raw_cleanup_callback);
+            let ret = Bela_initAudio(raw, app.cast::<c_void>());
+            Bela_InitSettings_free(raw);
+            ret
+        };
+        report("raw-init", &format!("returned-{ret}"));
+        report("cleanup", "calling");
+        unsafe { Bela_cleanupAudio() };
+        report("cleanup", "returned");
+        // Only now: everything above ran with the application alive,
+        // which is the whole point of the probe.
+        let app = unsafe { Box::from_raw(app) };
+        report(
+            "cleanup-callback",
+            if app.cleaned { "ran" } else { "never-ran" },
+        );
     }
 
     /// A cycle attempted while another process holds the audio device,
@@ -273,6 +367,7 @@ fn main() -> ExitCode {
         }
         ["abort"] => probes::abort(),
         ["abort-cleanup"] => probes::abort_cleanup(),
+        ["raw-cleanup"] => probes::raw_cleanup(),
         ["abort-then-new"] => probes::abort_then_new(),
         ["abort-cleanup-then-new"] => probes::abort_cleanup_then_new(),
         ["busy-probe", seconds] => {
@@ -299,7 +394,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: init_failure (render-check [seconds] | abort | abort-cleanup\n\
-                 \x20                | abort-then-new\n\
+                 \x20                | raw-cleanup | abort-then-new\n\
                  \x20                | abort-cleanup-then-new | busy-probe <seconds>\n\
                  \x20                | cycles <count> | init-cycles <count>)\n\
                  one probe per run: what is being measured is partly what the previous process left"

@@ -104,32 +104,53 @@ Captured from a verbose on-board build:
   audio system is up. What follows is not arrangement-dependent.
   Measured by `scripts/probe-init-failure.sh`, which runs each probe in
   a process of its own between two full audio cycles in processes of
-  their own; the three crashing cases were repeated three times each
-  and were identical every time.
+  their own; each crashing case was repeated three times and was
+  identical every time.
 
   | after a `setup`-aborted `Bela_initAudio` | what happens |
   |---|---|
   | nothing more | the process exits 0 |
   | a second `Bela::new` | `evl_attach_thread for WSServer_40100 failed with File exists (17)`, `Error in evl_create_xbuf: 17 EEXIST`, `Unable to create pipe p_WSClient_signalMonitor40100_bin`, `Mcasp::start() called while already running`, then SIGSEGV |
-  | `Bela_cleanupAudio()` | SIGSEGV inside the call |
+  | `Bela_cleanupAudio()` | SIGSEGV inside the call, both ways it was tried |
   | `Bela_cleanupAudio()` then a second `Bela::new` | never reached: the cleanup call is the crash |
 
-  Two things follow. The damage is confined to the process that took
-  it — after every one of those cases, including the two that
-  segfaulted, the next process brought up an audio system and rendered
-  the expected ~2760 blocks per second, with no reboot, no restart of
-  `bela_daemon` and nothing left to kill in between. And
-  `Bela_cleanupAudio` is not the way out: on that path it is not merely
-  unhelpful, it is itself the crash. Refusing later attempts is the
-  only repair `Bela::new` can make (#30).
+  **`Bela_cleanupAudio` was tried two ways**, because the arrangement
+  could have been the crash rather than the call. `Bela.h` says it
+  fires the user's `cleanup()` callback, and `Bela::new` frees the
+  application before returning `Error::Init` — so a probe outside the
+  crate (`abort-cleanup`) necessarily calls it with the application
+  already gone, which is not what a fix inside `Bela::new` would do.
+  Going through the C API directly, mirroring `Bela::new` up to the
+  failing `Bela_initAudio` and calling `Bela_cleanupAudio` with the
+  application still alive (`raw-cleanup`), the callback **did** run and
+  read its application intact — and the process segfaulted immediately
+  afterwards regardless. So the call is the crash, not the arrangement.
+
+  Two things follow for #30. The damage is confined to the process that
+  took it: after every case above, including the ones that segfaulted,
+  the next process brought up an audio system and rendered the expected
+  ~2760 blocks per second, with no reboot, no restart of `bela_daemon`
+  and nothing left to kill in between. And `Bela_cleanupAudio` is not
+  the way out, which leaves refusing later attempts as the only repair
+  `Bela::new` can make.
+
+  Two things also follow for anyone tempted to call it anyway. The
+  callback running means calling `Bela_cleanupAudio` *after* freeing
+  the application would be a use-after-free for any application that is
+  not zero-sized — `abort-cleanup` only survives to its own crash
+  because its application is a ZST with the default do-nothing
+  `cleanup`. And `Bela.h` says the call belongs after `Bela_stopAudio`,
+  which a failed initialisation never reaches, so nothing here is being
+  used as its documentation intends.
 
 - **Several audio systems in one process are fine, as long as each one
   succeeds.** Twelve full cycles (`Bela::new`, `start`, render, drop)
-  in one process, and eight build-and-drop cycles with audio never
-  started, both ran clean. An earlier note here put a bus error at four
-  or five of the latter; it did not reproduce in either shape on image
-  2026-03-25. What stops a second audio system is a *failed* first one,
-  not how many there have been.
+  in one process — `CYCLE_COUNT=12 scripts/probe-init-failure.sh
+  <host> cycles` — and eight build-and-drop cycles with audio never
+  started — `CYCLE_COUNT=8 … init-cycles` — both ran clean. An earlier
+  note here put a bus error at four or five of the latter; it did not
+  reproduce in either shape on image 2026-03-25. What stops a second
+  audio system is a *failed* first one, not how many there have been.
 
 - **The board does not refuse a second process.** While one process was
   rendering, another brought up its own audio system and its `render`

@@ -34,8 +34,6 @@
 # `bela_daemon` is stopped for the duration and restarted afterwards.
 set -eu
 
-HOST="${1:-root@bela.local}"
-[ $# -gt 0 ] && shift
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
@@ -43,19 +41,35 @@ REMOTE_DIR="/tmp/bela-rs-probe"
 
 # Least destructive first, so that a probe which wedges the board takes
 # as few unmeasured ones with it as possible.
-ALL_PROBES="abort abort-then-new abort-cleanup abort-cleanup-then-new cycles init-cycles busy"
+ALL_PROBES="abort abort-then-new abort-cleanup raw-cleanup abort-cleanup-then-new cycles init-cycles busy"
+
+# The first argument is the host, unless it names a probe: running one
+# probe against the default board should not need the host spelled out.
+HOST=root@bela.local
+if [ $# -gt 0 ]; then
+  case " $ALL_PROBES " in
+  *" $1 "*) ;;
+  *)
+    HOST="$1"
+    shift
+    ;;
+  esac
+fi
 PROBES="${*:-$ALL_PROBES}"
 
 # A cycle is about 0.7 s of startup, 1 s of rendering and a teardown, so
 # these are ceilings for a probe that hangs rather than expected times.
 ORACLE_TIMEOUT=25
 PROBE_TIMEOUT=40
-CYCLES_TIMEOUT=90
 # How many audio systems `cycles` and `init-cycles` build in one
-# process. The board notes put the bus error at four or five;
-# overridable, because finding out where it actually is means pushing
-# the number up.
+# process. An earlier board note put a bus error at four or five, which
+# did not reproduce; overridable, because finding out whether there is
+# a limit at all means pushing the number up.
 CYCLE_COUNT="${CYCLE_COUNT:-5}"
+# Derived, so that raising the count does not silently run into the
+# ceiling: a cut-short run reports fewer cycles than were asked for,
+# which is exactly what a crash looks like.
+CYCLES_TIMEOUT=$((CYCLE_COUNT * 6 + 30))
 # How long the holder process keeps the audio device for the busy probe,
 # and how long the probe waits before trying again. The wait has to
 # outlast the holder from later than it started.
@@ -86,6 +100,9 @@ done
 # wedged it, or the operator interrupted.
 restore() {
   status=$?
+  # Killed first: a probe still holding the audio device would make the
+  # next thing to run on this board fail for a reason of its own.
+  ssh -o ConnectTimeout=10 "$HOST" "pkill -9 -x init_failure" 2>/dev/null || true
   ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR" 2>/dev/null || true
   if [ "$daemon_was_active" = yes ]; then
     ssh -o ConnectTimeout=10 "$HOST" "systemctl start bela_daemon" 2>/dev/null ||
@@ -97,10 +114,15 @@ restore() {
 trap 'restore' EXIT INT TERM
 
 # The image greets every ssh session with a login banner and a locale
-# warning on stderr, which would bury the output being parsed.
+# warning on stderr, which would bury the output being parsed. Held back
+# and shown only when the command actually fails, so that a bad host or
+# a key problem does not become a silent exit under `set -e`.
 remote() {
   # shellcheck disable=SC2029 # callers build the command on this side on purpose
-  ssh -n -o ConnectTimeout=10 "$HOST" "$1" 2>/dev/null
+  if ! ssh -n -o ConnectTimeout=10 "$HOST" "$1" 2> "$LOG_DIR/ssh.err"; then
+    sed 's/^/        /' "$LOG_DIR/ssh.err" >&2
+    return 1
+  fi
 }
 
 # Runs one probe process on the board and echoes what it printed,
@@ -121,6 +143,15 @@ field() {
 
 status_of() {
   sed -n 's/^probe-exit=//p' "$1" | tail -1
+}
+
+# A run cut short by the clock reports fewer cycles than it was asked
+# for, which reads exactly like a crash. Say which it was.
+timed_out() {
+  case "$(status_of "$1")" in
+  124 | 137) echo " - TIMED OUT, so the shortfall is the clock, not a crash" ;;
+  *) ;;
+  esac
 }
 
 # A full audio cycle in a fresh process: the only question is whether
@@ -189,7 +220,9 @@ seconds="$1"
 shift
 cd "$(dirname "$0")"
 chmod +x ./init_failure
-timeout -s INT "$seconds" ./init_failure "$@" 2>&1
+# -k: a probe that misses the interrupt is killed outright rather
+# than left holding the audio device.
+timeout -s INT -k 5 "$seconds" ./init_failure "$@" 2>&1
 echo "probe-exit=$?"
 REMOTE
 scp -q -o ConnectTimeout=10 "$BIN_DIR/init_failure" "$HOST:$REMOTE_DIR/init_failure"
@@ -245,6 +278,7 @@ for probe in $PROBES; do
       index=$((index + 1))
     done
     detail="$completed/$CYCLE_COUNT cycles rendered (exit $(status_of "$log"))"
+    detail="$detail$(timed_out "$log")"
     ;;
   init-cycles)
     run_probe "$CYCLES_TIMEOUT" init-cycles "$CYCLE_COUNT" > "$log"
@@ -258,6 +292,17 @@ for probe in $PROBES; do
       index=$((index + 1))
     done
     detail="$completed/$CYCLE_COUNT built and dropped (exit $(status_of "$log"))"
+    detail="$detail$(timed_out "$log")"
+    ;;
+  raw-cleanup)
+    # Reports on the C API rather than on `Bela::new`, so it has its own
+    # keys. `cleanup-callback` is the one that says whether the user
+    # callback ran before the crash, which is what tells a call that
+    # cannot work from one this probe arranged badly.
+    run_probe "$PROBE_TIMEOUT" raw-cleanup > "$log"
+    detail="init=$(field "$log" raw-init) cleanup=$(field "$log" cleanup)"
+    detail="$detail callback=$(field "$log" cleanup-callback)"
+    detail="$detail (exit $(status_of "$log"))"
     ;;
   busy)
     # A holder keeps the audio device while the probe tries to take it,

@@ -197,7 +197,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: monitoring_rules (fifo-probe <frames> | second-new | monitoring on|off)\n\
-                 one check per run: this board does not survive several audio systems in one process"
+                 one check per run: two of these abort from `setup`, which poisons the process"
             );
             return ExitCode::FAILURE;
         }
