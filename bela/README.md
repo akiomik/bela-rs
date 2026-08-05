@@ -55,6 +55,23 @@ measures one section of `render` at a time; see
 [`examples/cpu.rs`](examples/cpu.rs). Without them the first sign of
 running out of headroom is a dropout.
 
+A built binary stays reconfigurable through Bela's standard
+command-line options — `--period`, `--verbose`, `--use-analog` and the
+rest, the same set every other way of writing a Bela program accepts.
+`Bela::run_with_args` applies them on top of `Settings`, so the
+application keeps its own defaults, and `print_usage` prints the list
+for a `--help` of your own:
+
+```rust,ignore
+fn main() -> Result<(), bela::Error> {
+    let settings = Settings::new().period_size(32);
+    Bela::run_with_args(Passthrough, &settings, std::env::args_os())
+}
+```
+
+Options of the program's own are parsed by the program, which hands on
+what is left; see [`examples/command_line.rs`](examples/command_line.rs).
+
 See [`examples/`](examples) for runnable versions and the
 [repository README](../README.md) for project status and
 cross-compilation instructions.

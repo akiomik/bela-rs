@@ -1,6 +1,10 @@
 use core::fmt;
 use std::error;
 
+/// What `getopt` returns for an option it does not know, or one whose
+/// value is missing.
+const UNRECOGNISED_OPTION: i32 = b'?' as i32;
+
 /// Errors returned by the Bela audio system lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -45,6 +49,17 @@ pub enum Error {
     /// The C API is a process-wide singleton, so a second one would
     /// share — and reset — the state the first is using.
     AudioSystemExists,
+    /// An argument was not one of Bela's standard command-line options.
+    ///
+    /// Carries what `Bela_getopt_long` returned: `'?'` for an
+    /// unrecognised option or one missing its value, which `getopt` has
+    /// already reported on standard error naming the argument, or an
+    /// internal option code when libbela rejected a standard option it
+    /// did recognise — a `--json-file` it could not read, say.
+    CommandLine(i32),
+    /// A command-line argument contained a NUL byte, which a C string
+    /// cannot carry.
+    CommandLineNul,
 }
 
 impl fmt::Display for Error {
@@ -79,6 +94,17 @@ impl fmt::Display for Error {
                 f,
                 "a Bela audio system already exists in this process; the C API is a singleton"
             ),
+            Self::CommandLine(code) if *code == UNRECOGNISED_OPTION => write!(
+                f,
+                "an argument is not one of Bela's standard options, or is missing its value"
+            ),
+            Self::CommandLine(code) => write!(
+                f,
+                "the command line was rejected by Bela_getopt_long, which returned {code}"
+            ),
+            Self::CommandLineNul => {
+                write!(f, "a command-line argument contains a NUL byte")
+            }
         }
     }
 }

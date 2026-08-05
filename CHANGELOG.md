@@ -10,6 +10,22 @@ and this project adheres to
 
 ### Added
 
+- Bela's standard command-line options, wrapping `Bela_getopt_long` and
+  `Bela_usage`. `Bela::run_with_args` and `Bela::new_with_args` take the
+  argument list a program was started with and apply `--period`,
+  `--verbose`, `--use-analog` and the rest of the options every other
+  way of writing a Bela program accepts, so a built binary can be
+  reconfigured without rebuilding it; `print_usage` prints the list for
+  a program's own `--help`. They are applied on top of `Settings`, which
+  is in turn applied on top of `Bela_defaultSettings()` — so an
+  application keeps the defaults it was built with, and the command line
+  still wins over them. Options of the program's own are not handed to
+  Bela: parse them first with whatever argument parser the program
+  already uses and pass on what is left, which keeps `getopt`'s globals
+  and its argv permutation out of the API and makes anything Bela does
+  not recognise an error rather than something quietly ignored. See
+  `examples/command_line.rs`
+
 - `Bela` now enforces the "only one at a time" rule it documented:
   the process-wide claim on the audio system is taken atomically by
   `Bela::new`, and a second one fails with `Error::AudioSystemExists`

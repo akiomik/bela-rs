@@ -24,11 +24,12 @@ TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
 # `print` carries the numeric checks, `task_lifecycle` the auxiliary
-# task ones and `cpu` the CPU monitoring ones; the others only have to
-# start, keep running and stop cleanly. `monitoring_rules` is not here:
-# it answers one question per run and exits, so it is driven separately
-# below rather than run for the duration.
-EXAMPLES="print sine passthrough aux_task task_lifecycle cpu"
+# task ones, `cpu` the CPU monitoring ones and `command_line` the
+# command-line option ones; the others only have to start, keep running
+# and stop cleanly. `monitoring_rules` is not here: it answers one
+# question per run and exits, so it is driven separately below rather
+# than run for the duration.
+EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5
@@ -96,14 +97,15 @@ remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 # report how it went. Kept on the board so the quoting stays readable.
 cat > "$LOG_DIR/run-remote.sh" <<'REMOTE'
 #!/bin/sh
-# usage: run-remote.sh <binary> <seconds>
+# usage: run-remote.sh <binary> <seconds> [arguments...]
 set -eu
 binary="$1"
 seconds="$2"
+shift 2
 cd "$(dirname "$0")"
 chmod +x "./$binary"
 
-"./$binary" > "$binary.log" 2>&1 &
+"./$binary" "$@" > "$binary.log" 2>&1 &
 pid=$!
 sleep "$seconds"
 
@@ -311,6 +313,58 @@ case "$guard" in
 "") fail "cpu: no fifo-guard line" ;;
 *) fail "cpu: monitoring was $guard at a period size that moves render off the measured thread" ;;
 esac
+
+# Bela's standard command-line options. Only the board can answer
+# whether they arrived: what `setup` reports is the configuration
+# libbela brought the hardware up with, not what was asked for. The run
+# in the loop above passed no options, so it shows the application's own
+# `Settings` default; this one passes `--period` to show the command
+# line overriding it.
+default_period="$(awk '/^const PERIOD_SIZE/ { print $NF + 0 }' \
+  "$ROOT/bela/examples/command_line.rs" | head -1)"
+override_period=$((default_period * 2))
+# setup: 44100 Hz, 32 frames per block, 2 in / 2 out audio channels, ...
+reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line.log" 2>/dev/null || true)"
+if [ "$reported_period" = "$default_period" ]; then
+  pass "command_line: the application's own default of $default_period frames per block was used"
+else
+  fail "command_line: expected the application's default of $default_period frames per block, \
+got ${reported_period:-nothing}"
+fi
+
+# Long enough for setup to report — this run is not about rendering.
+echo "Running command_line with --period $override_period on $HOST..."
+result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --period $override_period" ||
+  echo state=ssh-failed)"
+remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-period.log" 2>/dev/null || true
+reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line-period.log" \
+  2>/dev/null || true)"
+if [ "$result" != "state=stopped exit=0" ]; then
+  fail "command_line: --period $override_period: $result"
+  sed 's/^/        /' "$LOG_DIR/command_line-period.log" >&2
+elif [ "$reported_period" = "$override_period" ]; then
+  pass "command_line: --period $override_period overrode the application's default"
+else
+  fail "command_line: --period $override_period was configured as \
+${reported_period:-nothing} frames per block"
+fi
+
+# The usage text comes from libbela, so it is also a check that
+# `Bela_usage` is reachable at all. No audio system is involved.
+help_output="$(remote "cd $REMOTE_DIR && ./command_line --help 2>&1" || echo run-failed)"
+case "$help_output" in
+*--period*) pass "command_line: --help printed Bela's standard options" ;;
+*) fail "command_line: --help printed no usage information ($help_output)" ;;
+esac
+
+# An option Bela does not know has to be refused rather than ignored,
+# and refused before any hardware is touched.
+status="$(remote "cd $REMOTE_DIR && ./command_line --not-an-option > /dev/null 2>&1; echo \$?")"
+if [ "$status" = 0 ]; then
+  fail "command_line: an unrecognised option was accepted"
+else
+  pass "command_line: an unrecognised option was refused (exit $status)"
+fi
 
 # The CPU monitoring rules that only libbela can answer. One audio
 # system per run and no `Bela::run`, so these are driven directly rather
