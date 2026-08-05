@@ -222,6 +222,91 @@ functions, `Bela_defaultSettings`), on a Bela Gem Stereo.
   because its I²C write no longer goes through. The safe API keeps both
   windows out of reach by hanging the calls off the `Bela` handle.
 
+## Analog and digital I/O
+
+Collected 2026-08-06 with `scripts/probe-io.sh`, which runs
+`bela/examples/io_config` one configuration per process and reports the
+`BelaContext` each one produces. Nothing was wired to the board for
+these: they are the numbers libbela derives from the hardware and the
+settings, which is what the accessors on the context types index
+against. Whether a pin then does what the accessor says is a separate
+measurement and is not recorded here yet.
+
+- **The board identifies as `GemStereo`**, and libbela has no
+  `BelaHwConfig` for it: `Bela_detectHw(Cache)` returns 2
+  (`BelaHw_GemStereo`) and `Bela_HwConfig_new` on that value returns
+  null. So the channel counts below do not come from the table
+  `Bela_HwConfig_new` reads; on this hardware only `Bela_initAudio`
+  knows them.
+- **What `Bela_defaultSettings` asks for is not what the block gets.**
+  The defaults are 8 analog in, **8 analog out**, 16 digital, 16 frames
+  per period, 44100 Hz, one render thread, `useAnalog` and `useDigital`
+  both on, `uniformSampleRate` on. The context that comes back from
+  those same defaults has **0 analog outputs**:
+
+  | | audio | analog | digital |
+  |---|---|---|---|
+  | channels | 2 in / 2 out | 8 in / **0 out** | 16 |
+  | frames | 16 | 16 | 16 |
+  | rate | 44100 | 44100 | 44100 |
+
+- **A Gem Stereo has no analog outputs, and they are not folded into
+  the audio outputs either.** `analogOutChannels` is 0 whether the
+  settings ask for 8 (the default), 4 or 2, and `audioOutChannels`
+  stays 2 throughout — it is never 2 plus the analog outputs. Bela's
+  own specifications agree, listing expanded and DC-coupled outputs as
+  the Gem Multi's; the migration guide's "+2 to the channel number" is
+  about a board that has them. **Nothing here confirms the +2 offset,
+  and nothing here refutes it for a Multi** — this board simply never
+  presents the case.
+- **Asking for a different number of analog inputs and outputs fails
+  the initialisation.** `--analog-out 2` against the default 8 inputs
+  makes libbela print `TODO: a different number of channels for inputs
+  and outputs is not yet supported` and `Bela_initAudio` return 1, so
+  `Bela::new` fails with `Error::Init(1)` and the process is poisoned
+  for good (see "Audio thread" above). Setting both to the same number
+  is accepted — and still yields 0 outputs.
+- **`uniformSampleRate` is on by default, and what it removes is a
+  frame ratio that follows the analog channel count.** With it on, the
+  analog frame count and sample rate equal the audio ones whatever the
+  channel count. With it off, the ratio Bela's migration guide
+  describes is exactly what the board produces:
+
+  | analog in channels | `uniformSampleRate` | analog frames | analog rate |
+  |---|---|---|---|
+  | 8 | on (default) | 16 | 44100 |
+  | 8 | off | 8 | 22050 |
+  | 4 | on | 16 | 44100 |
+  | 4 | off | 16 | 44100 |
+  | 2 | on | 16 | 44100 |
+  | 2 | off | 32 | 88200 |
+
+  Audio stayed at 16 frames and 44100 Hz in every row, and the digital
+  frames and rate followed audio rather than analog throughout.
+- **Disabling a domain zeroes its channels and frames.** `useAnalog`
+  off gives 0 analog frames, 0 in and 0 out; `useDigital` off gives 0
+  digital frames and 0 channels. The one asymmetry is the sample rate
+  the context still reports: the digital rate falls to 0 with digital
+  off, while the analog rate stays at 44100 with analog off.
+- **`setup` and the first block agree**, in every configuration above,
+  on every audio, analog and digital field. A frame count filled in
+  only once the audio thread exists would have shown up as a
+  difference; none did.
+- **The period size does not change any of this.** At 16 and at 256
+  frames — either side of the 128-frame boundary where libbela moves
+  `render` behind a context FIFO — the analog and digital frame counts
+  equal the audio one.
+- **A one-thread run leaves `threadCount` at 0, not 1.** With no
+  `threadCount` asked for, `Bela_defaultSettings` reports 1 but the
+  `BelaContext` that comes back carries `threadCount = 0` and
+  `thisThread = 0`, in `setup` and in the block alike, at every period
+  size and channel count tried. So a context spells "one render
+  thread" as a zero, which is why `BlockContext::thread_count` reads 0
+  as 1 and why the crate's number cannot be used to tell the two
+  apart. `thisThread` was only read from `setup` and `render_pre`,
+  both of which run on the main audio thread; what a secondary render
+  thread reports is measured by `examples/parallel` instead.
+
 ## Operations
 
 - USB gadget network: the board is `bela.local` (host-side interface

@@ -94,8 +94,12 @@ macro_rules! metadata_accessors {
                     self.0.audioInChannels as usize
                 }
 
-                /// Number of audio output channels. On Bela Gem this
-                /// includes the analog outputs.
+                /// Number of audio output channels.
+                ///
+                /// On a Bela Gem Stereo this is 2, and the analog
+                /// outputs are not among them — the board has none.
+                /// See [`BlockContext`], which carries what was
+                /// measured for all four context types.
                 #[must_use]
                 #[inline]
                 pub const fn audio_out_channels(&self) -> usize {
@@ -262,15 +266,30 @@ pub struct CleanupContext(BelaContext);
 ///
 /// # Bela Gem semantics
 ///
-/// On Bela Gem the analog outputs are part of the audio outputs: use
+/// On a Bela Gem Stereo there is nothing to write an analog output
+/// with: [`analog_out_channels`](BlockContext::analog_out_channels) is
+/// 0 for every channel count the board accepts — 8, 4 and 2 were
+/// measured, and a count that differs between the inputs and the
+/// outputs is refused before any context exists — and
+/// [`audio_out_channels`](BlockContext::audio_out_channels) is 2, so
+/// the analog outputs are not folded in there either. So
+/// [`analog_write`](BlockContext::analog_write) has no channel it can
+/// take on that board, while
+/// [`analog_read`](BlockContext::analog_read) has as many as the
+/// settings asked for, eight by default. Bela's migration guide
+/// describes writing an analog output as
 /// [`audio_write`](BlockContext::audio_write) with the channel offset
-/// by +2 instead of [`analog_write`](BlockContext::analog_write), and
-/// expect [`uniform_sample_rate`](crate::Settings::uniform_sample_rate)
-/// behaviour (analog frames == audio frames) by default. Output values
-/// do not persist across blocks; the within-block persistence of
-/// [`analog_write`](BlockContext::analog_write) and
+/// by +2; that is a Gem Multi, which has the outputs, and it has not
+/// been measured here.
+///
+/// [`uniform_sample_rate`](crate::Settings::uniform_sample_rate) is on
+/// by default, so analog frames == audio frames unless it is turned
+/// off. Output values do not persist across blocks; the within-block
+/// persistence of [`analog_write`](BlockContext::analog_write) and
 /// [`digital_write`](BlockContext::digital_write) (writing from `frame`
 /// to the end of the block) is unchanged.
+///
+/// Measured on the board; see `docs/board-facts.md`.
 ///
 /// # Panics
 ///
@@ -332,6 +351,15 @@ pub struct BlockContext(BelaContext);
 /// thread, and use `render_pre` to line the pieces up before the block
 /// and `render_post` to mix them afterwards; `examples/sine.rs` does
 /// exactly that with a phase.
+///
+/// # Bela Gem semantics
+///
+/// The same as [`BlockContext`]'s, which is where they are written
+/// down: what a board reports is a property of the board, not of which
+/// callback is asking. On a Gem Stereo that means the analog outputs
+/// are absent here too, so
+/// [`analog_write`](RenderContext::analog_write) has no channel it can
+/// take.
 ///
 /// # Panics
 ///
@@ -498,8 +526,9 @@ impl BlockContext {
     }
 
     /// Sets the analog output for `channel` from `frame` to the end of
-    /// the block (`analogWrite`). Not the primary path on Bela Gem —
-    /// see the type-level documentation.
+    /// the block (`analogWrite`). A Bela Gem Stereo has no analog
+    /// outputs, so every channel is out of range there — see the
+    /// type-level documentation.
     ///
     /// # Panics
     /// If `channel` is out of range.
@@ -768,6 +797,9 @@ impl RenderContext {
     /// hold an analog output across the whole block whatever the
     /// thread count, write it from
     /// [`render_pre`](crate::BelaApplication::render_pre).
+    ///
+    /// A Bela Gem Stereo has no analog outputs, so every channel is
+    /// out of range there — see the type-level documentation.
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
@@ -1087,7 +1119,11 @@ pub(crate) mod tests {
 
     const AUDIO_FRAMES: usize = 4;
     const AUDIO_IN_CHANNELS: usize = 2;
-    // Gem-like: two audio channels plus two analog-outs-as-audio.
+    // Deliberately none of the boards': more outputs than inputs, and
+    // analog outputs that exist, so that the indexing is exercised on
+    // a context no hardware would hand over. A Gem Stereo's own shape
+    // — 2 out, 0 analog out — would leave most of these tests with
+    // nothing to index.
     const AUDIO_OUT_CHANNELS: usize = 4;
     const ANALOG_FRAMES: usize = 4;
     const ANALOG_IN_CHANNELS: usize = 4;
