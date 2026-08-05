@@ -1,5 +1,10 @@
 //! Copies the audio inputs straight to the audio outputs.
 //!
+//! Frame-independent work, so it divides across render threads without
+//! anything having to be carried between them: run it with
+//! `Settings::thread_count(4)` and each thread copies a quarter of the
+//! block.
+//!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
@@ -17,18 +22,26 @@
 #[cfg(not(bela_device))]
 use std::process::ExitCode;
 
-use bela::{BelaApplication, Context};
+use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
 
 struct Passthrough;
 
-// Safety: render only touches the context buffers — no allocation,
-// blocking, system calls or panicking code paths.
-unsafe impl BelaApplication for Passthrough {
-    fn render(&mut self, context: &mut Context) {
+impl BelaApplication for Passthrough {
+    /// Nothing to carry from one block to the next: every output
+    /// sample depends only on the input sample beside it.
+    type RenderState = ();
+
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    // Real-time safe: only reads and writes of the context buffers —
+    // no allocation, blocking, system calls or panicking code paths.
+    fn render(&self, _state: &mut (), context: &mut RenderContext) {
         let channels = context
             .audio_in_channels()
             .min(context.audio_out_channels());
-        for frame in 0..context.audio_frames() {
+        // This thread's share of the block. With one render thread
+        // that is all of it; with four, the four ranges tile it.
+        for frame in context.audio_frame_range() {
             for channel in 0..channels {
                 let sample = context.audio_read(frame, channel);
                 context.audio_write(frame, channel, sample);

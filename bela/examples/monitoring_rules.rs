@@ -64,7 +64,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use bela::{BelaApplication, Context};
+use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
 
 const MEASUREMENTS_PER_CYCLE: u32 = 2000;
 
@@ -79,34 +79,46 @@ struct Observe {
     monitored: Arc<AtomicBool>,
 }
 
-unsafe impl BelaApplication for Observe {
-    fn setup(&mut self, context: &mut Context) -> bool {
+impl BelaApplication for Observe {
+    type RenderState = ();
+
+    fn setup(&mut self, context: &SetupContext) -> bool {
         self.monitored
             .store(context.cpu_usage().is_some(), Ordering::Relaxed);
         false
     }
 
-    fn render(&mut self, _context: &mut Context) {}
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 /// Stops an audio system from coming up, for the probe that only needs
 /// libbela to have got as far as choosing a `gFifoFactor`.
 struct Abort;
 
-unsafe impl BelaApplication for Abort {
-    fn setup(&mut self, _context: &mut Context) -> bool {
+impl BelaApplication for Abort {
+    type RenderState = ();
+
+    fn setup(&mut self, _context: &SetupContext) -> bool {
         false
     }
 
-    fn render(&mut self, _context: &mut Context) {}
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 /// Does nothing, for the check that only needs an audio system to
 /// exist.
 struct Idle;
 
-unsafe impl BelaApplication for Idle {
-    fn render(&mut self, _context: &mut Context) {}
+impl BelaApplication for Idle {
+    type RenderState = ();
+
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
 #[cfg(bela_device)]

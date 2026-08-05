@@ -28,8 +28,12 @@ REMOTE_DIR="/tmp/bela-rs-smoke"
 # command-line option ones and `levels` the codec level ones; the others
 # only have to start, keep running and stop cleanly. `monitoring_rules`
 # is not here: it answers one question per run and exits, so it is
-# driven separately below rather than run for the duration.
+# driven separately below rather than run for the duration. Neither is
+# `parallel`, which is run once per thread count.
 EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line levels"
+# Thread counts `parallel` is run at, lowest first: the last one has to
+# spread the same work over more cores than the first.
+THREAD_COUNTS="1 2 4"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5
@@ -175,7 +179,7 @@ log="$LOG_DIR/print.log"
 if [ ! -s "$log" ]; then
   fail "print: produced no output"
 else
-  # setup: 44100 Hz, 16 frames per block, 2 in / 2 out audio channels, thread 0/1
+  # setup: 44100 Hz, 16 frames per block, 2 in / 2 out audio channels, 1 render thread(s)
   sample_rate="$(awk '/^setup:/ { print $2; exit }' "$log")"
   block_size="$(awk '/^setup:/ { print $4; exit }' "$log")"
   # render: 2756 blocks, 44080 frames elapsed, 0 underruns
@@ -476,6 +480,149 @@ the segfault it guards against looks like"
     ;;
   *) fail "monitoring_rules: poisoned check reported '$poisoned'" ;;
   esac
+fi
+
+# Multithreaded rendering, which only a board can answer: whether the
+# extra render threads exist, whether they land on different cores, and
+# whether they divided the block rather than each rendering all of it.
+# One audio system per process, so each thread count is its own run.
+# See the example's header for what each field means.
+if [ ! -x "$BIN_DIR/parallel" ]; then
+  fail "parallel: not built at $BIN_DIR/parallel"
+else
+  scp -q -o ConnectTimeout=10 "$BIN_DIR/parallel" "$HOST:$REMOTE_DIR/parallel"
+  single_section=
+  for threads in $THREAD_COUNTS; do
+    echo "Running parallel with $threads render thread(s) for ${DURATION}s on $HOST..."
+    log="$LOG_DIR/parallel-$threads.log"
+    result="$(remote "sh $REMOTE_DIR/run-remote.sh parallel $DURATION $threads" ||
+      echo state=ssh-failed)"
+    remote "cat $REMOTE_DIR/parallel.log" > "$log" 2>/dev/null || true
+    if [ "$result" != "state=stopped exit=0" ]; then
+      fail "parallel: $threads thread(s): $result"
+      sed 's/^/        /' "$log" >&2
+      continue
+    fi
+
+    # parallel: thread=0 tid=78455 cpu=3 range=0..4 calls=14705 frames=58820 section=10.5%
+    reported="$(grep -c '^parallel: thread=' "$log" 2>/dev/null || true)"
+    tids="$(sed -n 's/^parallel: thread=[0-9]* tid=\([0-9-]*\).*/\1/p' "$log" | sort -u | wc -l)"
+    cpus="$(sed -n 's/^parallel: thread=[0-9]* tid=[0-9-]* cpu=\([0-9-]*\).*/\1/p' "$log" |
+      sort -u | wc -l)"
+    # parallel: faults=0 — no callback was refused for arriving where
+    # the crate could not serve it safely, which is the guard the whole
+    # parallel path rests on and the only check for it that runs on a
+    # board.
+    faults="$(sed -n 's/^parallel: faults=\([0-9]*\).*/\1/p' "$log" | head -1)"
+    # parallel: blocks=14705 frames=16 rendered=235280 expected=235280
+    summary="$(awk '/^parallel: blocks=/ { print; exit }' "$log" 2>/dev/null || true)"
+    block_frames="$(echo "$summary" | sed -n 's/.*frames=\([0-9]*\).*/\1/p')"
+    rendered="$(echo "$summary" | sed -n 's/.*rendered=\([0-9]*\).*/\1/p')"
+    expected="$(echo "$summary" | sed -n 's/.*expected=\([0-9]*\).*/\1/p')"
+    # bela: 1 callback(s) were refused while stopping, ...
+    # The crate's own account of the same event, from `until_stopped`.
+    stopping_faults="$(sed -n 's/^bela: \([0-9]*\) callback(s) were refused while stopping.*/\1/p' \
+      "$log" | head -1)"
+    # parallel: uncovered=0 abandoned=0 unfinished=0
+    coverage="$(awk '/^parallel: uncovered=/ { print; exit }' "$log" 2>/dev/null || true)"
+    uncovered="$(echo "$coverage" | sed -n 's/.*uncovered=\([0-9]*\).*/\1/p')"
+    abandoned="$(echo "$coverage" | sed -n 's/.*abandoned=\([0-9]*\).*/\1/p')"
+    unfinished="$(echo "$coverage" | sed -n 's/.*unfinished=\([0-9]*\).*/\1/p')"
+    # The busiest thread's share of the block, which is what has to fall
+    # as threads are added: they render at the same time, so the block
+    # is only finished when the last of them is.
+    section="$(sed -n 's/.*section=\([0-9.]*\)%.*/\1/p' "$log" | sort -rn | head -1)"
+
+    if [ "$reported" != "$threads" ]; then
+      fail "parallel: $threads thread(s): ${reported:-0} reported for themselves"
+      continue
+    fi
+    pass "parallel: $threads thread(s): all $threads reported for themselves"
+
+    if [ "$(echo "$tids" | tr -d ' ')" = "$threads" ] &&
+      [ "$(echo "$cpus" | tr -d ' ')" = "$threads" ]; then
+      pass "parallel: $threads thread(s): $threads distinct Linux thread id(s), on $threads core(s)"
+    else
+      fail "parallel: $threads thread(s): $(echo "$tids" | tr -d ' ') distinct thread id(s) on \
+$(echo "$cpus" | tr -d ' ') core(s), so the work was not spread"
+    fi
+
+    if [ "$faults" = 0 ]; then
+      pass "parallel: $threads thread(s): no callback was refused"
+    else
+      fail "parallel: $threads thread(s): ${faults:-no} callback fault(s) reported"
+    fi
+
+    # Every frame was written once or not at all. A frame written twice
+    # would push `rendered` past `expected` without lowering
+    # `uncovered`, so a negative shortfall is the duplication check; a
+    # shortfall of up to one block is the stop landing mid-block, which
+    # the example's header describes in both of its shapes. `abandoned`
+    # is one of them and `unfinished` the other, and they are mutually
+    # exclusive, so their sum is "blocks cut short on the way out".
+    if [ -z "$rendered" ] || [ -z "$expected" ] || [ -z "$abandoned" ] ||
+      [ -z "$unfinished" ] || [ -z "$block_frames" ]; then
+      fail "parallel: $threads thread(s): no summary line"
+    else
+      shortfall=$((expected - rendered - uncovered))
+      cut_short=$((abandoned + unfinished))
+      if [ "$shortfall" -lt 0 ]; then
+        # Either a frame was written twice, or a block was rendered
+        # without being counted — `expected` comes from `render_pre`,
+        # so a refused `render_pre` would take a block out of it while
+        # leaving the frames in `rendered`.
+        fail "parallel: $threads thread(s): $rendered rendered + $uncovered uncovered is more \
+than the $expected frames of the run — a frame was written twice, or a render_pre was refused"
+      elif [ "$shortfall" -gt "$block_frames" ] || [ "$cut_short" -gt 1 ]; then
+        fail "parallel: $threads thread(s): $shortfall frames over $cut_short block(s) went \
+unaccounted for, which is more than the one block a stop can cut short"
+      elif [ "$cut_short" -eq 0 ]; then
+        pass "parallel: $threads thread(s): $rendered frames rendered for $expected, \
+every frame accounted for exactly once"
+      else
+        # The frames of that block that were never rendered show up as
+        # `uncovered` when its `render_post` ran and as the shortfall
+        # when it did not, so the two together are what was lost.
+        pass "parallel: $threads thread(s): $rendered frames rendered for $expected, with the \
+last block cut short by the stop ($((uncovered + shortfall)) frames)"
+      fi
+
+      # The example and the crate count the same shutdown from opposite
+      # sides: a block left unfinished is a `render_post` the crate
+      # refused, so every one of them has to appear in the crate's own
+      # tally. The reverse does not hold — a late `render` turned away
+      # by a `render_post` that did run is refused too, and finishes
+      # its block — so this is a floor, not an equality.
+      if [ "$unfinished" -eq 0 ]; then
+        pass "parallel: $threads thread(s): no block was left unfinished"
+      elif [ "${stopping_faults:-0}" -ge "$unfinished" ]; then
+        pass "parallel: $threads thread(s): $unfinished unfinished block(s), and the crate \
+reported ${stopping_faults} refusal(s) while stopping to match"
+      else
+        fail "parallel: $threads thread(s): $unfinished block(s) were left unfinished but the \
+crate reported ${stopping_faults:-no} refusal(s) while stopping — the two do not agree"
+      fi
+    fi
+
+    if [ -z "$section" ]; then
+      fail "parallel: $threads thread(s): no section measurement"
+    elif [ -z "$single_section" ]; then
+      single_section="$section"
+      pass "parallel: $threads thread(s): the busiest thread used ${section}% of the block"
+    else
+      # Never as good as dividing by the thread count — the threads are
+      # woken and waited for — so this only asks that adding cores
+      # helped at all, with room for the noise of a short run.
+      wanted="$(awk -v s="$single_section" -v t="$threads" 'BEGIN { printf "%.1f", s / t * 1.5 }')"
+      if awk -v a="$section" -v b="$wanted" 'BEGIN { exit !(a <= b) }'; then
+        pass "parallel: $threads thread(s): the busiest thread used ${section}% of the block, \
+down from ${single_section}% on one"
+      else
+        fail "parallel: $threads thread(s): the busiest thread used ${section}% of the block \
+against ${single_section}% on one, which is not a share of the work"
+      fi
+    fi
+  done
 fi
 
 echo

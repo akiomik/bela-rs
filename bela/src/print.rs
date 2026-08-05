@@ -202,11 +202,14 @@ fn write_c_str(message: &CStr) {
 /// `char` boundary and end with `...`.
 ///
 /// ```no_run
-/// use bela::{BelaApplication, Context, rt_print};
+/// use bela::{BelaApplication, RenderContext, rt_print};
+/// # use bela::{SetupContext, ThreadInfo};
 ///
 /// # struct App;
-/// # unsafe impl BelaApplication for App {
-/// fn render(&mut self, context: &mut Context) {
+/// # impl BelaApplication for App {
+/// # type RenderState = ();
+/// # fn create_render_state(&mut self, _t: ThreadInfo, _c: &SetupContext) {}
+/// fn render(&self, _state: &mut (), context: &mut RenderContext) {
 ///     rt_print!("underruns so far: {}", context.underrun_count());
 /// }
 /// # }
@@ -225,15 +228,18 @@ macro_rules! rt_print {
 /// since the Bela console is line-buffered.
 ///
 /// ```no_run
-/// use bela::{BelaApplication, Context, rt_println};
+/// use bela::{BelaApplication, SetupContext, rt_println};
+/// # use bela::{RenderContext, ThreadInfo};
 ///
 /// # struct App;
-/// # unsafe impl BelaApplication for App {
-/// fn setup(&mut self, context: &mut Context) -> bool {
+/// # impl BelaApplication for App {
+/// # type RenderState = ();
+/// # fn create_render_state(&mut self, _t: ThreadInfo, _c: &SetupContext) {}
+/// fn setup(&mut self, context: &SetupContext) -> bool {
 ///     rt_println!("{} Hz, {} frames", context.audio_sample_rate(), context.audio_frames());
 ///     true
 /// }
-/// # fn render(&mut self, _context: &mut Context) {}
+/// # fn render(&self, _s: &mut (), _c: &mut RenderContext) {}
 /// # }
 /// ```
 #[macro_export]

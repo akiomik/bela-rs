@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::marker::PhantomData;
 use core::time::Duration;
 use std::ffi::OsStr;
@@ -6,10 +6,11 @@ use std::thread;
 
 use bela_sys::BelaInitSettings;
 
-use crate::application::{BelaApplication, trampoline};
+use crate::application::BelaApplication;
 use crate::cmdline::{self, Arguments};
 use crate::cpu;
 use crate::error::Error;
+use crate::runtime::{Runtime, trampoline, user_data};
 use crate::settings::{self, Settings};
 use crate::singleton::Claim;
 use crate::task;
@@ -35,8 +36,8 @@ use crate::task;
 /// Only available on the device target (`aarch64-unknown-linux-gnu`).
 pub struct Bela<T: BelaApplication> {
     // Owned; boxed so the address handed to libbela stays stable, kept
-    // raw so the audio thread's access is never aliased by a &mut.
-    app: *mut T,
+    // raw so the audio threads' access is never aliased by a &mut.
+    runtime: *mut Runtime<T>,
     started: bool,
     /// Released once this audio system is gone, so the next one can be
     /// built. Declared last: fields drop after `Drop::drop`, so the
@@ -54,9 +55,7 @@ impl<T: BelaApplication> Bela<T> {
     /// is alive in this process, [`Error::AudioSystemPoisoned`] when an
     /// earlier initialisation in this process failed, [`Error::Init`]
     /// when `Bela_initAudio` fails, e.g. when the audio hardware is
-    /// unavailable or already in use, [`Error::ThreadCountUnsupported`]
-    /// when more than one render thread is requested, and
-    /// [`Error::CpuMonitoringCycle`],
+    /// unavailable or already in use, and [`Error::CpuMonitoringCycle`],
     /// [`Error::CpuMonitoringPeriodSize`] or [`Error::CpuMonitoring`]
     /// when [`Settings::cpu_monitoring`] asks for something that cannot
     /// be served.
@@ -153,8 +152,7 @@ impl<T: BelaApplication> Bela<T> {
             .cpu_monitoring_cycle()
             .map(cpu::check_cycle)
             .transpose()?;
-        let app = Box::into_raw(Box::new(application));
-        let ret = unsafe {
+        let (ret, runtime) = unsafe {
             let raw = bela_sys::Bela_InitSettings_alloc();
             bela_sys::Bela_defaultSettings(raw);
             settings.apply_to(&mut *raw);
@@ -169,10 +167,10 @@ impl<T: BelaApplication> Bela<T> {
             // whatever the command line just changed, but before
             // `Bela_initAudio`, since the `setup` callback runs inside
             // that call and should already see the answer
-            // `Context::cpu_usage` will give for the rest of the run.
-            // The priming tic it takes is what the audio thread's first
-            // reading is measured from, so everything from here to
-            // `start` is startup time that reading includes.
+            // `SetupContext::cpu_usage` will give for the rest of the
+            // run. The priming tic it takes is what the audio thread's
+            // first reading is measured from, so everything from here
+            // to `start` is startup time that reading includes.
             let prepared = arguments
                 .as_mut()
                 .map_or(Ok(()), |arguments| cmdline::parse(arguments, &mut *raw))
@@ -180,19 +178,28 @@ impl<T: BelaApplication> Bela<T> {
                 .and_then(|()| cpu::apply_monitoring(monitoring));
             if let Err(error) = prepared {
                 bela_sys::Bela_InitSettings_free(raw);
-                drop(Box::from_raw(app));
                 return Err(error);
             }
+            // Built here rather than earlier, because how many render
+            // states it needs is a resolved setting like any other:
+            // `--thread-count` on the command line has just had its
+            // say.
+            let runtime = Box::into_raw(Box::new(Runtime::new(
+                application,
+                settings::render_threads(&*raw),
+            )));
             (*raw).setup = Some(trampoline::setup::<T>);
+            (*raw).render_pre = Some(trampoline::render_pre::<T>);
             (*raw).render = Some(trampoline::render::<T>);
+            (*raw).render_post = Some(trampoline::render_post::<T>);
             (*raw).cleanup = Some(trampoline::cleanup::<T>);
-            let ret = bela_sys::Bela_initAudio(raw, app.cast::<c_void>());
+            let ret = bela_sys::Bela_initAudio(raw, user_data(runtime));
             bela_sys::Bela_InitSettings_free(raw);
-            ret
+            (ret, runtime)
         };
         if ret != 0 {
             // The audio system never took ownership of the callbacks.
-            drop(unsafe { Box::from_raw(app) });
+            drop(unsafe { Box::from_raw(runtime) });
             // Every failure above this point leaves libbela in a state
             // the next attempt can resolve — CPU monitoring can be left
             // initialised, but the next `new` applies or disables it
@@ -204,7 +211,7 @@ impl<T: BelaApplication> Bela<T> {
             return Err(Error::Init(ret));
         }
         Ok(Self {
-            app,
+            runtime,
             started: false,
             _claim: claim,
             _marker: PhantomData,
@@ -213,7 +220,6 @@ impl<T: BelaApplication> Bela<T> {
 
     /// Checks the resolved settings against what this crate can serve.
     fn check_supported(raw: &BelaInitSettings, monitoring: Option<c_int>) -> Result<(), Error> {
-        settings::check_supported(raw)?;
         if monitoring.is_some() {
             // Needs the resolved period size: unset in `Settings` means
             // Bela's default, not "no period size".
@@ -258,6 +264,59 @@ impl<T: BelaApplication> Bela<T> {
         }
     }
 
+    /// How many callbacks this audio system has refused, while it was
+    /// running, for breaking the protocol its render states rely on.
+    ///
+    /// Zero for every run that behaved. Anything else means libbela
+    /// made a callback somewhere the crate could not hand out the
+    /// references [`BelaApplication`] promises — several `render` calls
+    /// with the same thread number, say. The callback was skipped and a
+    /// stop requested, so this is a reason a run ended, not damage that
+    /// can be undone.
+    ///
+    /// Refusals *during* a shutdown are not counted here, and are not a
+    /// fault in the same sense: libbela abandons the block it is in
+    /// when a stop arrives, which can leave a `render_post` overlapping
+    /// a `render` that has not finished. Refusing that is the guard
+    /// working. Keeping the two apart is what lets an ordinary Ctrl-C
+    /// stay an ordinary Ctrl-C, and
+    /// [`until_stopped`](Bela::until_stopped) reports the count for
+    /// those separately rather than failing on it.
+    ///
+    /// [`until_stopped`](Bela::until_stopped) reads this for you and
+    /// fails with [`Error::CallbackFaults`]; this is for a program
+    /// driving [`start`](Bela::start) and [`stop`](Bela::stop) itself.
+    #[must_use]
+    pub fn callback_faults(&self) -> u32 {
+        // Safety: the runtime is alive for as long as `self` is, and
+        // reading the counter is an atomic load.
+        unsafe { &*self.runtime }.faults()
+    }
+
+    /// How many callbacks this audio system has refused *during* a
+    /// shutdown, which is a different thing from
+    /// [`callback_faults`](Bela::callback_faults) and not a failure.
+    ///
+    /// libbela abandons the block it is in when a stop arrives: the
+    /// secondary render threads check the stop flag just before calling
+    /// `render`, and the main thread stops waiting for them on the same
+    /// flag, so a `render_post` can arrive while a `render` is still
+    /// finishing. Refusing that is the guard doing its job.
+    ///
+    /// Non-zero means the last block was cut short — some of its frames
+    /// were never rendered, and its `render_post` may not have run.
+    /// That is worth knowing for a program that counts frames rather
+    /// than blocks, which is why it can be asked.
+    /// [`until_stopped`](Bela::until_stopped) reports it on the console
+    /// instead; this is for a program driving [`start`](Bela::start) and
+    /// [`stop`](Bela::stop) itself, which has no other way to find out.
+    #[must_use]
+    pub fn callback_faults_while_stopping(&self) -> u32 {
+        // Safety: the runtime is alive for as long as `self` is, and
+        // reading the counter is an atomic load.
+        unsafe { &*self.runtime }.faults_while_stopping()
+    }
+
     /// Whether a stop has been requested (stop button, IDE, or
     /// [`Bela::request_stop`]).
     #[must_use]
@@ -286,7 +345,9 @@ impl<T: BelaApplication> Bela<T> {
     /// Returns [`Error::Init`] or [`Error::Start`] when the audio
     /// system fails to initialise or start. What an [`Error::Init`]
     /// leaves behind is described on [`new`](Bela::new); it is fatal to
-    /// the process here too.
+    /// the process here too. Returns [`Error::CallbackFaults`] when the
+    /// run ended because a callback was refused, so `Ok(())` means the
+    /// run was stopped by someone asking it to.
     pub fn run(application: T, settings: &Settings) -> Result<(), Error> {
         Self::new(application, settings)?.until_stopped()
     }
@@ -298,8 +359,9 @@ impl<T: BelaApplication> Bela<T> {
     /// where they sit.
     ///
     /// # Errors
-    /// The errors of [`new_with_args`](Bela::new_with_args), plus
-    /// [`Error::Start`] when the audio system fails to start.
+    /// The errors of [`new_with_args`](Bela::new_with_args), plus the
+    /// [`Error::Start`] and [`Error::CallbackFaults`] of
+    /// [`run`](Bela::run).
     pub fn run_with_args<I, S>(application: T, settings: &Settings, args: I) -> Result<(), Error>
     where
         I: IntoIterator<Item = S>,
@@ -318,10 +380,12 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// ```no_run
     /// use bela::{Bela, Channel, Settings};
-    /// # use bela::{BelaApplication, Context};
+    /// # use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
     /// # struct App;
-    /// # unsafe impl BelaApplication for App {
-    /// #     fn render(&mut self, _context: &mut Context) {}
+    /// # impl BelaApplication for App {
+    /// #     type RenderState = ();
+    /// #     fn create_render_state(&mut self, _t: ThreadInfo, _c: &SetupContext) {}
+    /// #     fn render(&self, _s: &mut (), _c: &mut RenderContext) {}
     /// # }
     ///
     /// fn main() -> Result<(), bela::Error> {
@@ -335,7 +399,19 @@ impl<T: BelaApplication> Bela<T> {
     /// [`run`](Bela::run) does; see it for what they mean over ssh.
     ///
     /// # Errors
-    /// Returns [`Error::Start`] when the audio system fails to start.
+    /// Returns [`Error::Start`] when the audio system fails to start,
+    /// and [`Error::CallbackFaults`] when the run ended because a
+    /// callback was refused *while it was running* — a stop asked for
+    /// by the crate rather than by anyone else, which `Ok(())` would
+    /// otherwise hide.
+    ///
+    /// A callback refused during the shutdown itself is not that, and
+    /// does not fail this: libbela abandons the block it is in when a
+    /// stop arrives, and refusing a `render_post` that overlaps a
+    /// `render` still finishing is the guard doing its job on an
+    /// ordinary Ctrl-C. Those are reported on the console instead, and
+    /// mean the last block may be short. See
+    /// [`callback_faults`](Bela::callback_faults).
     pub fn until_stopped(mut self) -> Result<(), Error> {
         let handler = request_stop_on_signal as extern "C" fn(c_int);
         for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
@@ -346,7 +422,32 @@ impl<T: BelaApplication> Bela<T> {
             thread::sleep(Duration::from_millis(10));
         }
         self.stop();
-        Ok(())
+        // Read once audio has stopped, so that every render, render_pre
+        // and render_post of the run has been counted. The `cleanup`
+        // callback runs later, in the drop below, and so is not covered
+        // by either number — nothing here could report it, since the
+        // counters go with the runtime it is dropped along with. What
+        // it could be refused for is a claim it cannot take, a thread
+        // count that disagrees, or states that were never built; the
+        // render threads are joined by now and the other two were
+        // settled in `setup`, so none of them can happen on this path.
+        //
+        let while_stopping = self.callback_faults_while_stopping();
+        if while_stopping != 0 {
+            // Not a failure: this is libbela abandoning the block it
+            // was in when the stop arrived, and the guard declining to
+            // hand out references over the top of it. Said out loud all
+            // the same, because an application that counts frames will
+            // see the block go missing.
+            crate::rt_println!(
+                "bela: {while_stopping} callback(s) were refused while stopping, which is how a \
+                 block in flight is abandoned; the last block may be short"
+            );
+        }
+        match self.callback_faults() {
+            0 => Ok(()),
+            faults => Err(Error::CallbackFaults(faults)),
+        }
     }
 }
 
@@ -367,6 +468,6 @@ impl<T: BelaApplication> Drop for Bela<T> {
             unsafe { bela_sys::Bela_cleanupAudio() };
         });
         // The app is only freed once the callback can no longer run.
-        drop(unsafe { Box::from_raw(self.app) });
+        drop(unsafe { Box::from_raw(self.runtime) });
     }
 }

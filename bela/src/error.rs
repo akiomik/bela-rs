@@ -18,13 +18,22 @@ pub enum Error {
     Init(i32),
     /// `Bela_startAudio` failed with the contained return code.
     Start(i32),
-    /// The requested number of render threads cannot be served by
-    /// [`BelaApplication`](crate::BelaApplication).
+    /// The run ended with the contained number of callbacks refused
+    /// for breaking the protocol the render states rely on.
     ///
-    /// Bela calls `render` concurrently on every thread with the same
-    /// user data, which would mean several `&mut self` to one
-    /// application at once; see `docs/multithreaded-rendering.md`.
-    ThreadCountUnsupported(u32),
+    /// libbela made a callback somewhere the crate could not hand out
+    /// the references [`BelaApplication`](crate::BelaApplication)
+    /// promises — several `render` calls with the same thread number,
+    /// or a `render_post` arriving while one was still in flight, which
+    /// a stop requested mid-block can produce. Each such callback was
+    /// skipped and a stop requested, so the audio that was rendered is
+    /// sound and the run ended early rather than going wrong.
+    ///
+    /// Reported by [`Bela::until_stopped`](crate::Bela::until_stopped)
+    /// and the `run` methods built on it, so that a run which ended
+    /// this way is not mistaken for one that was asked to stop. See
+    /// [`Bela::callback_faults`](crate::Bela::callback_faults).
+    CallbackFaults(u32),
     /// An auxiliary task name contained a NUL byte.
     TaskName,
     /// `Bela_createAuxiliaryTask` failed, or the crate was built for a
@@ -102,10 +111,10 @@ impl fmt::Display for Error {
         match self {
             Self::Init(code) => write!(f, "Bela_initAudio failed with code {code}"),
             Self::Start(code) => write!(f, "Bela_startAudio failed with code {code}"),
-            Self::ThreadCountUnsupported(threads) => write!(
+            Self::CallbackFaults(faults) => write!(
                 f,
-                "thread_count is {threads}: BelaApplication::render would be called \
-                 concurrently on {threads} threads with &mut self"
+                "{faults} callback(s) were refused for breaking the protocol the render states \
+                 rely on, and the audio system was asked to stop"
             ),
             Self::TaskName => write!(f, "the auxiliary task name contains a NUL byte"),
             Self::TaskCreate => write!(f, "Bela_createAuxiliaryTask failed"),
