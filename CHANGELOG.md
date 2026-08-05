@@ -232,6 +232,16 @@ and this project adheres to
 
 ### Fixed
 
+- `cargo xtask bindgen` writes the file `cargo fmt` would write, so
+  rerunning it on unchanged headers now leaves no diff behind. bindgen
+  ran rustfmt itself, formatting for the newest edition the bindgen
+  release knows about (2021) rather than for the workspace edition
+  (2024). The two disagree about the indentation of a wrapped return
+  type, so the task and `cargo fmt --all` each rewrote one line of the
+  other's output, and a diff after the task said nothing about whether
+  the headers had moved. Formatting is now left to `cargo fmt`, which
+  is the one CI checks and reads the edition from `Cargo.toml`
+
 - `rt_print!` and `rt_println!` stop formatting as soon as the message
   fills the buffer, instead of running the formatting machinery to the
   end and discarding what no longer fits. Padding is written one
