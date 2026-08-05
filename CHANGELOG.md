@@ -33,9 +33,9 @@ and this project adheres to
   a new process gets a working audio system straight away.
   `Bela::new`, `Bela::run`, `BelaApplication::setup` and `Error::Init`
   now say all of this: `Error::Init` is a reason to exit, and a `setup`
-  callback returning `false` — the reachable way to reach it, since it
-  fails the initialisation after the hardware is up — is a way to end a
-  program rather than to try different settings.
+  callback returning `false` — the reachable way to get there, since it
+  fails the initialisation after the hardware is up — is for ending a
+  program rather than for trying different settings.
 
 ## [0.2.0] - 2026-08-05
 
