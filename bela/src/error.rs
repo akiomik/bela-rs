@@ -12,8 +12,9 @@ pub enum Error {
     /// `Bela_initAudio` failed with the contained return code.
     ///
     /// The initialisation it failed partway through is not undone, so
-    /// this is fatal to the process rather than to the one attempt; see
-    /// [`Bela::new`](crate::Bela::new).
+    /// this is fatal to the process rather than to the one attempt:
+    /// every later [`Bela::new`](crate::Bela::new) returns
+    /// [`AudioSystemPoisoned`](Self::AudioSystemPoisoned).
     Init(i32),
     /// `Bela_startAudio` failed with the contained return code.
     Start(i32),
@@ -53,6 +54,18 @@ pub enum Error {
     /// The C API is a process-wide singleton, so a second one would
     /// share — and reset — the state the first is using.
     AudioSystemExists,
+    /// An earlier `Bela_initAudio` in this process failed partway
+    /// through, and no audio system can be built after that.
+    ///
+    /// libbela is left believing the audio system is up and offers no
+    /// way to put it back: `Bela_cleanupAudio` segfaults on that path.
+    /// So this is refused rather than attempted — going ahead means a
+    /// segfault inside libbela, which is what the error replaces.
+    ///
+    /// Terminal for the process, and only for the process: the board is
+    /// untouched, so a new one gets a working audio system straight
+    /// away. See [`Bela::new`](crate::Bela::new).
+    AudioSystemPoisoned,
     /// An argument was not one of Bela's standard command-line options.
     ///
     /// Carries what `Bela_getopt_long` returned: `'?'` for an
@@ -115,6 +128,11 @@ impl fmt::Display for Error {
             Self::AudioSystemExists => write!(
                 f,
                 "a Bela audio system already exists in this process; the C API is a singleton"
+            ),
+            Self::AudioSystemPoisoned => write!(
+                f,
+                "an earlier Bela_initAudio failed in this process, leaving libbela with an audio \
+                 system it will not give back; start a new process"
             ),
             Self::CommandLine(code) if *code == UNRECOGNISED_OPTION => write!(
                 f,

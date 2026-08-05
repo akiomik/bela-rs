@@ -38,8 +38,10 @@ pub unsafe trait BelaApplication: Send {
     /// [`Error::Init`](crate::Error::Init), and does so after libbela
     /// has brought the audio hardware up — which, as that method
     /// documents, leaves the process unable to build another audio
-    /// system. So abort to end the program, not to try again with
-    /// different settings.
+    /// system: every later `Bela::new` fails with
+    /// [`Error::AudioSystemPoisoned`](crate::Error::AudioSystemPoisoned).
+    /// So abort to end the program, not to try again with different
+    /// settings.
     fn setup(&mut self, _context: &mut Context) -> bool {
         true
     }

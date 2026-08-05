@@ -27,6 +27,11 @@ use crate::task;
 /// [`Error::AudioSystemExists`] rather than reaching into globals the
 /// first one is using — from this thread or any other.
 ///
+/// One at a time, and in some processes none at all: once a
+/// `Bela_initAudio` has failed here, every later [`new`](Bela::new)
+/// fails with [`Error::AudioSystemPoisoned`], which that method
+/// explains.
+///
 /// Only available on the device target (`aarch64-unknown-linux-gnu`).
 pub struct Bela<T: BelaApplication> {
     // Owned; boxed so the address handed to libbela stays stable, kept
@@ -46,10 +51,12 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::AudioSystemExists`] when another audio system
-    /// is alive in this process, [`Error::Init`] when `Bela_initAudio`
-    /// fails, e.g. when the audio hardware is unavailable or already in
-    /// use, [`Error::ThreadCountUnsupported`] when more than one render
-    /// thread is requested, and [`Error::CpuMonitoringCycle`],
+    /// is alive in this process, [`Error::AudioSystemPoisoned`] when an
+    /// earlier initialisation in this process failed, [`Error::Init`]
+    /// when `Bela_initAudio` fails, e.g. when the audio hardware is
+    /// unavailable or already in use, [`Error::ThreadCountUnsupported`]
+    /// when more than one render thread is requested, and
+    /// [`Error::CpuMonitoringCycle`],
     /// [`Error::CpuMonitoringPeriodSize`] or [`Error::CpuMonitoring`]
     /// when [`Settings::cpu_monitoring`] asks for something that cannot
     /// be served.
@@ -67,12 +74,15 @@ impl<T: BelaApplication> Bela<T> {
     /// including in the order this method would have to make the call;
     /// see "Audio thread" in `docs/board-facts.md`.
     ///
-    /// The process-wide claim is released on the way out, so a second
-    /// `Bela::new` is allowed to run. It will not work: on a Bela Gem
-    /// it reports `Mcasp::start() called while already running`, fails
-    /// to allocate its pipes and then segfaults, in every run measured.
+    /// So the process-wide claim is released as unusable rather than
+    /// free, and every later `Bela::new` in this process fails with
+    /// [`Error::AudioSystemPoisoned`] without touching libbela. That
+    /// refusal is the whole of what this crate can do about it: going
+    /// ahead is not a worse-behaved audio system but a segfault, on a
+    /// Bela Gem reported as `Mcasp::start() called while already
+    /// running` in every run measured.
     ///
-    /// What is poisoned is this process, not the board. A new process
+    /// What is unusable is this process, not the board. A new process
     /// gets a working audio system straight away, with nothing to reset
     /// in between — so treat this error as a reason to exit, and leave
     /// retrying to whatever started the program.
@@ -136,7 +146,7 @@ impl<T: BelaApplication> Bela<T> {
         // globals — including, before `Bela_initAudio` is called at
         // all, the CPU monitoring counters an audio system that is
         // already running would be writing.
-        let claim = Claim::take()?;
+        let mut claim = Claim::take()?;
         // Checked before anything is allocated, so a cycle libbela
         // cannot take costs nothing to reject.
         let monitoring = settings
@@ -183,6 +193,12 @@ impl<T: BelaApplication> Bela<T> {
         if ret != 0 {
             // The audio system never took ownership of the callbacks.
             drop(unsafe { Box::from_raw(app) });
+            // Everything above this point can fail and leave libbela as
+            // it was; this cannot. `Bela_initAudio` got partway and
+            // there is no call that undoes it, so the claim is released
+            // as unusable rather than free and the next `new` is
+            // refused instead of segfaulting.
+            claim.poison();
             return Err(Error::Init(ret));
         }
         Ok(Self {

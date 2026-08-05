@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking: `Bela::new` refuses every attempt made after one of its own
+  has failed, returning the new `Error::AudioSystemPoisoned` instead of
+  trying. A `Bela_initAudio` that fails partway through leaves libbela
+  believing an audio system is up and offers no call that puts it back —
+  `Bela_cleanupAudio` segfaults on that path — so the second attempt
+  was never going to work, and on a board it segfaulted inside libbela
+  rather than returning anything. Where a program used to crash it now
+  gets an error, and a program that retried after `Error::Init` and
+  happened to survive will now be refused. Only the process is
+  affected: the board is untouched, so a new process gets a working
+  audio system straight away. `Error::Init` is therefore a reason to
+  exit, and `BelaApplication::setup` returning `false` is a way to end
+  a program rather than to try different settings.
+
 ### Added
 
 - `examples/init_failure`, a hardware probe for what a failed
