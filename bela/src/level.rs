@@ -28,6 +28,16 @@
 //! changes what `Bela_startAudio` does and so cannot be expressed as a
 //! call before it.
 //!
+//! # What a level may be
+//!
+//! Any finite number of decibels up to [`MAX_DECIBELS`] in magnitude.
+//! The codec clamps what it cannot do — Bela's own range for each knob
+//! is on the method — but a value libbela could not convert into
+//! register values at all is refused here rather than passed on: the
+//! conversion is a C cast to `int`, which is undefined for a NaN or an
+//! out-of-range float, and every clamp on the C side is a comparison a
+//! NaN slips through.
+//!
 //! # Not real-time safe
 //!
 //! Each call talks to the codec over I²C, which makes no promises about
@@ -58,10 +68,47 @@ use core::ffi::c_int;
 
 #[cfg(bela_device)]
 use crate::application::BelaApplication;
-#[cfg(bela_device)]
 use crate::error::Error;
 #[cfg(bela_device)]
 use crate::system::Bela;
+
+/// Largest magnitude, in decibels, a level or gain may have.
+///
+/// Not a codec limit — every codec clamps long before this, and
+/// `docs/board-facts.md` records where. It is the point past which
+/// libbela cannot convert the value at all: it turns decibels into
+/// register values with C casts of `floorf(decibels * 2 + 0.5)` and
+/// `decibels * 2` to `int`, and converting a float that does not fit in
+/// an `int` — or is not a number at all — is undefined behaviour in
+/// C++. So [`Bela::set_line_out_level`](crate::Bela::set_line_out_level)
+/// and its siblings refuse those values instead of passing them on;
+/// see [`Error::Decibels`](crate::Error::Decibels).
+pub const MAX_DECIBELS: f32 = 1e9;
+
+/// Checks that libbela can convert `decibels` into register values.
+///
+/// The clamping each codec does is comparisons against its own range,
+/// which a NaN fails on the way in and on the way out, so it reaches
+/// the cast like any other value. Nothing downstream can defend
+/// against that; this is where it has to happen.
+///
+/// # Errors
+/// Returns [`Error::Decibels`] for a value that is not finite, or whose
+/// magnitude is above [`MAX_DECIBELS`].
+#[cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only the device-gated audio system sets levels; still unit-tested on the host"
+    )
+)]
+fn check_decibels(decibels: f32) -> Result<(), Error> {
+    if decibels.is_finite() && decibels.abs() <= MAX_DECIBELS {
+        Ok(())
+    } else {
+        Err(Error::Decibels)
+    }
+}
 
 /// Which channel a level or gain applies to.
 ///
@@ -137,8 +184,11 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::LineOutLevel`] when the codec refuses the call,
-    /// which on a Bela Gem Stereo is what a channel above 1 gets.
+    /// which on a Bela Gem Stereo is what a channel above 1 gets, and
+    /// [`Error::Decibels`] for a level libbela could not convert — see
+    /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
     pub fn set_line_out_level(&mut self, channel: Channel, decibels: f32) -> Result<(), Error> {
+        check_decibels(decibels)?;
         // Safety: an audio system exists — this needs the handle that
         // owns it — and libbela's own settings path calls this the same
         // way, from the thread that brought the audio system up.
@@ -160,8 +210,11 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::HeadphoneLevel`] when the codec refuses the
-    /// call, which on a Bela Gem Stereo is what a channel above 1 gets.
+    /// call, which on a Bela Gem Stereo is what a channel above 1 gets,
+    /// and [`Error::Decibels`] for a level libbela could not convert —
+    /// see [`MAX_DECIBELS`](crate::MAX_DECIBELS).
     pub fn set_headphone_level(&mut self, channel: Channel, decibels: f32) -> Result<(), Error> {
+        check_decibels(decibels)?;
         // Safety: as for `set_line_out_level`.
         let ret = unsafe { bela_sys::Bela_setHpLevel(channel.to_c_int(), decibels) };
         if ret == 0 {
@@ -184,9 +237,12 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # Errors
     /// Returns [`Error::AudioInputGain`] when the codec refuses the
-    /// call. A Bela Gem Stereo does not: a channel it does not have is
-    /// accepted and ignored.
+    /// call — a Bela Gem Stereo does not: a channel it does not have is
+    /// accepted and ignored — and [`Error::Decibels`] for a gain
+    /// libbela could not convert, see
+    /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
     pub fn set_audio_input_gain(&mut self, channel: Channel, decibels: f32) -> Result<(), Error> {
+        check_decibels(decibels)?;
         // Safety: as for `set_line_out_level`.
         let ret = unsafe { bela_sys::Bela_setAudioInputGain(channel.to_c_int(), decibels) };
         if ret == 0 {
@@ -238,6 +294,50 @@ mod tests {
         assert_eq!(
             Channel::One(c_int::MAX.unsigned_abs() as usize).to_c_int(),
             c_int::MAX
+        );
+    }
+
+    #[test]
+    fn ordinary_levels_are_accepted() {
+        for decibels in [0.0, -6.0, 16.0, -63.5, 59.5, -200.0, MAX_DECIBELS] {
+            assert_eq!(check_decibels(decibels), Ok(()), "{decibels} dB");
+        }
+        // The codec clamps its own range; refusing here would be this
+        // crate inventing a limit libbela does not have.
+        assert_eq!(check_decibels(-MAX_DECIBELS), Ok(()));
+    }
+
+    #[test]
+    fn a_level_libbela_could_not_convert_is_refused() {
+        // Each of these reaches a C cast to `int` — the clamps on the
+        // way are comparisons a NaN fails — and that cast is undefined
+        // behaviour for them, so they must not get that far.
+        for decibels in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            MAX_DECIBELS * 2.0,
+            -MAX_DECIBELS * 2.0,
+            f32::MIN,
+            f32::MAX,
+        ] {
+            assert_eq!(check_decibels(decibels), Err(Error::Decibels), "{decibels}");
+        }
+    }
+
+    #[test]
+    fn the_accepted_levels_survive_belas_conversion() {
+        // What libbela does with a level: `floorf(dB * 2 + 0.5)` cast
+        // to `int`. The limit is only worth anything if the largest
+        // accepted value still fits there.
+        // In f64, which holds these exactly, so the check is about the
+        // limit rather than about its own rounding.
+        let half_dbs = f64::from(MAX_DECIBELS) * 2.0;
+        let converted = (half_dbs + 0.5).floor();
+
+        assert!(
+            converted <= f64::from(c_int::MAX),
+            "{converted} does not fit in the C int libbela casts to"
         );
     }
 

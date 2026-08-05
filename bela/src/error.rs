@@ -70,6 +70,14 @@ pub enum Error {
     AudioInputGain(i32),
     /// `Bela_muteSpeakers` failed with the contained return code.
     MuteSpeakers(i32),
+    /// A level or gain was not a number of decibels libbela can convert
+    /// into register values: not finite, or larger in magnitude than
+    /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
+    ///
+    /// The conversion on the C side is a cast to `int`, which is
+    /// undefined behaviour for those values, so they are refused before
+    /// the call rather than passed on.
+    Decibels,
 }
 
 impl fmt::Display for Error {
@@ -123,6 +131,12 @@ impl fmt::Display for Error {
                 write!(f, "Bela_setAudioInputGain failed with code {code}")
             }
             Self::MuteSpeakers(code) => write!(f, "Bela_muteSpeakers failed with code {code}"),
+            Self::Decibels => write!(
+                f,
+                "a level must be a finite number of decibels of at most {max} in magnitude, \
+                 which is what libbela can convert into register values",
+                max = crate::MAX_DECIBELS
+            ),
         }
     }
 }

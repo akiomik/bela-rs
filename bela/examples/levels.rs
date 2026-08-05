@@ -112,9 +112,17 @@ fn main() -> Result<(), bela::Error> {
         Ok(()) => "accepted".to_owned(),
         Err(error) => format!("other-error({error})"),
     };
+    // A level libbela cannot convert into register values: its cast to
+    // `int` would be undefined behaviour, and each codec's clamp is a
+    // comparison a NaN slips through, so this has to stop here.
+    let not_a_number = match bela.set_line_out_level(Channel::All, f32::NAN) {
+        Err(bela::Error::Decibels) => "refused".to_owned(),
+        Ok(()) => "accepted".to_owned(),
+        Err(error) => format!("other-error({error})"),
+    };
     println!(
         "levels: line-out={line_out} headphone={headphone} input-gain={input_gain} \
-         unmute={unmuted} missing-channel={missing}"
+         unmute={unmuted} missing-channel={missing} not-a-number={not_a_number}"
     );
 
     // `Bela::run` without the construction, so the levels above could

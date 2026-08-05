@@ -320,7 +320,7 @@ esac
 # for a channel the board has succeeded, and one for a channel it does
 # not have was refused rather than silently ignored.
 log="$LOG_DIR/levels.log"
-# levels: line-out=ok headphone=ok input-gain=ok unmute=ok missing-channel=refused
+# levels: line-out=ok ... missing-channel=refused not-a-number=refused
 summary="$(awk '/^levels: / { print; exit }' "$log" 2>/dev/null || true)"
 if [ -z "$summary" ]; then
   fail "levels: no summary line"
@@ -328,6 +328,7 @@ else
   # The summary is one line, so this answers "did any call fail".
   any_failed="$(echo "$summary" | grep -c 'failed(' || true)"
   missing="$(echo "$summary" | sed -n 's/.*missing-channel=\([a-z-]*\).*/\1/p')"
+  not_a_number="$(echo "$summary" | sed -n 's/.*not-a-number=\([a-z-]*\).*/\1/p')"
 
   if [ "$any_failed" = 0 ]; then
     pass "levels: the line out, headphone, input gain and unmute calls all succeeded"
@@ -339,6 +340,15 @@ else
     pass "levels: a channel the codec does not have was refused"
   else
     fail "levels: a channel the codec does not have was ${missing:-not reported}"
+  fi
+
+  # The guard has to sit in front of the FFI call in the shipped
+  # binary, not only in the host tests: libbela casts a level to `int`,
+  # which is undefined for a NaN, and no clamp on the C side catches it.
+  if [ "$not_a_number" = refused ]; then
+    pass "levels: a level libbela could not convert was refused before the call"
+  else
+    fail "levels: a level libbela could not convert was ${not_a_number:-not reported}"
   fi
 fi
 

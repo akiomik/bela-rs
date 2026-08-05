@@ -32,8 +32,15 @@ and this project adheres to
   `Bela::new` and `Bela::start` reaches the hardware in the same state
   and at the same moment, while a settings-time copy would only add
   storage and a second way to say it. Being on the handle also keeps
-  them away from `render`, where an I²C write has no place. See
-  `examples/levels.rs`
+  them away from `render`, where an I²C write has no place.
+  A level has to be a finite number of decibels of at most
+  `MAX_DECIBELS` in magnitude, or the call fails with
+  `Error::Decibels` before reaching libbela: libbela converts decibels
+  into register values with a C cast to `int`, which is undefined
+  behaviour for a NaN or a value that does not fit, and every clamp on
+  the C side is a comparison a NaN slips through. That limit is far
+  outside any codec's range — what the codec cannot do it clamps, as
+  before. See `examples/levels.rs`
 
 - `Bela::until_stopped`, which was the second half of `Bela::run` and
   is now public: it starts the audio system, blocks until a stop is

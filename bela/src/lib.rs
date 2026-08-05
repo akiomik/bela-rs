@@ -83,7 +83,7 @@ pub use cmdline::print_usage;
 pub use context::{Context, PinMode};
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
-pub use level::Channel;
+pub use level::{Channel, MAX_DECIBELS};
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
 #[cfg(bela_device)]
