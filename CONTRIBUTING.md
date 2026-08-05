@@ -27,6 +27,17 @@ the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 Add entries to the `[Unreleased]` section in the same commit as the
 change itself.
 
+Notable means notable to someone using the published crates: what
+`bela` and `bela-sys` offer, how they behave, and the examples that
+ship with them. CI, `xtask`, `scripts/` and `docs/` are the project's
+own machinery — however welcome a change to them is, the commit and
+the pull request are where it is recorded, not the changelog.
+
+Keep a Changelog has no category for breaking changes, so mark one by
+opening its entry with `Breaking:`. Which heading it goes under is a
+separate question: `Removed` when a feature is gone, `Changed` when
+something that still exists behaves incompatibly.
+
 ## Releases
 
 See [docs/release.md](docs/release.md). The two crates are versioned
