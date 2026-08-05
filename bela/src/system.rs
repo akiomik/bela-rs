@@ -262,8 +262,34 @@ impl<T: BelaApplication> Bela<T> {
     }
 
     /// Starts the audio system, blocks until a stop is requested, then
-    /// shuts down.
-    fn until_stopped(mut self) -> Result<(), Error> {
+    /// shuts down — [`run`](Bela::run) without the construction.
+    ///
+    /// This is the way to run an audio system that had something said
+    /// to it between [`new`](Bela::new) and the run loop, rather than
+    /// reimplementing the loop and its signal handling to get that
+    /// window. Setting a level is the case it exists for:
+    ///
+    /// ```no_run
+    /// use bela::{Bela, Channel, Settings};
+    /// # use bela::{BelaApplication, Context};
+    /// # struct App;
+    /// # unsafe impl BelaApplication for App {
+    /// #     fn render(&mut self, _context: &mut Context) {}
+    /// # }
+    ///
+    /// fn main() -> Result<(), bela::Error> {
+    ///     let mut bela = Bela::new(App, &Settings::new())?;
+    ///     bela.set_audio_input_gain(Channel::All, 30.0)?;
+    ///     bela.until_stopped()
+    /// }
+    /// ```
+    ///
+    /// Installs the same SIGINT/SIGTERM/SIGHUP handlers
+    /// [`run`](Bela::run) does; see it for what they mean over ssh.
+    ///
+    /// # Errors
+    /// Returns [`Error::Start`] when the audio system fails to start.
+    pub fn until_stopped(mut self) -> Result<(), Error> {
         let handler = request_stop_on_signal as extern "C" fn(c_int);
         for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
             unsafe { libc::signal(signal, handler as libc::sighandler_t) };

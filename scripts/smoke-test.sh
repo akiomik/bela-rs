@@ -24,12 +24,12 @@ TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
 # `print` carries the numeric checks, `task_lifecycle` the auxiliary
-# task ones, `cpu` the CPU monitoring ones and `command_line` the
-# command-line option ones; the others only have to start, keep running
-# and stop cleanly. `monitoring_rules` is not here: it answers one
-# question per run and exits, so it is driven separately below rather
-# than run for the duration.
-EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line"
+# task ones, `cpu` the CPU monitoring ones, `command_line` the
+# command-line option ones and `levels` the codec level ones; the others
+# only have to start, keep running and stop cleanly. `monitoring_rules`
+# is not here: it answers one question per run and exits, so it is
+# driven separately below rather than run for the duration.
+EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line levels"
 # How much of the run may be spent starting audio up rather than
 # rendering (measured at about 0.6 s; rounded up for headroom).
 STARTUP_ALLOWANCE_SECONDS=1.5
@@ -313,6 +313,34 @@ case "$guard" in
 "") fail "cpu: no fifo-guard line" ;;
 *) fail "cpu: monitoring was $guard at a period size that moves render off the measured thread" ;;
 esac
+
+# The codec's levels and gain, which only the board can accept or
+# refuse: off-device there is no codec to talk to. What the levels do to
+# the sound needs an ear, so the checks are on the answers — every call
+# for a channel the board has succeeded, and one for a channel it does
+# not have was refused rather than silently ignored.
+log="$LOG_DIR/levels.log"
+# levels: line-out=ok headphone=ok input-gain=ok unmute=ok missing-channel=refused
+summary="$(awk '/^levels: / { print; exit }' "$log" 2>/dev/null || true)"
+if [ -z "$summary" ]; then
+  fail "levels: no summary line"
+else
+  # The summary is one line, so this answers "did any call fail".
+  any_failed="$(echo "$summary" | grep -c 'failed(' || true)"
+  missing="$(echo "$summary" | sed -n 's/.*missing-channel=\([a-z-]*\).*/\1/p')"
+
+  if [ "$any_failed" = 0 ]; then
+    pass "levels: the line out, headphone, input gain and unmute calls all succeeded"
+  else
+    fail "levels: a call the board should accept failed ($summary)"
+  fi
+
+  if [ "$missing" = refused ]; then
+    pass "levels: a channel the codec does not have was refused"
+  else
+    fail "levels: a channel the codec does not have was ${missing:-not reported}"
+  fi
+fi
 
 # Bela's standard command-line options. Only the board can answer
 # whether they arrived: what `setup` reports is the configuration

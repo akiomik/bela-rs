@@ -60,6 +60,16 @@ pub enum Error {
     /// A command-line argument contained a NUL byte, which a C string
     /// cannot carry.
     CommandLineNul,
+    /// `Bela_setLineOutLevel` failed with the contained return code,
+    /// e.g. for a channel the codec does not have.
+    LineOutLevel(i32),
+    /// `Bela_setHpLevel` failed with the contained return code, e.g.
+    /// for a channel the codec does not have.
+    HeadphoneLevel(i32),
+    /// `Bela_setAudioInputGain` failed with the contained return code.
+    AudioInputGain(i32),
+    /// `Bela_muteSpeakers` failed with the contained return code.
+    MuteSpeakers(i32),
 }
 
 impl fmt::Display for Error {
@@ -105,6 +115,14 @@ impl fmt::Display for Error {
             Self::CommandLineNul => {
                 write!(f, "a command-line argument contains a NUL byte")
             }
+            Self::LineOutLevel(code) => {
+                write!(f, "Bela_setLineOutLevel failed with code {code}")
+            }
+            Self::HeadphoneLevel(code) => write!(f, "Bela_setHpLevel failed with code {code}"),
+            Self::AudioInputGain(code) => {
+                write!(f, "Bela_setAudioInputGain failed with code {code}")
+            }
+            Self::MuteSpeakers(code) => write!(f, "Bela_muteSpeakers failed with code {code}"),
         }
     }
 }

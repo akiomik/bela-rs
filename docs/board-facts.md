@@ -108,6 +108,55 @@ Captured from a verbose on-board build:
   `examples/task_lifecycle.rs` does) are reliable, but anything that
   needs several is better split across processes.
 
+## Codec levels and gain
+
+Measured with a C probe against the shipped `libbela` (the level
+functions, `Bela_defaultSettings`), on a Bela Gem Stereo.
+
+- **Defaults** (`Bela_defaultSettings`): `lineOutGains` is one entry,
+  all channels at 0 dB; `headphoneGains` all channels at -6 dB;
+  `audioInputGains` all channels at 16 dB; `adcGains` is empty. The
+  deprecated scalars (`dacLevel`, `adcLevel`, `headphoneLevel`,
+  `pgaGain`) are all `BELA_INVALID_GAIN` (999999), which is how libbela
+  spells "not set" — it only applies them when they are not that.
+  `beginMuted` is 0.
+- **The gain arrays are the same calls, made earlier.**
+  `Bela_initAudio` walks each array and calls
+  `Bela_setAudioInputGain` / `Bela_setHpLevel` / `Bela_setLineOutLevel`
+  per entry, after `initCodec()` and before the audio thread exists.
+  The codec stores what it is told and only writes its registers once
+  it is running, so a call between `Bela::new` and `Bela::start`
+  reaches the hardware in the same state and at the same moment. This
+  is why `bela` wraps the level API on the `Bela` handle rather than in
+  `Settings`.
+- **Only channels 0 and 1 exist.** `Bela_setLineOutLevel` and
+  `Bela_setHpLevel` return 1 for any channel above 1 (checked at 2, 9,
+  10 and 20), before and while audio runs. `Bela_setAudioInputGain`
+  returns 0 for the same channels and does nothing with them: the
+  TLV320AIC3106 path writes no register unless the channel is 0, 1 or
+  negative. A negative channel means "all" throughout.
+- **Levels are clamped, not validated.** `-1, +18 dB` and
+  `-1, -200 dB` on the line out and `-1, 999 dB` on the input gain all
+  return 0. The codec clamps: line out and headphone boost stops at
+  +9 dB and attenuation runs in 0.5 dB steps to -63.5 dB, and an input
+  gain at or below -96 dB is taken as a mute. libbela's own comment in
+  `I2c_Codec::writeRoutingVolumeControlReg` notes that its conversion
+  from decibels to register values is only approximate below -18 dB, so
+  an attenuation set there is not quite the one that arrives.
+- **There is no speaker amplifier mute pin.** `kAmplifierMutePin` is
+  the default-constructed (invalid) `Gpio::Pin` for `IS_AM62_PB2`, so
+  `Bela_defaultSettings` reports `ampMutePin = -1`, `Bela_initAudio`
+  never opens the pin, and `Bela_muteSpeakers` returns 0 without doing
+  anything — before, during and after a run. `beginMuted` therefore has
+  no effect either.
+- **Before and after an audio system.** With no audio system,
+  `gAudioCodec` is null and all three level functions return -1
+  (`Bela_muteSpeakers` still returns 0). After `Bela_cleanupAudio` the
+  codec object outlives the audio system: the line out and headphone
+  calls still report success, and the input gain reports failure
+  because its I²C write no longer goes through. The safe API keeps both
+  windows out of reach by hanging the calls off the `Bela` handle.
+
 ## Operations
 
 - USB gadget network: the board is `bela.local` (host-side interface
