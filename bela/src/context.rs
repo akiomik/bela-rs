@@ -20,6 +20,7 @@
 //! the outputs would be the aliasing the design exists to avoid. See
 //! `docs/multithreaded-rendering.md`.
 
+use core::fmt;
 use core::ops::Range;
 use core::slice;
 
@@ -220,6 +221,45 @@ macro_rules! metadata_accessors {
     };
 }
 
+/// Generates the `Debug` every phase has, followed by whatever a
+/// phase adds of its own — written after the type in brackets, as
+/// accessor names to call.
+///
+/// The shared part is the metadata accessors and nothing else. The
+/// buffers are deliberately absent: a block is thousands of samples,
+/// and printing them from a callback would be a real-time hazard
+/// dressed as a debug line. `BelaContext` has a `Debug` of its own,
+/// which prints the C field names and the buffer pointers rather than
+/// this; `as_sys` is the way to it.
+macro_rules! metadata_debug {
+    ($($context:ident $([$($extra:ident),+ $(,)?])?),+ $(,)?) => {
+        $(
+            impl fmt::Debug for $context {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.debug_struct(stringify!($context))
+                        .field("audio_frames", &self.audio_frames())
+                        .field("audio_in_channels", &self.audio_in_channels())
+                        .field("audio_out_channels", &self.audio_out_channels())
+                        .field("audio_sample_rate", &self.audio_sample_rate())
+                        .field("analog_frames", &self.analog_frames())
+                        .field("analog_in_channels", &self.analog_in_channels())
+                        .field("analog_out_channels", &self.analog_out_channels())
+                        .field("analog_sample_rate", &self.analog_sample_rate())
+                        .field("digital_frames", &self.digital_frames())
+                        .field("digital_channels", &self.digital_channels())
+                        .field("digital_sample_rate", &self.digital_sample_rate())
+                        .field("audio_frames_elapsed", &self.audio_frames_elapsed())
+                        .field("underrun_count", &self.underrun_count())
+                        .field("this_thread", &self.this_thread())
+                        .field("thread_count", &self.thread_count())
+                        $($(.field(stringify!($extra), &self.$extra()))+)?
+                        .finish_non_exhaustive()
+                }
+            }
+        )+
+    };
+}
+
 /// What [`setup`](crate::BelaApplication::setup) and
 /// [`create_render_state`](crate::BelaApplication::create_render_state)
 /// see: the audio configuration, before any audio has been rendered.
@@ -374,6 +414,17 @@ pub struct BlockContext(BelaContext);
 pub struct RenderContext(BelaContext);
 
 metadata_accessors!(SetupContext, CleanupContext, BlockContext, RenderContext);
+
+// Only `RenderContext` has anything to add: the three ranges are what
+// separates its view of a block from `BlockContext`'s, so they are the
+// first thing worth knowing when a `{:?}` is printed from a `render`
+// that is not writing where it expected to.
+metadata_debug!(
+    SetupContext,
+    CleanupContext,
+    BlockContext,
+    RenderContext[audio_frame_range, analog_frame_range, digital_frame_range],
+);
 
 /// Generates the `from_mut_ptr` constructor each context needs, since
 /// the safety contract is the same for all of them.
@@ -1205,6 +1256,10 @@ pub(crate) mod tests {
             unsafe { SetupContext::from_mut_ptr(&raw mut self.context) }
         }
 
+        pub(crate) fn cleanup(&mut self) -> &mut CleanupContext {
+            unsafe { CleanupContext::from_mut_ptr(&raw mut self.context) }
+        }
+
         /// The render context thread `thread` would see, with the
         /// thread number written into the context the way libbela's
         /// mirrored copies carry it.
@@ -1585,5 +1640,64 @@ pub(crate) mod tests {
 
         assert_eq!(context.audio_read(0, 0), 0.0);
         assert_eq!(context.analog_read(0, 0), 0.0);
+    }
+
+    #[test]
+    fn a_context_debugs_as_the_configuration_it_describes() {
+        let mut fixture = Fixture::new();
+        let printed = format!("{:?}", fixture.block());
+
+        assert!(
+            printed.starts_with("BlockContext {"),
+            "should name the phase it is: {printed}"
+        );
+        for field in [
+            "audio_frames: 4",
+            "audio_out_channels: 4",
+            "audio_sample_rate: 44100.0",
+            "analog_out_channels: 2",
+            "digital_channels: 16",
+            "audio_frames_elapsed: 128",
+            "thread_count: 1",
+        ] {
+            assert!(printed.contains(field), "missing {field} in {printed}");
+        }
+        // The buffers are the one thing that must not be in there: a
+        // block is thousands of samples, and this can be reached from
+        // a callback.
+        assert!(
+            !printed.contains("audio_out:") && !printed.contains("audioOut"),
+            "should not print the buffers: {printed}"
+        );
+    }
+
+    #[test]
+    fn each_phase_debugs_under_its_own_name() {
+        let mut fixture = Fixture::new();
+
+        assert!(format!("{:?}", fixture.setup()).starts_with("SetupContext {"));
+        assert!(format!("{:?}", fixture.cleanup()).starts_with("CleanupContext {"));
+        assert!(format!("{:?}", fixture.render(0)).starts_with("RenderContext {"));
+    }
+
+    #[test]
+    fn a_render_context_debugs_the_ranges_that_are_its_own() {
+        // What separates this phase from `BlockContext` is which
+        // frames it may write, so a `{:?}` printed from a `render`
+        // writing in the wrong place has to show them.
+        let mut fixture = Fixture::with_threads(2);
+        let printed = format!("{:?}", fixture.render(1));
+
+        assert!(
+            printed.contains("audio_frame_range: 2..4"),
+            "the second of two threads writes the second half: {printed}"
+        );
+        for field in ["analog_frame_range: 2..4", "digital_frame_range: 2..4"] {
+            assert!(printed.contains(field), "missing {field} in {printed}");
+        }
+        assert!(printed.contains("this_thread: 1"));
+
+        // The phases that have no partition do not grow the fields.
+        assert!(!format!("{:?}", fixture.block()).contains("audio_frame_range"));
     }
 }

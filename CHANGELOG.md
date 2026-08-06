@@ -44,6 +44,16 @@ and this project adheres to
   what `Bela_defaultSettings` says before any audio system exists.
   Nothing is wired to the board for it: it asks what shape the block
   is, which is what the accessors on the context types index against.
+- `Debug` for `Bela` and for the four context types, which were the
+  only public types without it. `Bela` prints whether audio is started
+  and both callback fault counts, and no application type has to be
+  `Debug` for it — nothing of the application is printed. A context
+  prints the audio configuration its accessors report and not the
+  buffers: a block is thousands of samples, and a context can be
+  reached from a callback. `RenderContext` adds the three frame ranges
+  it may write, which are what separate it from `BlockContext` and the
+  first thing worth seeing from a `render` writing somewhere it did
+  not mean to.
 
 ### Fixed
 

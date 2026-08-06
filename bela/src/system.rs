@@ -1,4 +1,5 @@
 use core::ffi::c_int;
+use core::fmt;
 use core::marker::PhantomData;
 use core::time::Duration;
 use std::ffi::OsStr;
@@ -448,6 +449,27 @@ impl<T: BelaApplication> Bela<T> {
             0 => Ok(()),
             faults => Err(Error::CallbackFaults(faults)),
         }
+    }
+}
+
+/// What can be said about an audio system without disturbing it:
+/// whether it is running, and the two callback fault counts.
+///
+/// Written by hand rather than derived so that an application type
+/// does not have to be [`Debug`] for the handle that owns it to be —
+/// nothing of the application is printed. The rest of the state is the
+/// pointer to the runtime and the process-wide claim, neither of which
+/// says anything a reader of a debug line could use.
+impl<T: BelaApplication> fmt::Debug for Bela<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bela")
+            .field("started", &self.started)
+            .field("callback_faults", &self.callback_faults())
+            .field(
+                "callback_faults_while_stopping",
+                &self.callback_faults_while_stopping(),
+            )
+            .finish_non_exhaustive()
     }
 }
 
