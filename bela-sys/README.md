@@ -70,13 +70,38 @@ The sysroot is the one synced from the board (see
 [docs/cross-compile.md](../docs/cross-compile.md)); bindgen needs it
 for the libc headers `Bela.h` includes.
 
+## The MIDI shim
+
+`shim/midi.h` and `shim/midi.cpp` are a C surface over Bela's `Midi`
+class, which is C++ and lives in `libbelaextra`. They are the one part
+of this crate that is neither generated nor a declaration of Bela's own
+C API: Bela ships a partial C surface in `libraries/Midi/Midi_c.h`, and
+the shim is that file written again with output, port listing, and
+error reporting that distinguishes a port that opened from one that did
+not. [`docs/midi.md`](../docs/midi.md) records why, and what the class
+does on the audio thread.
+
+`build.rs` compiles it with the `cc` crate when the sysroot carries
+Bela's `libraries/Midi` sources, and skips it — with a warning — when
+it does not, so that a check without a sysroot still works. The
+compiler comes from `BELA_CXX`, or from `BELA_CC` when that ends in
+`gcc`; see [docs/cross-compile.md](../docs/cross-compile.md).
+
+The class is LGPL 3.0, like the vendored headers; the shim reaches it
+by linking `libbelaextra.so` dynamically.
+
 ## Linking
 
 `build.rs` emits the link flags for `libbela` on device targets:
 the library search paths from `docs/board-facts.md` (prefixed with
-`BELA_SYSROOT` when cross-compiling) and `-lbela` plus the C++ runtime
-and transitive dependencies (`seasocks`, `evl`, `stdc++`) that Rust
-does not link on its own.
+`BELA_SYSROOT` when cross-compiling) and `-lbelaextra -lbela` plus the
+C++ runtime and transitive dependencies (`seasocks`, `evl`, `stdc++`)
+that Rust does not link on its own.
+
+The order of those two matters: `libbelaextra.so` needs symbols from
+`libbela.so` without naming it in its own `DT_NEEDED`, and rustc links
+with `--as-needed`, which drops a `libbela` that appears before the
+library needing it.
 
 On non-device targets it emits nothing, so host builds and `cargo
 check`/`clippy` for the target work without a sysroot.

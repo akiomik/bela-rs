@@ -1,6 +1,7 @@
-//! Emits the `libbela` link flags for device targets.
+//! Emits the `libbela` link flags for device targets, and compiles the
+//! MIDI shim when the sysroot carries what it is written against.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 // Library locations captured on the board; see docs/board-facts.md.
@@ -15,11 +16,48 @@ const LIB_DIRS: &[&str] = &[
 // seasocks web server. Rust does not link a C++ runtime by itself, and
 // the transitive dependencies are not resolved automatically when
 // cross-linking, so name them explicitly.
-const LIBS: &[&str] = &["bela", "seasocks", "evl", "stdc++"];
+//
+// `libbelaextra.so` holds the higher-level classes, which is where
+// `Midi` is; its own dependencies (`libasound.so.2`, `libNE10.so.10`)
+// resolve through the search paths above.
+//
+// It comes before `bela` because it needs it and does not say so:
+// `readelf -d libbelaextra.so` lists no `libbela.so`, while its
+// `RtThread`, `SchedulableTask` and `IoUtils` symbols are defined
+// there. rustc links with `--as-needed`, so a `libbela` named earlier
+// than the library that needs it is dropped as unused and then the
+// link fails on those symbols.
+const LIBS: &[&str] = &["belaextra", "bela", "seasocks", "evl", "stdc++"];
+
+// The C surface this crate compiles over Bela's `Midi` class. See
+// shim/midi.h for what it exports and docs/midi.md for why.
+const SHIM_SOURCES: &[&str] = &["shim/midi.cpp", "shim/midi.h"];
+
+// What the shim includes, relative to the sysroot. The first is where
+// `Bela.h` and the real-time headers are; the second is what makes
+// `<libraries/Midi/Midi.h>` resolve, the same way the board's own
+// Makefile puts `/root/Bela` on the include path.
+const SHIM_INCLUDE_DIRS: &[&str] = &["/root/Bela/include", "/root/Bela"];
+
+// The header that says whether a sysroot is one the shim can be built
+// against. `scripts/sync-sysroot.sh` has carried it since the commit
+// that added `/root/Bela/libraries`; sysroots synced before that have
+// `include` and not this.
+const SHIM_PROBE: &str = "/root/Bela/libraries/Midi/Midi.h";
+
+// The C++ compiler assumed when nothing names one: the macOS tap's,
+// matching the default in scripts/aarch64-bela-linker.sh.
+const DEFAULT_CXX: &str = "aarch64-unknown-linux-gnu-g++";
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    for source in SHIM_SOURCES {
+        println!("cargo::rerun-if-changed={source}");
+    }
     println!("cargo::rerun-if-env-changed=BELA_SYSROOT");
+    // Named for the same reason as BELA_CC below: it chooses a
+    // compiler, and changing it has to rebuild what that compiler made.
+    println!("cargo::rerun-if-env-changed=BELA_CXX");
     // Nothing here reads BELA_CC — scripts/aarch64-bela-linker.sh
     // does, and cargo cannot see into a linker it was handed as a path.
     // Declaring it makes changing the compiler rebuild this crate, and
@@ -43,9 +81,96 @@ fn main() {
     if let Some(dir) = gcc_lib_dir(&sysroot) {
         println!("cargo::rustc-link-search=native={}", dir.display());
     }
+    // Ahead of the libraries below on purpose: the shim is a static
+    // archive calling into `libbelaextra`, and a static archive has to
+    // reach the linker before whatever resolves it.
+    build_shim(&sysroot);
     for lib in LIBS {
         println!("cargo::rustc-link-lib=dylib={lib}");
     }
+}
+
+// Compiles the MIDI shim, when the sysroot carries the sources it is
+// written against.
+//
+// Skipping is the right answer rather than an error, because a build
+// without a sysroot is a normal thing to run: `cargo check` and
+// `cargo clippy` for the device target never link, and that is what CI
+// does, having no board to sync one from. A build that does link
+// without a sysroot fails either way — at `-lbela` if not here.
+fn build_shim(sysroot: &str) {
+    if !Path::new(&format!("{sysroot}{SHIM_PROBE}")).exists() {
+        let where_ = if sysroot.is_empty() {
+            "BELA_SYSROOT is unset and this is not a board".to_owned()
+        } else {
+            format!("{sysroot}{SHIM_PROBE} is missing")
+        };
+        println!(
+            "cargo::warning=MIDI shim not compiled ({where_}); \
+             linking a device binary will fail on bela_midi_* until \
+             scripts/sync-sysroot.sh has run"
+        );
+        return;
+    }
+
+    let mut build = cc::Build::new();
+    build
+        .cpp(true)
+        // What Bela compiles its own C++ with (docs/board-facts.md).
+        // The shim allocates a `Midi`, so it has to agree with
+        // `libbelaextra.so` about that class's layout; measured equal
+        // between this toolchain and the board's clang++, and pinning
+        // the standard is one fewer way for that to drift.
+        .std("c++14")
+        .file("shim/midi.cpp")
+        .compiler(shim_compiler());
+    for dir in SHIM_INCLUDE_DIRS {
+        build.include(format!("{sysroot}{dir}"));
+    }
+    if !sysroot.is_empty() {
+        build.flag(format!("--sysroot={sysroot}"));
+        // Debian keeps its architecture-specific headers here, and a
+        // toolchain built for a different triple —
+        // aarch64-unknown-linux-gnu against Debian's
+        // aarch64-linux-gnu — does not look for them on its own. Same
+        // reason scripts/aarch64-bela-linker.sh passes -B.
+        build.include(format!("{sysroot}/usr/include/aarch64-linux-gnu"));
+    }
+    build.compile("bela_midi_shim");
+}
+
+// Which C++ compiler builds the shim.
+//
+// It has to agree with the one that links, so the default follows
+// scripts/aarch64-bela-linker.sh: BELA_CC names the C compiler there
+// and defaults to the macOS tap's aarch64-unknown-linux-gnu-gcc.
+// BELA_CXX names this one. When only BELA_CC is set, a name ending in
+// `gcc` answers for both — which covers the two cases
+// docs/cross-compile.md documents, aarch64-linux-gnu-gcc on Debian and
+// plain gcc on the board itself.
+#[allow(
+    clippy::panic,
+    reason = "a build script reports a misconfiguration by failing the build"
+)]
+fn shim_compiler() -> String {
+    let cxx = env::var("BELA_CXX").unwrap_or_default();
+    if !cxx.is_empty() {
+        return cxx;
+    }
+    let cc = env::var("BELA_CC").unwrap_or_default();
+    if cc.is_empty() {
+        return DEFAULT_CXX.to_owned();
+    }
+    if let Some(prefix) = cc.strip_suffix("gcc") {
+        return format!("{prefix}g++");
+    }
+    // Guessing here would compile the shim with one toolchain and link
+    // it with another, which is how a binary ends up asking the board
+    // for symbols its libstdc++ does not have.
+    panic!(
+        "BELA_CC is `{cc}`, and no C++ compiler name follows from it; \
+         set BELA_CXX to the matching C++ compiler"
+    )
 }
 
 // Debian ships the `libstdc++.so` linker symlink under a

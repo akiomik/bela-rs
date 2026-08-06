@@ -302,6 +302,38 @@ Two details the wrapper is shaped by:
   which is a second reason the crate exposes parsed messages rather
   than bytes.
 
+## Ports, as named on the board
+
+Measured 2026-08-07 on a Gem with nothing attached to it.
+
+There is one port, and its name depends on who is asking:
+
+| asked by | answer |
+| --- | --- |
+| `amidi -l` | `hw:0,0`, direction `IO` |
+| `Midi::listAllPorts()` | `hw:0,0,0` |
+
+Bela's names carry the subdevice, and `readFrom`/`writeTo` compare the
+string they are given against exactly that list (`Midi.cpp:313`), so
+the name `amidi` prints opens nothing and reports `-1`. That is worth a
+listing call of its own in the shim rather than a line in a
+documentation comment nobody reads before the first failure.
+
+The port itself is the USB gadget (`f_midi`, from `g_multi`), which is
+present whether or not a host is attached — `/proc/asound/cards` shows
+`MIDI Gadget` with the board's USB device port unplugged. So both
+directions can be exercised over a USB cable to a host before any MIDI
+hardware is involved, and `snd-virmidi` is on the image for the case
+where there is no cable either.
+
+Measured with the shim, on the same board:
+
+- opening `hw:0,0,0` for input and for output both report success;
+- opening `hw:9,9` — a port that does not exist — reports `-1` for
+  both, which is the case Bela's own `writeTo` answers with `1`;
+- `bela_midi_write_output` returns 1 with the port open and 0 without
+  one, and there is nothing to receive it with the cable out.
+
 ## Defects designed around
 
 | Where | What | How the crate answers |
@@ -339,8 +371,7 @@ inheriting. Two of the four, on the output side, to avoid one queue.
   EVL.** `evl_get_self()` answers it in one call, and the answer says
   whether a flush can run there at all or whether it has to happen
   while rendering.
-- **What ports a board exposes.** Measured so far: a Gem with nothing
-  attached reports one, `hw:0,0`, from the USB gadget (`f_midi`, via
-  `g_multi`), listed by `amidi -l` as `IO` — so both directions are
-  exercisable over the USB cable to a host, before any MIDI hardware
-  is involved.
+- **Whether more than one port ever needs opening at once.** One `Midi`
+  is one port pair, and a program wanting several devices holds several
+  of them, each with its own input thread. Nothing here says where that
+  stops being reasonable.

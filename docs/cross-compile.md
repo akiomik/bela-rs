@@ -51,6 +51,28 @@ name it in `BELA_CC`. The value is a name to find on `PATH` or an
 absolute path — the wrapper runs it as a program, so it cannot carry
 arguments or a prefix command like `ccache`.
 
+A **C++** compiler from the same toolchain is needed as well, because
+`bela-sys` compiles a small shim over Bela's `Midi` class (see
+[midi.md](midi.md)). `bela-sys/build.rs` derives its name from
+`BELA_CC` when that ends in `gcc` — `aarch64-linux-gnu-gcc` gives
+`aarch64-linux-gnu-g++`, plain `gcc` gives `g++` — and otherwise
+defaults to the tap's `aarch64-unknown-linux-gnu-g++`. `BELA_CXX`
+overrides it, and is what to set for a toolchain the derivation cannot
+guess:
+
+```sh
+export BELA_CXX=aarch64-linux-gnu-g++
+```
+
+Both have to come from the same toolchain. The shim allocates a class
+whose methods live in `libbelaextra.so`, so it has to agree with it
+about layout — measured equal between the tap's g++ 15.2.0 and the
+board's own `clang++`, and recorded in
+[board-facts.md](board-facts.md). Compiling with one toolchain and
+linking with another is also how a binary ends up asking the board for
+`libstdc++` or `libgcc_s` symbols it does not have, which is a failure
+that waits until the program runs.
+
 Not every build that comes through the wrapper is a cross build. It is
 attached to the target in `.cargo/config.toml`, not to cross-compiling,
 so building on the board itself goes through it as well — with no
