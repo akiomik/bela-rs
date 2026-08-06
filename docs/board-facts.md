@@ -118,6 +118,18 @@ Captured from a verbose on-board build:
   include paths these replaced in 2019: each one `#warning`s and then
   includes the `libraries/` copy, except `OSCClient.h` and
   `OSCServer.h`, which `#error` because that API is gone.
+- The real-time plumbing those classes are built on is sources too, in
+  `/root/Bela/core/`: `AuxTaskNonRT.cpp`, `AuxTaskRT.cpp`,
+  `RtMsgFifo.cpp`, `CircularBuffer.cpp`, `RtThread.cpp` and the rest of
+  what `libbela` is made of. The headers in `include/` declare them and
+  stop there, so what a call costs the audio thread is only readable
+  here — and it is not always what the declaration suggests, because
+  `RtMsgFifo.cpp` implements `RtNonRtMsgFifo` three ways behind
+  `__COBALT__`, `BELA_EVL` and plain Linux (`RtMsgFifo` itself has two,
+  `BELA_EVL` and everything else). `BELA_EVL` is the one this board
+  builds (see the defines below), and on its real-time side a message's
+  payload travels through a `CircularBuffer` while the pipe carries
+  only a header.
 - Defines (also needed as clang args when running bindgen):
   `BELA_USE_POLL`, `ENABLE_PRU_UIO=0`, `ENABLE_PRU_RPROC=1`,
   `IS_AM62_PB2`, `IS_AM62`, `BELA_HAS_GPIO`, `BELA_HAS_PRU_AND_MCASP`,
