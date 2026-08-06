@@ -81,11 +81,16 @@ audio system up: everything here is what libbela answers before
   fresh scan of the buses say the same thing on this board.
   `scripts/smoke-test.sh` keeps that honest from the other end: it reads
   the file before it runs anything and again after everything, and puts
-  it back if the run changed it. The reading has to be taken that early
-  because the scan is not the only thing that writes the cache — every
-  `Bela_initAudio` detects the hardware on its way up, so any example
-  that brings an audio system up can create the file on a board that
-  had none.
+  it back if the run changed it.
+- **Bringing an audio system up writes the cache too, and a scan is not
+  the only thing that does** (measured 2026-08-07). With
+  `/run/bela/belaconfig` removed and `bela_daemon` stopped,
+  `bela/examples/sine` — which detects nothing itself — was run for
+  three seconds, and the file was back afterwards holding
+  `HARDWARE=GemStereo`. So on a board that has never been scanned, any
+  program that calls `Bela_initAudio` leaves a cache behind, which is
+  why the smoke test takes its reading before the first binary runs
+  rather than around the one probe that detects on purpose.
 - **Nothing here is measured on a Gem Multi.** There is no Multi to
   measure on, so `Board::GemMulti` is a name taken from the headers and
   nothing in this file claims what one reports.

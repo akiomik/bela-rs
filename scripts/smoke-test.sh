@@ -76,7 +76,9 @@ if [ "$DURATION" -lt "$MIN_DURATION" ]; then
 fi
 
 # Leave the board as it was found, whether the checks passed, one of
-# them failed, or the run was interrupted.
+# them failed, or the run was interrupted. The binaries and the daemon
+# are handled here; the hardware cache is not, and where it is compared
+# says why.
 restore() {
   status=$?
   # shellcheck disable=SC2029 # the remote path is meant to expand here
@@ -104,8 +106,17 @@ remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 # the only reading that says what the board looked like. Every example
 # below brings an audio system up and `Bela_initAudio` detects the
 # hardware on the way, so the file can be written by any of them — not
-# only by the scan `board_info --all-modes` ends with. It is compared
-# and put back at the end of the run.
+# only by the scan `board_info --all-modes` ends with; that is measured,
+# see "Board identity and version" in docs/board-facts.md. It is
+# compared and put back at the end of the run.
+#
+# Only a run that reaches the end puts it back. This is the one thing
+# here that `restore` does not cover, because a comparison belongs with
+# the checks rather than in a trap that also runs on the way out of a
+# failure — so an interrupted run can leave a cache on a board that had
+# none. What it leaves is what libbela writes, so the cost is a file
+# rather than a wrong one; `rm /run/bela/belaconfig` undoes it, and a
+# reboot does too, the file being on tmpfs.
 #
 # Three readings, not two: a board that has never been scanned has no
 # file at all, which is restored by removing one rather than by writing
