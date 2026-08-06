@@ -8,14 +8,27 @@
 //! [`Bela::new`](crate::Bela::new) yet — which is what makes them
 //! useful for declining to start.
 //!
-//! ```ignore
+//! ```no_run
 //! use bela::{Board, DetectMode, Version};
 //!
-//! let board = Board::detect(DetectMode::Cache);
-//! if board != Board::GemStereo {
-//!     eprintln!("this program was measured on a Gem Stereo, not a {board}");
+//! /// The one board this program was measured on.
+//! const MEASURED_ON: Board = Board::GemStereo;
+//!
+//! # #[cfg(bela_device)]
+//! fn main() {
+//!     let board = Board::detect(DetectMode::Cache);
+//!     if board != MEASURED_ON {
+//!         eprintln!("this program was measured on a {MEASURED_ON}, not a {board}");
+//!     }
+//!     println!("libbela {} on {board}", Version::running());
 //! }
-//! println!("libbela {} on {board}", Version::running());
+//! # // Off the device there is nothing to ask: both calls are
+//! # // device-gated. What a host doc test can still check is that the
+//! # // types are named, spelled and usable the way this says.
+//! # #[cfg(not(bela_device))]
+//! # fn main() {
+//! #     let _ = (MEASURED_ON.to_string(), DetectMode::Cache, Version::HEADERS);
+//! # }
 //! ```
 //!
 //! # The list of boards is the image's, not this crate's
