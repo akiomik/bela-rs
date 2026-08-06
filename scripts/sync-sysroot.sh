@@ -12,11 +12,17 @@ set -eu
 DEST="${1:-bela-sysroot}"
 HOST="${2:-root@bela.local}"
 
-# Paths recorded in docs/board-facts.md: the Bela headers and
-# libraries, the EVL real-time runtime, seasocks, and the Debian
+# Paths recorded in docs/board-facts.md: the Bela headers, the sources
+# a program reaches as <libraries/<Name>/<Name>.h>, the Bela shared
+# objects, the EVL real-time runtime, seasocks, and the Debian
 # headers/libraries they all depend on.
-PATHS="/root/Bela/include /root/Bela/lib /usr/evl /usr/local/lib \
-/usr/include /usr/lib/aarch64-linux-gnu /usr/lib/gcc"
+#
+# /root/Bela/libraries is 3 MB against the sysroot's 850, and without it
+# the only trace of a class like Midi is the forwarding shim left in
+# include/legacy — which says where the header is but does not carry it.
+PATHS="/root/Bela/include /root/Bela/libraries /root/Bela/lib \
+/usr/evl /usr/local/lib /usr/include /usr/lib/aarch64-linux-gnu \
+/usr/lib/gcc"
 
 mkdir -p "$DEST"
 # -R keeps the absolute paths, -l/-K preserve the many symlinks Debian

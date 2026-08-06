@@ -109,6 +109,15 @@ Captured from a verbose on-board build:
 - Include paths: the project dir, `/root/Bela/include/legacy`,
   `/root/Bela/include`, `/root/Bela/build/pru`, `/root/Bela`,
   `/usr/evl/include`.
+- Higher-level classes are sources rather than installed headers: what
+  a program includes as `<libraries/<Name>/<Name>.h>` resolves through
+  the `/root/Bela` entry above to `/root/Bela/libraries/<Name>/`, which
+  holds the `.h`, the `.cpp` and a `lib.metadata` naming the link flags
+  that library asks for of its own (`Midi` asks for `-lasound`).
+  `/root/Bela/include/legacy/` holds three-line shims for the flat
+  include paths these replaced in 2019: each one `#warning`s and then
+  includes the `libraries/` copy, except `OSCClient.h` and
+  `OSCServer.h`, which `#error` because that API is gone.
 - Defines (also needed as clang args when running bindgen):
   `BELA_USE_POLL`, `ENABLE_PRU_UIO=0`, `ENABLE_PRU_RPROC=1`,
   `IS_AM62_PB2`, `IS_AM62`, `BELA_HAS_GPIO`, `BELA_HAS_PRU_AND_MCASP`,
