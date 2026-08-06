@@ -452,10 +452,18 @@ else
   # script is meant to leave the board as it found it, and "it would
   # have written the same thing" is the claim being checked rather than
   # an assumption to run on.
+  #
+  # A board that has never been scanned has no cache file at all, which
+  # is a different state from an empty one and is restored by removing
+  # the file rather than by writing a blank one. So the reading is a
+  # marker rather than the empty string, which could not tell the two
+  # apart. It cannot collide with the contents, which are
+  # `HARDWARE=<board>` lines.
   BELACONFIG=/run/bela/belaconfig
-  before="$(remote "cat $BELACONFIG 2>/dev/null" || true)"
+  ABSENT="(no file)"
+  before="$(remote "cat $BELACONFIG 2>/dev/null || echo '$ABSENT'")"
   all_modes="$(remote "cd $REMOTE_DIR && ./board_info --all-modes 2>&1" || true)"
-  after="$(remote "cat $BELACONFIG 2>/dev/null" || true)"
+  after="$(remote "cat $BELACONFIG 2>/dev/null || echo '$ABSENT'")"
   modes="$(echo "$all_modes" | grep -c '^board\[' || true)"
   if [ "$modes" = 5 ]; then
     pass "board_info: all five detect modes answered"
@@ -471,8 +479,14 @@ else
   else
     fail "board_info: the scan rewrote $BELACONFIG ('$before' became '$after'); restoring"
     # Put back what was found, so the next thing to read the cache sees
-    # what the board booted with rather than what this run left.
-    remote "printf '%s\n' '$before' > $BELACONFIG" || true
+    # what the board booted with rather than what this run left — and
+    # that includes finding no file, where writing an empty one would
+    # leave `CacheOnly` reading a cache that names no board.
+    if [ "$before" = "$ABSENT" ]; then
+      remote "rm -f $BELACONFIG" || true
+    else
+      remote "printf '%s\n' '$before' > $BELACONFIG" || true
+    fi
   fi
 fi
 
