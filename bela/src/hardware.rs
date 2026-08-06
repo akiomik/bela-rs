@@ -437,6 +437,23 @@ impl fmt::Display for DetectMode {
 /// are kept as they arrived: deciding what a negative version number
 /// means is not this crate's to do, and a saturated one would be a
 /// number nobody reported.
+///
+/// # Why the fields are public
+///
+/// Because there is nothing to keep them consistent with. Every
+/// combination of three `int`s is a version this type is willing to
+/// hold — that is the paragraph above — and [`new`](Version::new)
+/// already builds any of them, so private fields would add three
+/// getters without narrowing what can exist.
+///
+/// [`Board`] and [`DetectMode`] are closed differently, and for a
+/// reason that does not reach here: they are C enums whose set of
+/// values moves with the board image, so they are `#[non_exhaustive]`
+/// and [`Board::Unrecognised`] is unforgeable — a hand-built one could
+/// carry a number a named variant already has and then compare unequal
+/// to it. A version has no such variant to contradict, and its shape
+/// is fixed by `Bela_getVersion`, which fills in exactly three
+/// numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Version {
     /// The major version.
