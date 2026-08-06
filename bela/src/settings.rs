@@ -8,13 +8,17 @@ use bela_sys::BelaInitSettings;
 /// Unset fields keep the values produced by `Bela_defaultSettings()` on
 /// the device, so this type never has to replicate the C-side defaults.
 ///
+/// Every method here is a `const fn`, starting with
+/// [`new`](Settings::new), so a whole configuration can be settled at
+/// compile time and handed to every audio system a program builds:
+///
 /// ```
 /// use bela::Settings;
 ///
-/// let settings = Settings::new().period_size(64).use_analog(true);
-/// # let _ = settings;
+/// const SETTINGS: Settings = Settings::new().period_size(64).use_analog(true);
+/// # let _ = SETTINGS;
 /// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Settings {
     period_size: Option<u32>,
     use_analog: Option<bool>,
@@ -32,11 +36,37 @@ pub struct Settings {
     begin_muted: Option<bool>,
 }
 
+impl Default for Settings {
+    /// The same empty set of overrides [`new`](Settings::new) makes.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Settings {
     /// Creates an empty set of overrides.
+    ///
+    /// The fields are written out rather than derived so that this can
+    /// be `const`, which is what lets a whole configuration be one —
+    /// every builder method below already was.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            period_size: None,
+            use_analog: None,
+            use_digital: None,
+            num_analog_in_channels: None,
+            num_analog_out_channels: None,
+            num_digital_channels: None,
+            detect_underruns: None,
+            verbose: None,
+            high_performance_mode: None,
+            uniform_sample_rate: None,
+            stop_button_pin: None,
+            thread_count: None,
+            cpu_monitoring: None,
+            begin_muted: None,
+        }
     }
 
     /// Number of audio frames per period ("block size").
@@ -337,6 +367,25 @@ mod tests {
         raw.stopButtonPin = 115;
         raw.verbose = 0;
         raw
+    }
+
+    #[test]
+    fn a_whole_configuration_can_be_a_const() {
+        // The point of `new` being const: this is evaluated at compile
+        // time, so a builder method that stopped being one would fail
+        // to compile here rather than fail an assertion.
+        const SETTINGS: Settings = Settings::new().period_size(64).thread_count(4);
+
+        let mut raw = fake_defaults();
+        SETTINGS.apply_to(&mut raw);
+
+        assert_eq!(raw.periodSize, 64);
+        assert_eq!(raw.threadCount, 4);
+    }
+
+    #[test]
+    fn default_is_the_same_empty_set_of_overrides_as_new() {
+        assert_eq!(Settings::default(), Settings::new());
     }
 
     #[test]
