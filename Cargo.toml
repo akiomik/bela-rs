@@ -14,6 +14,7 @@ panic = "abort"
 
 [workspace.lints.rust]
 missing_docs = "warn"
+missing_debug_implementations = "warn"
 unreachable_pub = "warn"
 
 [workspace.lints.clippy]
