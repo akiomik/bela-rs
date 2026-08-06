@@ -104,11 +104,11 @@ remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 
 # What the hardware cache holds before anything here has run, which is
 # the only reading that says what the board looked like. Every example
-# below brings an audio system up and `Bela_initAudio` detects the
-# hardware on the way, so the file can be written by any of them — not
-# only by the scan `board_info --all-modes` ends with; that is measured,
-# see "Board identity and version" in docs/board-facts.md. It is
-# compared and put back at the end of the run.
+# below brings an audio system up, and doing that writes the cache, so
+# the file can be written by any of them — not only by the scan
+# `board_info --all-modes` ends with; that is measured, see "Board
+# identity and version" in docs/board-facts.md. It is compared and put
+# back at the end of the run.
 #
 # Only a run that reaches the end puts it back. This is the one thing
 # here that `restore` does not cover, because a comparison belongs with

@@ -88,9 +88,15 @@ audio system up: everything here is what libbela answers before
   `bela/examples/sine` — which detects nothing itself — was run for
   three seconds, and the file was back afterwards holding
   `HARDWARE=GemStereo`. So on a board that has never been scanned, any
-  program that calls `Bela_initAudio` leaves a cache behind, which is
-  why the smoke test takes its reading before the first binary runs
-  rather than around the one probe that detects on purpose.
+  program that brings an audio system up leaves a cache behind, which
+  is why the smoke test takes its reading before the first binary runs
+  rather than around the one probe that detects on purpose. **Which
+  call writes it is not measured**: a run that comes up goes through
+  `Bela_defaultSettings`, `Bela_initAudio`, `Bela_startAudio` and
+  `Bela_cleanupAudio`, the headers do not say which of them detects,
+  and separating them would need a probe that calls one and stops.
+  Nothing here depends on the answer — reading before the first binary
+  covers all four.
 - **Nothing here is measured on a Gem Multi.** There is no Multi to
   measure on, so `Board::GemMulti` is a name taken from the headers and
   nothing in this file claims what one reports.
