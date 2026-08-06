@@ -27,16 +27,18 @@ and this project adheres to
   audio hardware, so it answers on a board that is already doing
   something else — the first thing to ask for from anyone reporting a
   problem. With `--all-modes` it reports what each detect mode says
-  instead.
+  instead, asking the scan last: it writes the file the other modes
+  read, so going first would leave them reporting what that same run
+  had just written.
 - `examples/io_config`, a hardware probe for how a board configures its
   analog and digital I/O. It brings one audio system up per process
   and reports the `BelaContext` that `setup` and the first block see —
   the channel counts, frame counts and sample rates of all three
   domains — for a configuration given on its command line, alongside
   the board it detects, the version of the library that detected it and
-  what `Bela_defaultSettings` says before any audio system exists. Nothing is wired to the board for it: it asks what
-  shape the block is, which is what the accessors on the context types
-  index against.
+  what `Bela_defaultSettings` says before any audio system exists.
+  Nothing is wired to the board for it: it asks what shape the block
+  is, which is what the accessors on the context types index against.
 
 ### Fixed
 

@@ -445,12 +445,34 @@ else
   # Every detect mode answers. They need not agree — a board with no
   # `~/.bela/belaconfig` has `user-only` answering `NoHw`, which is the
   # mode doing its job — so the check is that each one reported at all.
-  modes="$(remote "cd $REMOTE_DIR && ./board_info --all-modes 2>&1" |
-    grep -c '^board\[' || true)"
+  #
+  # `--all-modes` ends with the scan, which is the one mode that writes
+  # `/run/bela/belaconfig`. What it writes is what the daemon writes, so
+  # the file is saved first and put back if the scan changed it: this
+  # script is meant to leave the board as it found it, and "it would
+  # have written the same thing" is the claim being checked rather than
+  # an assumption to run on.
+  BELACONFIG=/run/bela/belaconfig
+  before="$(remote "cat $BELACONFIG 2>/dev/null" || true)"
+  all_modes="$(remote "cd $REMOTE_DIR && ./board_info --all-modes 2>&1" || true)"
+  after="$(remote "cat $BELACONFIG 2>/dev/null" || true)"
+  modes="$(echo "$all_modes" | grep -c '^board\[' || true)"
   if [ "$modes" = 5 ]; then
     pass "board_info: all five detect modes answered"
   else
     fail "board_info: $modes of five detect modes answered"
+    echo "$all_modes" | sed 's/^/        /' >&2
+  fi
+
+  # The scan ran after the modes that read the cache, so this compares
+  # what the daemon had left with what a fresh scan of the buses found.
+  if [ "$before" = "$after" ]; then
+    pass "board_info: the scan agreed with the cache the daemon had written"
+  else
+    fail "board_info: the scan rewrote $BELACONFIG ('$before' became '$after'); restoring"
+    # Put back what was found, so the next thing to read the cache sees
+    # what the board booted with rather than what this run left.
+    remote "printf '%s\n' '$before' > $BELACONFIG" || true
   fi
 fi
 

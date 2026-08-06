@@ -124,7 +124,26 @@ pub enum Board {
     /// `bela-sys/vendor` were taken, not a failure to detect — that is
     /// [`NoHardware`](Self::NoHardware). Worth reporting: it means the
     /// image knows hardware this crate has never been built against.
-    Unrecognised(c_int),
+    ///
+    /// Readable — `Board::Unrecognised { raw, .. }` matches — but not
+    /// constructible from outside this crate, which is what the
+    /// variant's `#[non_exhaustive]` buys. A hand-built
+    /// `Unrecognised { raw: 2 }` would be a board that carries
+    /// `GemStereo`'s number without being equal to
+    /// [`GemStereo`](Self::GemStereo), so
+    /// [`from_raw`](Self::from_raw) is the only way to make one and
+    /// every board round-trips through it.
+    ///
+    /// ```compile_fail,E0639
+    /// // A board that would answer 2 to `to_raw` while comparing
+    /// // unequal to `Board::GemStereo`, which `from_raw(2)` is.
+    /// let board = bela::Board::Unrecognised { raw: 2 };
+    /// ```
+    #[non_exhaustive]
+    Unrecognised {
+        /// The `BelaHw` libbela returned.
+        raw: c_int,
+    },
 }
 
 impl Board {
@@ -194,7 +213,7 @@ impl Board {
         } else if raw == BelaHw_BelaHw_Batch {
             Self::Batch
         } else {
-            Self::Unrecognised(raw)
+            Self::Unrecognised { raw }
         }
     }
 
@@ -223,7 +242,7 @@ impl Board {
             Self::BelaEs9080 => BelaHw_BelaHw_BelaEs9080,
             Self::BelaRevC => BelaHw_BelaHw_BelaRevC,
             Self::Batch => BelaHw_BelaHw_Batch,
-            Self::Unrecognised(raw) => raw,
+            Self::Unrecognised { raw } => raw,
         }
     }
 
@@ -233,8 +252,8 @@ impl Board {
     /// the whole of what it asks: a program that wants to refuse to run
     /// on hardware nobody measured it against starts here.
     #[must_use]
-    pub const fn is_named(self) -> bool {
-        !matches!(self, Self::Unrecognised(_))
+    pub const fn is_recognised(self) -> bool {
+        !matches!(self, Self::Unrecognised { .. })
     }
 }
 
@@ -258,7 +277,7 @@ impl fmt::Display for Board {
             Self::BelaEs9080 => f.write_str("BelaEs9080"),
             Self::BelaRevC => f.write_str("BelaRevC"),
             Self::Batch => f.write_str("Batch"),
-            Self::Unrecognised(raw) => write!(f, "unrecognised({raw})"),
+            Self::Unrecognised { raw } => write!(f, "unrecognised({raw})"),
         }
     }
 }
@@ -272,7 +291,11 @@ impl fmt::Display for Board {
 /// down". Two files are involved — `/run/bela/belaconfig`, which the
 /// Bela daemon writes, and `~/.bela/belaconfig`, where a user overrides
 /// it.
+///
+/// Not exhaustive: the modes are libbela's, and an image that adds one
+/// adds it here rather than in this crate's idea of the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DetectMode {
     /// Scan the peripherals and buses, and cache the result in
     /// `/run/bela/belaconfig`.
@@ -321,9 +344,17 @@ impl DetectMode {
     /// Every mode, in the order the C enum declares them.
     ///
     /// For a program that reports what each one says rather than
-    /// choosing between them — which is how the difference between
-    /// them was measured.
-    pub const ALL: [Self; 5] = [
+    /// choosing between them — which is how the difference between them
+    /// was measured. The order is the declaration's, not an order to
+    /// ask them in: [`Scan`](Self::Scan) writes the file the three
+    /// cache and user modes read, so a program calling all of them
+    /// leaves it until last.
+    ///
+    /// A slice rather than an array, because the length is the C
+    /// enum's: an image that adds a mode makes this longer, and a
+    /// caller that had written down how many there were would be the
+    /// only thing that broke.
+    pub const ALL: &'static [Self] = &[
         Self::Scan,
         Self::Cache,
         Self::CacheOnly,
@@ -379,21 +410,13 @@ impl Version {
     /// whether the board's image is the one the bindings describe;
     /// they differ when a binary is run on a board other than the one
     /// its sysroot came from.
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "bindgen types these macros as u32; they are small version numbers"
+    )]
     pub const HEADERS: Self = Self {
-        #[allow(
-            clippy::cast_possible_wrap,
-            reason = "bindgen types these macros as u32; they are small version numbers"
-        )]
         major: BELA_MAJOR_VERSION as i32,
-        #[allow(
-            clippy::cast_possible_wrap,
-            reason = "bindgen types these macros as u32; they are small version numbers"
-        )]
         minor: BELA_MINOR_VERSION as i32,
-        #[allow(
-            clippy::cast_possible_wrap,
-            reason = "bindgen types these macros as u32; they are small version numbers"
-        )]
         bugfix: BELA_BUGFIX_VERSION as i32,
     };
 
@@ -493,13 +516,13 @@ mod tests {
         // new image into a program acting on the wrong hardware.
         for raw in [BelaHw_BelaHw_Batch + 1, 99, c_int::MAX, c_int::MIN] {
             let board = Board::from_raw(raw);
-            assert_eq!(board, Board::Unrecognised(raw));
+            assert_eq!(board, Board::Unrecognised { raw });
             assert_eq!(
                 board.to_raw(),
                 raw,
                 "the number must survive the round trip"
             );
-            assert!(!board.is_named());
+            assert!(!board.is_recognised());
         }
     }
 
@@ -508,7 +531,7 @@ mod tests {
         // -1 is a value the headers name, so it is not the unrecognised
         // case however negative it looks.
         assert_eq!(Board::from_raw(-1), Board::NoHardware);
-        assert!(Board::NoHardware.is_named());
+        assert!(Board::NoHardware.is_recognised());
     }
 
     #[test]
@@ -517,7 +540,11 @@ mod tests {
         // be compared without a translation table.
         assert_eq!(Board::GemStereo.to_string(), "GemStereo");
         assert_eq!(Board::NoHardware.to_string(), "NoHw");
-        assert_eq!(Board::Unrecognised(17).to_string(), "unrecognised(17)");
+        assert_eq!(
+            Board::from_raw(17).to_string(),
+            "unrecognised(17)",
+            "a board with no name still says which number it is"
+        );
     }
 
     #[test]
@@ -539,7 +566,15 @@ mod tests {
             assert_eq!(mode.to_raw(), raw, "{mode}");
         }
         // ALL is what a program reporting every mode iterates, so a
-        // mode missing from it is a mode that never gets reported.
+        // mode missing from it is a mode that never gets reported, and
+        // it claims the C enum's order — which is the order the
+        // constants themselves are in.
+        let ordered: Vec<BelaHwDetectMode> = DetectMode::ALL.iter().map(|m| m.to_raw()).collect();
+        assert_eq!(
+            ordered,
+            vec![0, 1, 2, 3, 4],
+            "ALL is not in declaration order"
+        );
         assert_eq!(DetectMode::ALL.len(), pairs.len());
         for (mode, _) in pairs {
             assert!(
@@ -563,20 +598,17 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::cast_possible_wrap,
-        reason = "the same cast the constant is built with, which is what this compares"
-    )]
-    fn the_header_version_is_what_the_vendored_headers_say() {
-        // The bindings carry the macros; this is the only place that
-        // reads them, so a re-vendored header shows up here first.
+    fn the_header_version_is_the_one_the_bindings_were_vendored_from() {
+        // Written out rather than derived from the same macros the
+        // constant is built from, which would pass whatever they said.
+        // Re-vendoring the headers is meant to fail here: the version
+        // is quoted in docs/board-facts.md, in the changelog and in
+        // this module's documentation, and a run that has to come back
+        // to this line is a run that visits those too.
         assert_eq!(
             Version::HEADERS,
-            Version::new(
-                BELA_MAJOR_VERSION as i32,
-                BELA_MINOR_VERSION as i32,
-                BELA_BUGFIX_VERSION as i32
-            )
+            Version::new(1, 18, 0),
+            "the vendored headers moved; update what quotes the version"
         );
     }
 }

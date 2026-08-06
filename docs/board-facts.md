@@ -52,15 +52,19 @@ audio system up: everything here is what libbela answers before
   version comes from the library at run time and the macros from the
   headers at build time.
 - **The board detects as `GemStereo` through four of the five detect
-  modes**, and `/run/bela/belaconfig` holds `HARDWARE=GemStereo`:
+  modes**, and `/run/bela/belaconfig` holds `HARDWARE=GemStereo`. The
+  table is in the order they were asked, which is not the order the C
+  enum declares them: `Scan` writes the file the three cache and user
+  modes read, so it goes last and the four above it report what was
+  already on the board rather than what this run had just written.
 
   | mode | answer |
   |---|---|
-  | `Scan` | `GemStereo` |
   | `Cache` | `GemStereo` |
   | `CacheOnly` | `GemStereo` |
   | `User` | `GemStereo` |
   | `UserOnly` | `NoHw` |
+  | `Scan` | `GemStereo` |
 
 - **`UserOnly` answers `NoHw` on a board that plainly has hardware**,
   because there is no `~/.bela/belaconfig` — `/root/.bela` does not
@@ -68,11 +72,15 @@ audio system up: everything here is what libbela answers before
   no fallback. The measurement is what "the detect modes are not
   interchangeable" means in practice: a program that picked `UserOnly`
   as its default would decide it was running on nothing.
-- **`Scan` is the mode with a side effect.** It goes out over the buses
-  and writes `/run/bela/belaconfig`; the other four read a file. It
-  answered the same as the cache here, which is the uninteresting case
-  and the one to expect while the daemon is the thing that wrote the
-  cache.
+- **`Scan` is the mode with a side effect, and it agreed with the cache
+  the daemon had written.** It goes out over the buses and writes
+  `/run/bela/belaconfig`; the other four read a file. Asked last, after
+  the cache modes had reported what the daemon left at boot, it
+  answered `GemStereo` and left the file holding the same
+  `HARDWARE=GemStereo` it started with — so the daemon's cache and a
+  fresh scan of the buses say the same thing on this board.
+  `scripts/smoke-test.sh` checks that by comparing the file either side
+  of the run, and puts it back if a scan ever changes it.
 - **Nothing here is measured on a Gem Multi.** There is no Multi to
   measure on, so `Board::GemMulti` is a name taken from the headers and
   nothing in this file claims what one reports.

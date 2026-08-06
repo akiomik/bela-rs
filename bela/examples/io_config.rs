@@ -238,7 +238,7 @@ mod probes {
     /// headers do not, and [`Board::Unrecognised`] prints as
     /// `unrecognised(<n>)` rather than losing the number.
     fn hardware_name(board: Board) -> String {
-        if board.is_named() {
+        if board.is_recognised() {
             format!("{board}({raw})", raw = board.to_raw())
         } else {
             board.to_string()

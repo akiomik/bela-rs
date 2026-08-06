@@ -22,6 +22,9 @@
 //! list and is the one mode with a side effect: it goes out over the
 //! buses and writes `/run/bela/belaconfig`, so it needs permission to
 //! write that file and is not what a program should call routinely.
+//! It is therefore asked last, after the modes that read that file,
+//! and its line is a fresh answer to compare with what they found
+//! rather than a value they have just been handed.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
@@ -54,13 +57,32 @@ fn main() -> ExitCode {
     if all_modes {
         // Named per line, because the interesting result is the one
         // that disagrees with the others.
-        for mode in DetectMode::ALL {
-            println!("board[{mode}]: {}", Board::detect(mode));
+        //
+        // `Scan` goes last however `DetectMode::ALL` is ordered: it
+        // writes `/run/bela/belaconfig`, which `Cache`, `CacheOnly` and
+        // `User` read. Asking it first would leave those three
+        // reporting what this same run had just written, and four
+        // modes agreeing would say nothing about the board. Last, they
+        // report what was already on the board and the scan is a fresh
+        // answer to compare with it.
+        for mode in DetectMode::ALL
+            .iter()
+            .filter(|mode| **mode != DetectMode::Scan)
+        {
+            println!("board[{mode}]: {}", Board::detect(*mode));
         }
+        println!(
+            "board[{mode}]: {}",
+            Board::detect(DetectMode::Scan),
+            mode = DetectMode::Scan
+        );
     } else {
         // `Cache` rather than `Scan`: on a running board the daemon has
-        // already written the file, and a diagnostic should not change
-        // the thing it is reporting on.
+        // already written the file, so this is a file read. It is not
+        // free of side effects — with no file to read it falls back to
+        // scanning, which writes one — but it is the mode that leaves
+        // a working board alone, and `CacheOnly` would answer `NoHw`
+        // on a board that simply had not been scanned yet.
         println!("board: {}", Board::detect(DetectMode::Cache));
     }
 
