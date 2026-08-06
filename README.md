@@ -30,6 +30,23 @@ The integration model is the officially supported one: a standalone
 binary that defines the render callbacks and links `libbela`,
 cross-compiled on a host machine and copied to the board.
 
+## Boards
+
+Bela Gem only. The older boards — Bela and Bela Mini — are out of
+scope, and not for want of a second target triple: they are armv7,
+while the vendored headers, the libraries `build.rs` links and every
+number in [Board facts](docs/board-facts.md) come from a Gem image. A
+port needs its own headers, its own real-time runtime and its own
+measurements.
+
+The measurements are the part that cannot be borrowed. Nothing here is
+claimed about a board that was not measured on one, and there is no
+older board here to measure: Bela no longer sells them, and points
+Bela Mini owners at [Bela Gem Stereo][migrating] instead. A port is
+welcome from someone who can check it against the hardware.
+
+[migrating]: https://learn.bela.io/get-started-guide/migrating-to-bela-gem/
+
 ## Quick start
 
 Implement `BelaApplication` and hand it to `Bela::run`. `render` must
