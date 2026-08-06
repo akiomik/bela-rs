@@ -14,7 +14,7 @@ use bela_sys::BelaInitSettings;
 /// let settings = Settings::new().period_size(64).use_analog(true);
 /// # let _ = settings;
 /// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Settings {
     period_size: Option<u32>,
     use_analog: Option<bool>,

@@ -57,6 +57,11 @@ and this project adheres to
 - `Default` for `PinMode`, which is `Input` — what a pin is until
   something says otherwise, as the type's documentation already said
   without the type being able to.
+- `Hash` for `PinMode`, `Channel`, `ThreadInfo`, `Settings` and
+  `Error`. `Board`, `DetectMode` and `Version` already had it, so this
+  is every public type that can be a key rather than some of them —
+  a run keyed by its settings, or faults counted per error, no longer
+  depends on which type the crate happened to derive it for.
 
 ### Fixed
 
