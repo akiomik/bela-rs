@@ -21,7 +21,12 @@ and this project adheres to
   against one board can say so and decline before it brings one up. A
   board the vendored headers do not name is kept as
   `Board::Unrecognised` with the number libbela returned, rather than
-  being read as a board this crate does know.
+  being read as a board this crate does know. Both types convert to
+  their C spelling through `to_sys` and `From` — `BelaHw::from(board)`,
+  `BelaHwDetectMode::from(mode)` — matching the `as_sys` already on the
+  context types; the way back is `Board::from_sys` rather than a `From`
+  impl, because `BelaHw` is an alias for `c_int` and the impl would
+  claim that every `i32` is a board.
 - `examples/board_info`, which prints the detected board and the Bela
   version and nothing else. It brings no audio system up and touches no
   audio hardware, so it answers on a board that is already doing

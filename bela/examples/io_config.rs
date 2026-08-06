@@ -239,7 +239,7 @@ mod probes {
     /// `unrecognised(<n>)` rather than losing the number.
     fn hardware_name(board: Board) -> String {
         if board.is_recognised() {
-            format!("{board}({raw})", raw = board.to_raw())
+            format!("{board}({raw})", raw = board.to_sys())
         } else {
             board.to_string()
         }
@@ -254,7 +254,7 @@ mod probes {
         // this was built against: every number below is a claim about a
         // particular libbela, and this is which one.
         report("version", &Version::running().to_string());
-        let hw = board.to_raw();
+        let hw = board.to_sys();
 
         // The configuration libbela associates with that hardware,
         // which is where a Gem's channel counts come from before any

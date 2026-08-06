@@ -131,12 +131,12 @@ pub enum Board {
     /// `Unrecognised { raw: 2 }` would be a board that carries
     /// `GemStereo`'s number without being equal to
     /// [`GemStereo`](Self::GemStereo), so
-    /// [`from_raw`](Self::from_raw) is the only way to make one and
+    /// [`from_sys`](Self::from_sys) is the only way to make one and
     /// every board round-trips through it.
     ///
     /// ```compile_fail,E0639
-    /// // A board that would answer 2 to `to_raw` while comparing
-    /// // unequal to `Board::GemStereo`, which `from_raw(2)` is.
+    /// // A board that would answer 2 to `to_sys` while comparing
+    /// // unequal to `Board::GemStereo`, which `from_sys(2)` is.
     /// let board = bela::Board::Unrecognised { raw: 2 };
     /// ```
     #[non_exhaustive]
@@ -163,18 +163,28 @@ impl Board {
         // Safety: `Bela_detectHw` takes a value of the C enum by copy
         // and returns another; it reads files and buses of its own and
         // borrows nothing from this side.
-        Self::from_raw(unsafe { bela_sys::Bela_detectHw(mode.to_raw()) })
+        Self::from_sys(unsafe { bela_sys::Bela_detectHw(mode.to_sys()) })
     }
 
-    /// Reads a raw `BelaHw` as a board.
+    /// Reads a `BelaHw` as a board.
     ///
     /// For values arriving from somewhere other than [`detect`] — the
     /// `board` field of a `BelaInitSettings`, say, or a call made
     /// through [`bela_sys`] directly.
     ///
+    /// # Why this is not `From<BelaHw>`
+    ///
+    /// The way out of a board is `From<Board> for BelaHw`, which
+    /// rustdoc lists as `From<Board> for i32` — and that spelling is
+    /// the whole reason the way in stays a named call. `BelaHw` is a
+    /// type alias for `c_int`, so the reverse impl would really be
+    /// `From<i32> for Board`: it would claim that every `i32` is a
+    /// board, and let inference turn a stray integer into one at any
+    /// `.into()` in a caller's code. The asymmetry is deliberate.
+    ///
     /// [`detect`]: Self::detect
     #[must_use]
-    pub const fn from_raw(raw: BelaHw) -> Self {
+    pub const fn from_sys(raw: BelaHw) -> Self {
         // A chain rather than a `match`: the generated constants are
         // spelled in C's case, and a pattern made of them warns on
         // every arm.
@@ -222,8 +232,11 @@ impl Board {
     /// An [`Unrecognised`](Self::Unrecognised) board gives back the
     /// number it was built from, so a value that came out of libbela
     /// can go back into it unchanged.
+    ///
+    /// Also available as `BelaHw::from(board)` and `board.into()`; this
+    /// is the one that works in a `const`.
     #[must_use]
-    pub const fn to_raw(self) -> BelaHw {
+    pub const fn to_sys(self) -> BelaHw {
         match self {
             Self::NoHardware => BelaHw_BelaHw_NoHw,
             Self::Bela => BelaHw_BelaHw_Bela,
@@ -254,6 +267,12 @@ impl Board {
     #[must_use]
     pub const fn is_recognised(self) -> bool {
         !matches!(self, Self::Unrecognised { .. })
+    }
+}
+
+impl From<Board> for BelaHw {
+    fn from(board: Board) -> Self {
+        board.to_sys()
     }
 }
 
@@ -330,8 +349,15 @@ pub enum DetectMode {
 
 impl DetectMode {
     /// The `BelaHwDetectMode` this mode is.
+    ///
+    /// Also available as `BelaHwDetectMode::from(mode)` and
+    /// `mode.into()`; this is the one that works in a `const`. There is
+    /// no way back: a `BelaHwDetectMode` this crate does not name would
+    /// have to be refused rather than carried, which makes the reverse
+    /// a `TryFrom` — and nothing hands a mode to a caller, so there is
+    /// nothing for it to convert.
     #[must_use]
-    pub const fn to_raw(self) -> BelaHwDetectMode {
+    pub const fn to_sys(self) -> BelaHwDetectMode {
         match self {
             Self::Scan => BelaHwDetectMode_BelaHwDetectMode_Scan,
             Self::Cache => BelaHwDetectMode_BelaHwDetectMode_Cache,
@@ -361,6 +387,12 @@ impl DetectMode {
         Self::User,
         Self::UserOnly,
     ];
+}
+
+impl From<DetectMode> for BelaHwDetectMode {
+    fn from(mode: DetectMode) -> Self {
+        mode.to_sys()
+    }
 }
 
 impl fmt::Display for DetectMode {
@@ -462,7 +494,7 @@ impl fmt::Display for Version {
 ///
 /// `BelaHw` is a signed `int` and `BelaHwDetectMode` an unsigned one,
 /// which is what makes [`Board::Unrecognised`] carry a `c_int` and
-/// [`DetectMode::to_raw`] produce a `c_uint`. A regenerated binding
+/// [`DetectMode::to_sys`] produce a `c_uint`. A regenerated binding
 /// that changed either would compile everywhere else and be wrong here.
 const _: () = {
     assert!(
@@ -471,7 +503,7 @@ const _: () = {
     );
     assert!(
         size_of::<BelaHwDetectMode>() == size_of::<c_uint>(),
-        "BelaHwDetectMode is no longer the C unsigned int DetectMode::to_raw produces"
+        "BelaHwDetectMode is no longer the C unsigned int DetectMode::to_sys produces"
     );
 };
 
@@ -503,8 +535,8 @@ mod tests {
     #[test]
     fn every_named_board_reads_back_as_the_constant_it_is() {
         for (board, raw) in NAMED {
-            assert_eq!(Board::from_raw(raw), board, "BelaHw {raw}");
-            assert_eq!(board.to_raw(), raw, "{board}");
+            assert_eq!(Board::from_sys(raw), board, "BelaHw {raw}");
+            assert_eq!(board.to_sys(), raw, "{board}");
         }
     }
 
@@ -515,10 +547,10 @@ mod tests {
         // board this crate does know — that is the case that turns a
         // new image into a program acting on the wrong hardware.
         for raw in [BelaHw_BelaHw_Batch + 1, 99, c_int::MAX, c_int::MIN] {
-            let board = Board::from_raw(raw);
+            let board = Board::from_sys(raw);
             assert_eq!(board, Board::Unrecognised { raw });
             assert_eq!(
-                board.to_raw(),
+                board.to_sys(),
                 raw,
                 "the number must survive the round trip"
             );
@@ -527,10 +559,25 @@ mod tests {
     }
 
     #[test]
+    fn the_conversion_out_is_also_a_from_impl() {
+        // `to_sys` is the const spelling and `From` the one that works
+        // through `.into()`; a caller must not have to know which of
+        // them a given crate reached for.
+        for (board, raw) in NAMED {
+            assert_eq!(BelaHw::from(board), raw, "{board}");
+        }
+        let unrecognised = Board::from_sys(99);
+        assert_eq!(BelaHw::from(unrecognised), 99);
+        for mode in DetectMode::ALL {
+            assert_eq!(BelaHwDetectMode::from(*mode), mode.to_sys(), "{mode}");
+        }
+    }
+
+    #[test]
     fn no_hardware_is_a_detection_result_rather_than_an_unknown_board() {
         // -1 is a value the headers name, so it is not the unrecognised
         // case however negative it looks.
-        assert_eq!(Board::from_raw(-1), Board::NoHardware);
+        assert_eq!(Board::from_sys(-1), Board::NoHardware);
         assert!(Board::NoHardware.is_recognised());
     }
 
@@ -541,7 +588,7 @@ mod tests {
         assert_eq!(Board::GemStereo.to_string(), "GemStereo");
         assert_eq!(Board::NoHardware.to_string(), "NoHw");
         assert_eq!(
-            Board::from_raw(17).to_string(),
+            Board::from_sys(17).to_string(),
             "unrecognised(17)",
             "a board with no name still says which number it is"
         );
@@ -563,13 +610,13 @@ mod tests {
             ),
         ];
         for (mode, raw) in pairs {
-            assert_eq!(mode.to_raw(), raw, "{mode}");
+            assert_eq!(mode.to_sys(), raw, "{mode}");
         }
         // ALL is what a program reporting every mode iterates, so a
         // mode missing from it is a mode that never gets reported, and
         // it claims the C enum's order — which is the order the
         // constants themselves are in.
-        let ordered: Vec<BelaHwDetectMode> = DetectMode::ALL.iter().map(|m| m.to_raw()).collect();
+        let ordered: Vec<BelaHwDetectMode> = DetectMode::ALL.iter().map(|m| m.to_sys()).collect();
         assert_eq!(
             ordered,
             vec![0, 1, 2, 3, 4],
