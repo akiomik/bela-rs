@@ -79,8 +79,13 @@ audio system up: everything here is what libbela answers before
   answered `GemStereo` and left the file holding the same
   `HARDWARE=GemStereo` it started with — so the daemon's cache and a
   fresh scan of the buses say the same thing on this board.
-  `scripts/smoke-test.sh` checks that by comparing the file either side
-  of the run, and puts it back if a scan ever changes it.
+  `scripts/smoke-test.sh` keeps that honest from the other end: it reads
+  the file before it runs anything and again after everything, and puts
+  it back if the run changed it. The reading has to be taken that early
+  because the scan is not the only thing that writes the cache — every
+  `Bela_initAudio` detects the hardware on its way up, so any example
+  that brings an audio system up can create the file on a board that
+  had none.
 - **Nothing here is measured on a Gem Multi.** There is no Multi to
   measure on, so `Board::GemMulti` is a name taken from the headers and
   nothing in this file claims what one reports.

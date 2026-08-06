@@ -36,6 +36,7 @@ use std::process::ExitCode;
 
 #[cfg(bela_device)]
 fn main() -> ExitCode {
+    use core::iter::once;
     use std::env::args;
 
     use bela::{Board, DetectMode, Version};
@@ -65,17 +66,13 @@ fn main() -> ExitCode {
         // modes agreeing would say nothing about the board. Last, they
         // report what was already on the board and the scan is a fresh
         // answer to compare with it.
-        for mode in DetectMode::ALL
+        let scan_last = DetectMode::ALL
             .iter()
             .filter(|mode| **mode != DetectMode::Scan)
-        {
+            .chain(once(&DetectMode::Scan));
+        for mode in scan_last {
             println!("board[{mode}]: {}", Board::detect(*mode));
         }
-        println!(
-            "board[{mode}]: {}",
-            Board::detect(DetectMode::Scan),
-            mode = DetectMode::Scan
-        );
     } else {
         // `Cache` rather than `Scan`: on a running board the daemon has
         // already written the file, so this is a file read. It is not

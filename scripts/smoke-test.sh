@@ -46,6 +46,9 @@ daemon_was_active=no
 LOG_DIR="$(mktemp -d)"
 
 pass() { printf '  ok    %s\n' "$1"; }
+# For a check this board gives nothing to check — not a pass, and not a
+# failure of what is being tested. Rare enough to have one caller.
+skip() { printf '  skip  %s\n' "$1"; }
 fail() {
   printf '  FAIL  %s\n' "$1"
   failures=$((failures + 1))
@@ -96,6 +99,26 @@ if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>
   daemon_was_active=yes
 fi
 remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
+
+# What the hardware cache holds before anything here has run, which is
+# the only reading that says what the board looked like. Every example
+# below brings an audio system up and `Bela_initAudio` detects the
+# hardware on the way, so the file can be written by any of them — not
+# only by the scan `board_info --all-modes` ends with. It is compared
+# and put back at the end of the run.
+#
+# Three readings, not two: a board that has never been scanned has no
+# file at all, which is restored by removing one rather than by writing
+# a blank one, and a reading that could not be taken must not be acted
+# on either way. The markers cannot collide with the contents, which
+# are `HARDWARE=<board>` lines.
+BELACONFIG=/run/bela/belaconfig
+ABSENT="(no file)"
+UNREADABLE="(unreadable)"
+belaconfig() {
+  remote "cat $BELACONFIG 2>/dev/null || echo '$ABSENT'" || echo "$UNREADABLE"
+}
+belaconfig_before="$(belaconfig)"
 
 # The remote half: run one example for a while, interrupt it, and
 # report how it went. Kept on the board so the quoting stays readable.
@@ -445,48 +468,17 @@ else
   # Every detect mode answers. They need not agree — a board with no
   # `~/.bela/belaconfig` has `user-only` answering `NoHw`, which is the
   # mode doing its job — so the check is that each one reported at all.
-  #
-  # `--all-modes` ends with the scan, which is the one mode that writes
-  # `/run/bela/belaconfig`. What it writes is what the daemon writes, so
-  # the file is saved first and put back if the scan changed it: this
-  # script is meant to leave the board as it found it, and "it would
-  # have written the same thing" is the claim being checked rather than
-  # an assumption to run on.
-  #
-  # A board that has never been scanned has no cache file at all, which
-  # is a different state from an empty one and is restored by removing
-  # the file rather than by writing a blank one. So the reading is a
-  # marker rather than the empty string, which could not tell the two
-  # apart. It cannot collide with the contents, which are
-  # `HARDWARE=<board>` lines.
-  BELACONFIG=/run/bela/belaconfig
-  ABSENT="(no file)"
-  before="$(remote "cat $BELACONFIG 2>/dev/null || echo '$ABSENT'")"
+  # `--all-modes` ends with the scan, whose effect on the cache is
+  # checked at the end of the script rather than here: every audio
+  # system this script brings up detects the hardware too, so the scan
+  # is not the only thing that could have written the file.
   all_modes="$(remote "cd $REMOTE_DIR && ./board_info --all-modes 2>&1" || true)"
-  after="$(remote "cat $BELACONFIG 2>/dev/null || echo '$ABSENT'")"
   modes="$(echo "$all_modes" | grep -c '^board\[' || true)"
   if [ "$modes" = 5 ]; then
     pass "board_info: all five detect modes answered"
   else
     fail "board_info: $modes of five detect modes answered"
     echo "$all_modes" | sed 's/^/        /' >&2
-  fi
-
-  # The scan ran after the modes that read the cache, so this compares
-  # what the daemon had left with what a fresh scan of the buses found.
-  if [ "$before" = "$after" ]; then
-    pass "board_info: the scan agreed with the cache the daemon had written"
-  else
-    fail "board_info: the scan rewrote $BELACONFIG ('$before' became '$after'); restoring"
-    # Put back what was found, so the next thing to read the cache sees
-    # what the board booted with rather than what this run left — and
-    # that includes finding no file, where writing an empty one would
-    # leave `CacheOnly` reading a cache that names no board.
-    if [ "$before" = "$ABSENT" ]; then
-      remote "rm -f $BELACONFIG" || true
-    else
-      remote "printf '%s\n' '$before' > $BELACONFIG" || true
-    fi
   fi
 fi
 
@@ -705,6 +697,34 @@ against ${single_section}% on one, which is not a share of the work"
       fi
     fi
   done
+fi
+
+# The hardware cache, last: everything above has run, so this is the
+# whole of what this script did to `/run/bela/belaconfig` — the scan
+# `board_info --all-modes` ends with, and the detection every
+# `Bela_initAudio` does on its way up. What they write is what the
+# daemon writes, and that is the claim rather than the assumption.
+belaconfig_after="$(belaconfig)"
+if [ "$belaconfig_before" = "$UNREADABLE" ] || [ "$belaconfig_after" = "$UNREADABLE" ]; then
+  # Nothing is written back on a reading that could not be taken:
+  # restoring from one is how a board with a working cache loses it.
+  fail "belaconfig: $BELACONFIG could not be read \
+('$belaconfig_before' / '$belaconfig_after'), so it was left untouched"
+elif [ "$belaconfig_before" = "$ABSENT" ]; then
+  # A board that had never been scanned: there was no cache for a scan
+  # to be compared with, and this run is what created one. Nothing has
+  # gone wrong — the check has nothing to check — so the file this
+  # script caused is removed and the board is left as it was found.
+  skip "belaconfig: the board had no $BELACONFIG, so nothing could be compared with it"
+  remote "rm -f $BELACONFIG" || true
+elif [ "$belaconfig_before" = "$belaconfig_after" ]; then
+  pass "belaconfig: $BELACONFIG is what it was before the run"
+else
+  fail "belaconfig: the run rewrote $BELACONFIG \
+('$belaconfig_before' became '$belaconfig_after'); restoring"
+  # Put back what was found, so the next thing to read the cache sees
+  # what the board booted with rather than what this run left.
+  remote "printf '%s\n' '$belaconfig_before' > $BELACONFIG" || true
 fi
 
 echo
