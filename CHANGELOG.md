@@ -54,6 +54,9 @@ and this project adheres to
   it may write, which are what separate it from `BlockContext` and the
   first thing worth seeing from a `render` writing somewhere it did
   not mean to.
+- `Default` for `PinMode`, which is `Input` — what a pin is until
+  something says otherwise, as the type's documentation already said
+  without the type being able to.
 
 ### Fixed
 

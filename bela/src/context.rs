@@ -26,10 +26,12 @@ use core::slice;
 
 use bela_sys::BelaContext;
 
-/// Direction of a digital (GPIO) pin. All pins begin as inputs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Direction of a digital (GPIO) pin. All pins begin as inputs, which
+/// is what [`PinMode::default()`](Default::default) is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PinMode {
     /// The pin reads external logic levels (the default).
+    #[default]
     Input,
     /// The pin drives the value set with the `digital_write` family.
     Output,
@@ -1640,6 +1642,13 @@ pub(crate) mod tests {
 
         assert_eq!(context.audio_read(0, 0), 0.0);
         assert_eq!(context.analog_read(0, 0), 0.0);
+    }
+
+    #[test]
+    fn a_pin_begins_as_an_input() {
+        // What the hardware does before anything asks otherwise, so it
+        // is the only thing the default can be.
+        assert_eq!(PinMode::default(), PinMode::Input);
     }
 
     #[test]
