@@ -63,6 +63,15 @@ and this project adheres to
   a run keyed by its settings, or faults counted per error, no longer
   depends on which type the crate happened to derive it for.
 
+### Changed
+
+- `Settings::new` is a `const fn`. All thirteen builder methods
+  already were, so the only thing keeping a configuration out of a
+  `const` was where it started: `const SETTINGS: Settings =
+  Settings::new().period_size(64);` now compiles. `Settings::default`
+  is the same value, and is written in terms of `new` rather than
+  derived so that there is one place saying what empty means.
+
 ### Fixed
 
 - The Bela Gem documentation on the context types and `Settings` said
