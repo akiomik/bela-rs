@@ -73,7 +73,7 @@ pub struct CpuUsage {
 
 impl CpuUsage {
     /// Reads Bela's counters.
-    const fn from_raw(raw: &BelaCpuData) -> Self {
+    const fn from_sys(raw: &BelaCpuData) -> Self {
         Self {
             percentage: raw.percentage,
             busy: raw.busy,
@@ -238,7 +238,7 @@ macro_rules! cpu_usage {
                 /// one goes by before anyone looks.
                 #[must_use]
                 pub fn cpu_usage(&self) -> Option<CpuUsage> {
-                    monitoring_data().map(|data| CpuUsage::from_raw(&data))
+                    monitoring_data().map(|data| CpuUsage::from_sys(&data))
                 }
             }
         )+
@@ -536,7 +536,7 @@ impl CpuTimer {
     /// Reads the current counters.
     #[must_use]
     pub const fn usage(&self) -> CpuUsage {
-        CpuUsage::from_raw(&self.data)
+        CpuUsage::from_sys(&self.data)
     }
 
     #[cfg(bela_device)]
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn a_reading_reports_belas_counters() {
-        let usage = CpuUsage::from_raw(&measured());
+        let usage = CpuUsage::from_sys(&measured());
 
         assert!(
             (usage.percentage() - 12.34).abs() < f32::EPSILON,
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn a_reading_prints_the_percentage_and_the_cycle() {
-        let usage = CpuUsage::from_raw(&measured());
+        let usage = CpuUsage::from_sys(&measured());
 
         assert_eq!(
             usage.to_string(),
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn nothing_measured_yet_reads_as_zero() {
-        let usage = CpuUsage::from_raw(&ZEROED_CPU_DATA);
+        let usage = CpuUsage::from_sys(&ZEROED_CPU_DATA);
 
         assert_eq!(usage.percentage(), 0.0);
         assert_eq!(usage.busy(), Duration::ZERO);

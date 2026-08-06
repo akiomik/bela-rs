@@ -10,15 +10,40 @@ and this project adheres to
 
 ### Added
 
+- `Board`, `DetectMode` and `Version`: what a program is running on.
+  `Board::detect` wraps `Bela_detectHw` and takes the detect mode as an
+  argument, because the modes differ in which of the two `belaconfig`
+  files they trust and whether they fall back to scanning;
+  `Version::running` wraps `Bela_getVersion` and `Version::HEADERS` is
+  what the vendored headers said, so a binary can report both and name
+  a board image that is not the one it was built against. Neither call
+  needs an audio system, so a program that was only ever measured
+  against one board can say so and decline before it brings one up. A
+  board the vendored headers do not name is kept as
+  `Board::Unrecognised` with the number libbela returned, rather than
+  being read as a board this crate does know. Both types convert to
+  their C spelling through `to_sys` and `From` — `BelaHw::from(board)`,
+  `BelaHwDetectMode::from(mode)` — matching the `as_sys` already on the
+  context types; the way back is `Board::from_sys` rather than a `From`
+  impl, because `BelaHw` is an alias for `c_int` and the impl would
+  claim that every `i32` is a board.
+- `examples/board_info`, which prints the detected board and the Bela
+  version and nothing else. It brings no audio system up and touches no
+  audio hardware, so it answers on a board that is already doing
+  something else — the first thing to ask for from anyone reporting a
+  problem. With `--all-modes` it reports what each detect mode says
+  instead, asking the scan last: it writes the file the other modes
+  read, so going first would leave them reporting what that same run
+  had just written.
 - `examples/io_config`, a hardware probe for how a board configures its
   analog and digital I/O. It brings one audio system up per process
   and reports the `BelaContext` that `setup` and the first block see —
   the channel counts, frame counts and sample rates of all three
   domains — for a configuration given on its command line, alongside
-  what `Bela_detectHw` and `Bela_defaultSettings` say before any audio
-  system exists. Nothing is wired to the board for it: it asks what
-  shape the block is, which is what the accessors on the context types
-  index against.
+  the board it detects, the version of the library that detected it and
+  what `Bela_defaultSettings` says before any audio system exists.
+  Nothing is wired to the board for it: it asks what shape the block
+  is, which is what the accessors on the context types index against.
 
 ### Fixed
 

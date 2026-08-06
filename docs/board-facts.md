@@ -38,6 +38,69 @@ on the device are recorded here.
   closure, `GPIOcontrol.h` and `Utilities.h` are byte-identical to the
   currently vendored copies; only `Bela.h` differs.
 
+## Board identity and version
+
+Collected 2026-08-06 with `bela/examples/board_info`, which brings no
+audio system up: everything here is what libbela answers before
+`Bela_initAudio` is called at all.
+
+- **The library reports version 1.18.0** (`Bela_getVersion`), which is
+  what `include/Bela.h` says and what the vendored headers carry as
+  `BELA_MAJOR_VERSION` and its siblings. So on this image the running
+  library and the committed bindings describe the same API — the
+  comparison is only worth printing because it is not guaranteed: the
+  version comes from the library at run time and the macros from the
+  headers at build time.
+- **The board detects as `GemStereo` through four of the five detect
+  modes**, and `/run/bela/belaconfig` holds `HARDWARE=GemStereo`. The
+  table is in the order they were asked, which is not the order the C
+  enum declares them: `Scan` writes the file the three cache and user
+  modes read, so it goes last and the four above it report what was
+  already on the board rather than what this run had just written.
+
+  | mode | answer |
+  |---|---|
+  | `Cache` | `GemStereo` |
+  | `CacheOnly` | `GemStereo` |
+  | `User` | `GemStereo` |
+  | `UserOnly` | `NoHw` |
+  | `Scan` | `GemStereo` |
+
+- **`UserOnly` answers `NoHw` on a board that plainly has hardware**,
+  because there is no `~/.bela/belaconfig` — `/root/.bela` does not
+  exist on this image — and that mode reads only the user's file with
+  no fallback. The measurement is what "the detect modes are not
+  interchangeable" means in practice: a program that picked `UserOnly`
+  as its default would decide it was running on nothing.
+- **`Scan` is the mode with a side effect, and it agreed with the cache
+  the daemon had written.** It goes out over the buses and writes
+  `/run/bela/belaconfig`; the other four read a file. Asked last, after
+  the cache modes had reported what the daemon left at boot, it
+  answered `GemStereo` and left the file holding the same
+  `HARDWARE=GemStereo` it started with — so the daemon's cache and a
+  fresh scan of the buses say the same thing on this board.
+  `scripts/smoke-test.sh` keeps that honest from the other end: it reads
+  the file before it runs anything and again after everything, and puts
+  it back if the run changed it.
+- **Bringing an audio system up writes the cache too, and a scan is not
+  the only thing that does** (measured 2026-08-07). With
+  `/run/bela/belaconfig` removed and `bela_daemon` stopped,
+  `bela/examples/sine` — which detects nothing itself — was run for
+  three seconds, and the file was back afterwards holding
+  `HARDWARE=GemStereo`. So on a board that has never been scanned, any
+  program that brings an audio system up leaves a cache behind, which
+  is why the smoke test takes its reading before the first binary runs
+  rather than around the one probe that detects on purpose. **Which
+  call writes it is not measured**: a run that comes up goes through
+  `Bela_defaultSettings`, `Bela_initAudio`, `Bela_startAudio` and
+  `Bela_cleanupAudio`, the headers do not say which of them detects,
+  and separating them would need a probe that calls one and stops.
+  Nothing here depends on the answer — reading before the first binary
+  covers all four.
+- **Nothing here is measured on a Gem Multi.** There is no Multi to
+  measure on, so `Board::GemMulti` is a name taken from the headers and
+  nothing in this file claims what one reports.
+
 ## Build and link information
 
 Captured from a verbose on-board build:
@@ -232,12 +295,12 @@ settings, which is what the accessors on the context types index
 against. Whether a pin then does what the accessor says is a separate
 measurement and is not recorded here yet.
 
-- **The board identifies as `GemStereo`**, and libbela has no
-  `BelaHwConfig` for it: `Bela_detectHw(Cache)` returns 2
-  (`BelaHw_GemStereo`) and `Bela_HwConfig_new` on that value returns
-  null. So the channel counts below do not come from the table
-  `Bela_HwConfig_new` reads; on this hardware only `Bela_initAudio`
-  knows them.
+- **The board identifies as `GemStereo`** (see "Board identity and
+  version" above), **and libbela has no `BelaHwConfig` for it**:
+  `Bela_detectHw(Cache)` returns 2 (`BelaHw_GemStereo`) and
+  `Bela_HwConfig_new` on that value returns null. So the channel counts
+  below do not come from the table `Bela_HwConfig_new` reads; on this
+  hardware only `Bela_initAudio` knows them.
 - **What `Bela_defaultSettings` asks for is not what the block gets.**
   The defaults are 8 analog in, **8 analog out**, 16 digital, 16 frames
   per period, 44100 Hz, one render thread, `useAnalog` and `useDigital`

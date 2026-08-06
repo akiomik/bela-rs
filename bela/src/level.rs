@@ -139,7 +139,7 @@ impl Channel {
             reason = "only the device-gated audio system sets levels; still unit-tested on the host"
         )
     )]
-    const fn to_c_int(self) -> c_int {
+    const fn to_sys(self) -> c_int {
         match self {
             Self::All => -1,
             #[allow(
@@ -193,7 +193,7 @@ impl<T: BelaApplication> Bela<T> {
         // Safety: an audio system exists — this needs the handle that
         // owns it — and libbela's own settings path calls this the same
         // way, from the thread that brought the audio system up.
-        let ret = unsafe { bela_sys::Bela_setLineOutLevel(channel.to_c_int(), decibels) };
+        let ret = unsafe { bela_sys::Bela_setLineOutLevel(channel.to_sys(), decibels) };
         if ret == 0 {
             Ok(())
         } else {
@@ -217,7 +217,7 @@ impl<T: BelaApplication> Bela<T> {
     pub fn set_headphone_level(&mut self, channel: Channel, decibels: f32) -> Result<(), Error> {
         check_decibels(decibels)?;
         // Safety: as for `set_line_out_level`.
-        let ret = unsafe { bela_sys::Bela_setHpLevel(channel.to_c_int(), decibels) };
+        let ret = unsafe { bela_sys::Bela_setHpLevel(channel.to_sys(), decibels) };
         if ret == 0 {
             Ok(())
         } else {
@@ -245,7 +245,7 @@ impl<T: BelaApplication> Bela<T> {
     pub fn set_audio_input_gain(&mut self, channel: Channel, decibels: f32) -> Result<(), Error> {
         check_decibels(decibels)?;
         // Safety: as for `set_line_out_level`.
-        let ret = unsafe { bela_sys::Bela_setAudioInputGain(channel.to_c_int(), decibels) };
+        let ret = unsafe { bela_sys::Bela_setAudioInputGain(channel.to_sys(), decibels) };
         if ret == 0 {
             Ok(())
         } else {
@@ -285,15 +285,15 @@ mod tests {
 
     #[test]
     fn all_channels_is_belas_negative_channel() {
-        assert_eq!(Channel::All.to_c_int(), -1);
+        assert_eq!(Channel::All.to_sys(), -1);
     }
 
     #[test]
     fn a_channel_number_is_passed_through() {
-        assert_eq!(Channel::One(0).to_c_int(), 0);
-        assert_eq!(Channel::One(1).to_c_int(), 1);
+        assert_eq!(Channel::One(0).to_sys(), 0);
+        assert_eq!(Channel::One(1).to_sys(), 1);
         assert_eq!(
-            Channel::One(c_int::MAX.unsigned_abs() as usize).to_c_int(),
+            Channel::One(c_int::MAX.unsigned_abs() as usize).to_sys(),
             c_int::MAX
         );
     }
@@ -349,7 +349,7 @@ mod tests {
         // happen.
         for channel in [c_int::MAX.unsigned_abs() as usize + 1, usize::MAX] {
             assert!(
-                Channel::One(channel).to_c_int() > 0,
+                Channel::One(channel).to_sys() > 0,
                 "channel {channel} must not arrive as a request to set every channel"
             );
         }

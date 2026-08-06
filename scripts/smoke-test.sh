@@ -46,6 +46,9 @@ daemon_was_active=no
 LOG_DIR="$(mktemp -d)"
 
 pass() { printf '  ok    %s\n' "$1"; }
+# For a check this board gives nothing to check — not a pass, and not a
+# failure of what is being tested. Rare enough to have one caller.
+skip() { printf '  skip  %s\n' "$1"; }
 fail() {
   printf '  FAIL  %s\n' "$1"
   failures=$((failures + 1))
@@ -73,7 +76,9 @@ if [ "$DURATION" -lt "$MIN_DURATION" ]; then
 fi
 
 # Leave the board as it was found, whether the checks passed, one of
-# them failed, or the run was interrupted.
+# them failed, or the run was interrupted. The binaries and the daemon
+# are handled here; the hardware cache is not, and where it is compared
+# says why.
 restore() {
   status=$?
   # shellcheck disable=SC2029 # the remote path is meant to expand here
@@ -96,6 +101,35 @@ if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>
   daemon_was_active=yes
 fi
 remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
+
+# What the hardware cache holds before anything here has run, which is
+# the only reading that says what the board looked like. Every example
+# below brings an audio system up, and doing that writes the cache, so
+# the file can be written by any of them — not only by the scan
+# `board_info --all-modes` ends with; that is measured, see "Board
+# identity and version" in docs/board-facts.md. It is compared and put
+# back at the end of the run.
+#
+# Only a run that reaches the end puts it back. This is the one thing
+# here that `restore` does not cover, because a comparison belongs with
+# the checks rather than in a trap that also runs on the way out of a
+# failure — so an interrupted run can leave a cache on a board that had
+# none. What it leaves is what libbela writes, so the cost is a file
+# rather than a wrong one; `rm /run/bela/belaconfig` undoes it, and a
+# reboot does too, the file being on tmpfs.
+#
+# Three readings, not two: a board that has never been scanned has no
+# file at all, which is restored by removing one rather than by writing
+# a blank one, and a reading that could not be taken must not be acted
+# on either way. The markers cannot collide with the contents, which
+# are `HARDWARE=<board>` lines.
+BELACONFIG=/run/bela/belaconfig
+ABSENT="(no file)"
+UNREADABLE="(unreadable)"
+belaconfig() {
+  remote "cat $BELACONFIG 2>/dev/null || echo '$ABSENT'" || echo "$UNREADABLE"
+}
+belaconfig_before="$(belaconfig)"
 
 # The remote half: run one example for a while, interrupt it, and
 # report how it went. Kept on the board so the quoting stays readable.
@@ -408,6 +442,57 @@ else
   pass "command_line: an unrecognised option was refused (exit $status)"
 fi
 
+# What the board says it is, and which libbela said it. No audio system
+# is involved, so this is driven directly rather than through the loop
+# above, and it is the one check here that would still answer on a board
+# whose audio never comes up.
+if [ ! -x "$BIN_DIR/board_info" ]; then
+  fail "board_info: not built at $BIN_DIR/board_info"
+else
+  scp -q -o ConnectTimeout=10 "$BIN_DIR/board_info" "$HOST:$REMOTE_DIR/board_info"
+  remote "chmod +x $REMOTE_DIR/board_info"
+  info="$(remote "cd $REMOTE_DIR && ./board_info 2>&1" || echo "board: run-failed")"
+  board="$(echo "$info" | sed -n 's/^board: //p' | head -1)"
+  version="$(echo "$info" | sed -n 's/^version: //p' | head -1)"
+
+  case "$board" in
+  "" | run-failed) fail "board_info: no board was reported ($info)" ;;
+  NoHw) fail "board_info: libbela detected no hardware, on a board that is running this" ;;
+  # A board the vendored headers do not name. Not a failure of the
+  # binding — it is the case `Board::Unrecognised` exists for — but on
+  # this board it means the image moved and the headers have not.
+  unrecognised*) fail "board_info: the board reports as $board, which these headers do not name" ;;
+  *) pass "board_info: the board reports as $board" ;;
+  esac
+
+  # The example names both versions only when they differ, so a bare
+  # number is the agreement. The vendored headers are what the committed
+  # bindings describe, so a disagreement means the bindings may not
+  # describe the libbela they just linked against (see
+  # `cargo xtask check-vendor`).
+  case "$version" in
+  "") fail "board_info: no version was reported ($info)" ;;
+  *"built against"*) fail "board_info: $version" ;;
+  *) pass "board_info: libbela $version, which is what the vendored headers say" ;;
+  esac
+
+  # Every detect mode answers. They need not agree — a board with no
+  # `~/.bela/belaconfig` has `user-only` answering `NoHw`, which is the
+  # mode doing its job — so the check is that each one reported at all.
+  # `--all-modes` ends with the scan, whose effect on the cache is
+  # checked at the end of the script rather than here: every audio
+  # system this script brings up detects the hardware too, so the scan
+  # is not the only thing that could have written the file.
+  all_modes="$(remote "cd $REMOTE_DIR && ./board_info --all-modes 2>&1" || true)"
+  modes="$(echo "$all_modes" | grep -c '^board\[' || true)"
+  if [ "$modes" = 5 ]; then
+    pass "board_info: all five detect modes answered"
+  else
+    fail "board_info: $modes of five detect modes answered"
+    echo "$all_modes" | sed 's/^/        /' >&2
+  fi
+fi
+
 # The audio system rules that only a board can answer. One audio system
 # per run and no `Bela::run`, so these are driven directly rather than
 # through the loop above: three of these checks abort the initialisation
@@ -623,6 +708,34 @@ against ${single_section}% on one, which is not a share of the work"
       fi
     fi
   done
+fi
+
+# The hardware cache, last: everything above has run, so this is the
+# whole of what this script did to `/run/bela/belaconfig` — the scan
+# `board_info --all-modes` ends with, and the detection every
+# `Bela_initAudio` does on its way up. What they write is what the
+# daemon writes, and that is the claim rather than the assumption.
+belaconfig_after="$(belaconfig)"
+if [ "$belaconfig_before" = "$UNREADABLE" ] || [ "$belaconfig_after" = "$UNREADABLE" ]; then
+  # Nothing is written back on a reading that could not be taken:
+  # restoring from one is how a board with a working cache loses it.
+  fail "belaconfig: $BELACONFIG could not be read \
+('$belaconfig_before' / '$belaconfig_after'), so it was left untouched"
+elif [ "$belaconfig_before" = "$ABSENT" ]; then
+  # A board that had never been scanned: there was no cache for a scan
+  # to be compared with, and this run is what created one. Nothing has
+  # gone wrong — the check has nothing to check — so the file this
+  # script caused is removed and the board is left as it was found.
+  skip "belaconfig: the board had no $BELACONFIG, so nothing could be compared with it"
+  remote "rm -f $BELACONFIG" || true
+elif [ "$belaconfig_before" = "$belaconfig_after" ]; then
+  pass "belaconfig: $BELACONFIG is what it was before the run"
+else
+  fail "belaconfig: the run rewrote $BELACONFIG \
+('$belaconfig_before' became '$belaconfig_after'); restoring"
+  # Put back what was found, so the next thing to read the cache sees
+  # what the board booted with rather than what this run left.
+  remote "printf '%s\n' '$belaconfig_before' > $BELACONFIG" || true
 fi
 
 echo
