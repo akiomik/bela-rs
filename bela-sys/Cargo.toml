@@ -1,6 +1,8 @@
 [package]
 name = "bela-sys"
 description = "Raw FFI bindings to the Bela core API (libbela) for Bela Gem"
+readme = "README.md"
+documentation = "https://docs.rs/bela-sys"
 links = "bela"
 version.workspace = true
 authors.workspace = true
