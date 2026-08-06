@@ -71,6 +71,15 @@
 //! in an [`AuxiliaryTask`], which `render` triggers with a real-time
 //! safe `schedule` call.
 //!
+//! MIDI arrives through [`MidiInput`], opened in `setup` with a name
+//! from [`midi_ports`] and read once per block from
+//! [`render_pre`](BelaApplication::render_pre): taking a message is a
+//! ring read, and what it changes is what `render` then plays. The
+//! messages are [`MidiMessage`], and what they carry — [`Note`],
+//! [`Velocity`], [`MidiChannel`] and the rest — are types of their own
+//! rather than bytes, because a note and a velocity are two numbers in
+//! the same range.
+//!
 //! Debugging output from the audio thread goes through
 //! [`rt_println!`], which formats into a fixed-size stack buffer and
 //! hands it to Bela's real-time print function — `println!` allocates
@@ -123,6 +132,7 @@ mod cpu;
 mod error;
 mod hardware;
 mod level;
+mod midi;
 mod print;
 mod runtime;
 mod settings;
@@ -142,6 +152,10 @@ pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
 pub use hardware::{Board, DetectMode, Version};
 pub use level::{Channel, MAX_DECIBELS};
+pub use midi::{
+    ControlValue, Controller, MidiChannel, MidiInput, MidiMessage, Note, PitchBend, Pressure,
+    Program, Velocity, midi_ports,
+};
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
 #[cfg(bela_device)]

@@ -96,6 +96,45 @@ pub enum Error {
     AudioInputGain(i32),
     /// `Bela_muteSpeakers` failed with the contained return code.
     MuteSpeakers(i32),
+    /// A MIDI port name contained a NUL byte.
+    MidiPortName,
+    /// A `Midi` object could not be created, or the crate was built for
+    /// a target with no `libbelaextra` to create one in.
+    MidiCreate,
+    /// A MIDI port could not be opened, with what the shim reported.
+    ///
+    /// [`bela_sys::BELA_MIDI_NO_SUCH_PORT`] for a name no port has —
+    /// the names are the ones [`midi_ports`](crate::midi_ports) lists,
+    /// which carry the subdevice — and a negative `errno` when ALSA
+    /// refused the device itself, `-16` for a port something else
+    /// already holds. The two are told apart rather than sharing `-1`,
+    /// which would be the first of them and `EPERM`.
+    ///
+    /// [`bela_sys::BELA_MIDI_ALREADY_OPEN`] is the third value the
+    /// shim can report and cannot arrive here: this crate opens each
+    /// port on an object of its own, and drops it when the open fails.
+    MidiOpen(i32),
+    /// A MIDI value did not fit the type it was converted into.
+    ///
+    /// Carries what was given, the largest that type takes — 127 for a
+    /// data byte, 15 for a channel, 16383 for a pitch bend — and what
+    /// the type is. The wire has no room for more, and masking the
+    /// extra bits off would turn a number that was wrong into a
+    /// different number that is not.
+    ///
+    /// The name is there because a note and a velocity are two numbers
+    /// in the same range, which is the whole reason they are separate
+    /// types: an error that only said "127" would put them back
+    /// together.
+    MidiValue {
+        /// What was given.
+        value: u16,
+        /// The largest the type takes.
+        max: u16,
+        /// What the type holds, as it reads in a sentence — `"note
+        /// number"`, `"velocity"`, `"channel"`.
+        kind: &'static str,
+    },
     /// A level or gain was not a number of decibels libbela can convert
     /// into register values: not finite, or larger in magnitude than
     /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
@@ -162,6 +201,23 @@ impl fmt::Display for Error {
                 write!(f, "Bela_setAudioInputGain failed with code {code}")
             }
             Self::MuteSpeakers(code) => write!(f, "Bela_muteSpeakers failed with code {code}"),
+            Self::MidiPortName => write!(f, "the MIDI port name contains a NUL byte"),
+            Self::MidiCreate => write!(f, "a Bela Midi object could not be created"),
+            Self::MidiOpen(code) if *code == bela_sys::BELA_MIDI_NO_SUCH_PORT => write!(
+                f,
+                "no MIDI port has that name; it has to be one of those listed by midi_ports, \
+                 which carry the subdevice, as in hw:0,0,0"
+            ),
+            Self::MidiOpen(code) if *code == bela_sys::BELA_MIDI_ALREADY_OPEN => {
+                write!(f, "that direction of this MIDI port is already open")
+            }
+            Self::MidiOpen(code) => write!(
+                f,
+                "the MIDI port could not be opened ({code}), which is -errno as ALSA reported it"
+            ),
+            Self::MidiValue { value, max, kind } => {
+                write!(f, "{value} is more than the {max} a {kind} carries")
+            }
             Self::Decibels => write!(
                 f,
                 "a level must be a finite number of decibels of at most {max} in magnitude, \

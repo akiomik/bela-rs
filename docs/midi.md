@@ -292,9 +292,14 @@ Nothing here needs redesigning, so nothing is redesigned.
 `readFrom()` starts an `RtThread` (`Midi.cpp:338`) that polls with a
 50 ms timeout, appends to a 1000-byte ring and feeds a `MidiParser`
 byte by byte. Parsed messages land in a 100-message ring
-(`Midi.h:155`) that `getNextChannelMessage()` drains. Read from
-`render`, that is a ring read: no allocation, no system call, no
-blocking.
+(`Midi.h:155`) that `getNextChannelMessage()` drains. Taking one is a
+ring read: no allocation, no system call, no blocking, so a real-time
+thread may do it.
+
+*May*, not *should*. The ring has one reader — see [the shape that
+follows](#the-shape-that-follows-on-the-way-in) — and `render` is
+called on every render thread at once, so the crate does not offer it
+there.
 
 Two details the wrapper is shaped by:
 
@@ -311,6 +316,24 @@ Two details the wrapper is shaped by:
   nobody sent. The parser discards it; a raw-byte reader would not,
   which is a second reason the crate exposes parsed messages rather
   than bytes.
+
+### The shape that follows, on the way in
+
+- **One reader.** `getNextChannelMessage` advances a read pointer that
+  nothing synchronises (`Midi.h:253`), so the API takes `&mut self` to
+  read. That puts reading in `render_pre` and `render_post`, which run
+  once per block on the main audio thread, and keeps it out of
+  `render`, where the application is `&self` on every render thread at
+  once. It is the same argument as the output side's single writer,
+  arrived at from the other end of the same ring.
+- **`render_pre` is where it belongs anyway.** What a block's messages
+  change is what `render` then plays, so reading them before the
+  render threads are woken is the order the work already wants.
+- **Falling behind is silent.** The input thread laps the reader
+  without noticing (`Midi.cpp:99`), so a program that reads more
+  slowly than a device sends loses its oldest unread messages and sees
+  the count drop rather than saturate. That is why the count is
+  exposed at all.
 
 ## Ports, as named on the board
 
@@ -369,6 +392,8 @@ Measured with the shim, on the same board:
 | `Midi.cpp:354` | `writeTo` opens the output device **blocking**, alone among the four `snd_rawmidi_open` calls in the file — the other three pass `SND_RAWMIDI_NONBLOCK`. On a port another process holds for output it therefore waits rather than failing, with no timeout: measured on the board, a program calling it never came back and had to be killed | the shim opens the port non-blocking first and closes it again, so the answer is `-EBUSY`. There is a window between the check and the real open that only owning the handle would close |
 | `Midi.cpp:332` | `readFrom` and `writeTo` can fail with the ALSA device already open — neither closes it when the port information or the thread cannot be had — and leave `inputEnabled` / `outputEnabled` false, which is what a caller has to read to know whether it worked | the shim refuses a second open, but only when the first one set the flag; a failed open therefore ends the object, and the safe API makes a new one per `open` and drops that one on failure, which closes the device |
 | `Midi.cpp:52` | `MidiParser::parse()` counts each status byte twice in its return value | no caller uses it |
+| `Midi.cpp:77` | **Running status is not implemented.** A data byte arriving while the parser waits for a status byte is discarded, so a message that leaves its status byte out — which is how most keyboards send a stream of notes, and what the ALSA sequencer re-encodes to — is lost without a trace. **Measured**: through the `snd-virmidi` wiring below, `90 3C 64` followed by `90 40 6E` arrives as one message, while `91 3C 64` followed by `81 3C 40` arrives as two | nothing here can answer it: the alternative is the raw byte path, which means writing the parser this crate exists not to write. `MidiInput` documents it |
+| `Midi.cpp:89` | A system real-time byte — clock, start, stop — is allowed to arrive between any two bytes of another message, and the parser is only looking for one while `waitingForStatus`. Arriving mid-message it is taken as a data byte, and the message it interrupted is wrong | nothing here can answer it; a device sending clock while a note is in flight is where it would show |
 
 ## Not the third way
 
