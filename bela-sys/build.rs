@@ -20,6 +20,12 @@ const LIBS: &[&str] = &["bela", "seasocks", "evl", "stdc++"];
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-env-changed=BELA_SYSROOT");
+    // Nothing here reads BELA_CC — scripts/aarch64-bela-linker.sh
+    // does, and cargo cannot see into a linker it was handed as a path.
+    // Declaring it makes changing the compiler rebuild this crate, and
+    // so relink whatever links it, instead of leaving a binary built by
+    // the previous one in place.
+    println!("cargo::rerun-if-env-changed=BELA_CC");
 
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
