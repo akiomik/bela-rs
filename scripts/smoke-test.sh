@@ -408,6 +408,52 @@ else
   pass "command_line: an unrecognised option was refused (exit $status)"
 fi
 
+# What the board says it is, and which libbela said it. No audio system
+# is involved, so this is driven directly rather than through the loop
+# above, and it is the one check here that would still answer on a board
+# whose audio never comes up.
+if [ ! -x "$BIN_DIR/board_info" ]; then
+  fail "board_info: not built at $BIN_DIR/board_info"
+else
+  scp -q -o ConnectTimeout=10 "$BIN_DIR/board_info" "$HOST:$REMOTE_DIR/board_info"
+  remote "chmod +x $REMOTE_DIR/board_info"
+  info="$(remote "cd $REMOTE_DIR && ./board_info 2>&1" || echo "board: run-failed")"
+  board="$(echo "$info" | sed -n 's/^board: //p' | head -1)"
+  version="$(echo "$info" | sed -n 's/^version: //p' | head -1)"
+
+  case "$board" in
+  "" | run-failed) fail "board_info: no board was reported ($info)" ;;
+  NoHw) fail "board_info: libbela detected no hardware, on a board that is running this" ;;
+  # A board the vendored headers do not name. Not a failure of the
+  # binding — it is the case `Board::Unrecognised` exists for — but on
+  # this board it means the image moved and the headers have not.
+  unrecognised*) fail "board_info: the board reports as $board, which these headers do not name" ;;
+  *) pass "board_info: the board reports as $board" ;;
+  esac
+
+  # The example names both versions only when they differ, so a bare
+  # number is the agreement. The vendored headers are what the committed
+  # bindings describe, so a disagreement means the bindings may not
+  # describe the libbela they just linked against (see
+  # `cargo xtask check-vendor`).
+  case "$version" in
+  "") fail "board_info: no version was reported ($info)" ;;
+  *"built against"*) fail "board_info: $version" ;;
+  *) pass "board_info: libbela $version, which is what the vendored headers say" ;;
+  esac
+
+  # Every detect mode answers. They need not agree — a board with no
+  # `~/.bela/belaconfig` has `user-only` answering `NoHw`, which is the
+  # mode doing its job — so the check is that each one reported at all.
+  modes="$(remote "cd $REMOTE_DIR && ./board_info --all-modes 2>&1" |
+    grep -c '^board\[' || true)"
+  if [ "$modes" = 5 ]; then
+    pass "board_info: all five detect modes answered"
+  else
+    fail "board_info: $modes of five detect modes answered"
+  fi
+fi
+
 # The audio system rules that only a board can answer. One audio system
 # per run and no `Bela::run`, so these are driven directly rather than
 # through the loop above: three of these checks abort the initialisation

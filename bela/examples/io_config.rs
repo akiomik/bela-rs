@@ -23,11 +23,11 @@
 //! # What each run does
 //!
 //! - `hardware` — what libbela says the board is, before any audio
-//!   system exists: `Bela_detectHw`, the `BelaHwConfig` that hardware
-//!   implies, and the analog and digital fields of
-//!   `Bela_defaultSettings`. The only probe here that brings nothing
-//!   up, so it is also the only one whose answer cannot depend on the
-//!   settings it was asked for.
+//!   system exists: the detected board and the version of the library
+//!   that detected it, the `BelaHwConfig` that hardware implies, and
+//!   the analog and digital fields of `Bela_defaultSettings`. The only
+//!   probe here that brings nothing up, so it is also the only one
+//!   whose answer cannot depend on the settings it was asked for.
 //! - `context [options]` — brings one audio system up with the options
 //!   given, reports the `BelaContext` that `setup` sees and the one the
 //!   first block sees, renders for a moment and tears it down. The
@@ -212,10 +212,9 @@ mod probes {
 
     use bela::bela_sys::{
         Bela_HwConfig_delete, Bela_HwConfig_new, Bela_InitSettings_alloc, Bela_InitSettings_free,
-        Bela_defaultSettings, Bela_detectHw, BelaHw, BelaHwDetectMode,
-        BelaHwDetectMode_BelaHwDetectMode_Cache,
+        Bela_defaultSettings,
     };
-    use bela::{Bela, Settings};
+    use bela::{Bela, Board, DetectMode, Settings, Version};
 
     use super::{Report, report};
 
@@ -226,69 +225,36 @@ mod probes {
 
     /// Reads the cached detection rather than scanning.
     ///
-    /// `BelaHwDetectMode_Cache` is what the daemon leaves behind in
+    /// `DetectMode::Cache` is what the daemon leaves behind in
     /// `/run/bela/belaconfig`, and a scan would go out over I²C to find
     /// out something this probe only wants reported.
-    const DETECT_CACHED: BelaHwDetectMode = BelaHwDetectMode_BelaHwDetectMode_Cache;
+    const DETECT_CACHED: DetectMode = DetectMode::Cache;
 
-    /// Every `BelaHw` the vendored headers name, with its name.
+    /// The board with the number it is, so that the record says
+    /// `GemStereo(2)` rather than either on its own.
     ///
-    /// A table rather than a `match`, because the generated bindings
-    /// spell these constants in C's case and a pattern made of them
-    /// warns on every arm.
-    const HARDWARE_NAMES: [(BelaHw, &str); 17] = {
-        use bela::bela_sys::{
-            BelaHw_BelaHw_Batch, BelaHw_BelaHw_Bela, BelaHw_BelaHw_BelaEs9080,
-            BelaHw_BelaHw_BelaMini, BelaHw_BelaHw_BelaMiniMultiAudio,
-            BelaHw_BelaHw_BelaMiniMultiI2s, BelaHw_BelaHw_BelaMiniMultiTdm,
-            BelaHw_BelaHw_BelaMultiTdm, BelaHw_BelaHw_BelaRevC, BelaHw_BelaHw_CtagBeast,
-            BelaHw_BelaHw_CtagBeastBela, BelaHw_BelaHw_CtagFace, BelaHw_BelaHw_CtagFaceBela,
-            BelaHw_BelaHw_GemMulti, BelaHw_BelaHw_GemStereo, BelaHw_BelaHw_NoHw,
-            BelaHw_BelaHw_Salt,
-        };
-
-        [
-            (BelaHw_BelaHw_NoHw, "NoHw"),
-            (BelaHw_BelaHw_Bela, "Bela"),
-            (BelaHw_BelaHw_BelaMini, "BelaMini"),
-            (BelaHw_BelaHw_GemStereo, "GemStereo"),
-            (BelaHw_BelaHw_GemMulti, "GemMulti"),
-            (BelaHw_BelaHw_Salt, "Salt"),
-            (BelaHw_BelaHw_CtagFace, "CtagFace"),
-            (BelaHw_BelaHw_CtagBeast, "CtagBeast"),
-            (BelaHw_BelaHw_CtagFaceBela, "CtagFaceBela"),
-            (BelaHw_BelaHw_CtagBeastBela, "CtagBeastBela"),
-            (BelaHw_BelaHw_BelaMiniMultiAudio, "BelaMiniMultiAudio"),
-            (BelaHw_BelaHw_BelaMiniMultiTdm, "BelaMiniMultiTdm"),
-            (BelaHw_BelaHw_BelaMultiTdm, "BelaMultiTdm"),
-            (BelaHw_BelaHw_BelaMiniMultiI2s, "BelaMiniMultiI2s"),
-            (BelaHw_BelaHw_BelaEs9080, "BelaEs9080"),
-            (BelaHw_BelaHw_BelaRevC, "BelaRevC"),
-            (BelaHw_BelaHw_Batch, "Batch"),
-        ]
-    };
-
-    /// The name libbela's `BelaHw` enumeration gives a value, so that
-    /// the record says `GemStereo` rather than `2`.
-    ///
-    /// A value with no name here is worth more than "unknown": it means
-    /// the board's libbela knows a hardware the vendored headers do
-    /// not.
-    fn hardware_name(hw: BelaHw) -> String {
-        HARDWARE_NAMES
-            .iter()
-            .find(|(value, _)| *value == hw)
-            .map_or_else(
-                || format!("unnamed-{hw}"),
-                |(_, name)| format!("{name}({hw})"),
-            )
+    /// A value the crate has no name for is worth more than "unknown":
+    /// it means the board's libbela knows a hardware the vendored
+    /// headers do not, and [`Board::Unrecognised`] prints as
+    /// `unrecognised(<n>)` rather than losing the number.
+    fn hardware_name(board: Board) -> String {
+        if board.is_named() {
+            format!("{board}({raw})", raw = board.to_raw())
+        } else {
+            board.to_string()
+        }
     }
 
     /// What the board is, and what libbela expects of it, with no audio
     /// system anywhere in the picture.
     pub fn hardware() {
-        let hw = unsafe { Bela_detectHw(DETECT_CACHED) };
-        report("detect-hw", &hardware_name(hw));
+        let board = Board::detect(DETECT_CACHED);
+        report("detect-hw", &hardware_name(board));
+        // The library that answered, which is not necessarily the one
+        // this was built against: every number below is a claim about a
+        // particular libbela, and this is which one.
+        report("version", &Version::running().to_string());
+        let hw = board.to_raw();
 
         // The configuration libbela associates with that hardware,
         // which is where a Gem's channel counts come from before any

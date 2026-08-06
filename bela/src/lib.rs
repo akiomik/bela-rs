@@ -83,6 +83,14 @@
 //! [`Settings`], so the application keeps its own defaults, and
 //! [`print_usage`] prints the list.
 //!
+//! What the program is running on is [`Board::detect`] and
+//! [`Version::running`] — the board libbela says it found, and the
+//! version of the library it found it with. Both answer before there is
+//! an audio system, so a program built and measured against one board
+//! can say so and decline rather than fail partway through bringing one
+//! up, and an `examples/board_info` run is the first thing to ask for
+//! from anyone reporting a problem.
+//!
 //! [`Bela`] itself calls into `libbela` and therefore only exists when
 //! compiling for the device target (`aarch64-unknown-linux-gnu`); the
 //! rest of the crate — [`BelaApplication`], the contexts, [`Settings`]
@@ -99,6 +107,7 @@ mod cmdline;
 mod context;
 mod cpu;
 mod error;
+mod hardware;
 mod level;
 mod print;
 mod runtime;
@@ -117,6 +126,7 @@ pub use context::{
 };
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
+pub use hardware::{Board, DetectMode, Version};
 pub use level::{Channel, MAX_DECIBELS};
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
