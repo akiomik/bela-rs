@@ -47,3 +47,84 @@ pub use midi::{
     bela_midi_available_messages, bela_midi_delete, bela_midi_get_message, bela_midi_list_ports,
     bela_midi_new, bela_midi_read_from, bela_midi_write_output, bela_midi_write_to,
 };
+
+// The build script's toolchain logic, tested where a build script
+// cannot be: `cargo test` builds this crate, not `build.rs`. See
+// ../shim_compiler.rs.
+#[cfg(test)]
+mod shim_compiler {
+    extern crate std;
+
+    use std::borrow::ToOwned;
+    use std::format;
+    use std::string::String;
+
+    include!("../shim_compiler.rs");
+
+    #[test]
+    fn bela_cxx_is_taken_as_it_stands() {
+        assert_eq!(
+            shim_compiler_from("clang++", "aarch64-linux-gnu-gcc"),
+            Ok("clang++".to_owned()),
+            "an explicit C++ compiler outranks anything derived"
+        );
+    }
+
+    #[test]
+    fn a_c_compiler_ending_in_gcc_answers_for_both() {
+        // The two cases docs/cross-compile.md documents.
+        assert_eq!(
+            shim_compiler_from("", "aarch64-linux-gnu-gcc"),
+            Ok("aarch64-linux-gnu-g++".to_owned())
+        );
+        assert_eq!(shim_compiler_from("", "gcc"), Ok("g++".to_owned()));
+    }
+
+    #[test]
+    fn neither_set_is_the_tap_default() {
+        assert_eq!(
+            shim_compiler_from("", ""),
+            Ok(DEFAULT_CXX.to_owned()),
+            "the same default scripts/aarch64-bela-linker.sh has"
+        );
+    }
+
+    #[test]
+    fn a_c_compiler_nothing_follows_from_is_refused() {
+        // Deriving `ar`, or a C++ name, from this would mix
+        // toolchains silently, which the build script fails on
+        // instead.
+        let error = shim_compiler_from("", "clang").unwrap_err();
+        assert!(
+            error.contains("BELA_CXX"),
+            "the message should say what to set, got: {error}"
+        );
+    }
+
+    #[test]
+    fn the_archiver_follows_the_compiler_it_belongs_to() {
+        assert_eq!(
+            shim_archiver("aarch64-unknown-linux-gnu-g++"),
+            Some("aarch64-unknown-linux-gnu-ar".to_owned()),
+            "cc would otherwise look for one named after the target triple"
+        );
+        assert_eq!(shim_archiver("g++"), Some("ar".to_owned()));
+    }
+
+    #[test]
+    fn an_archiver_that_does_not_follow_is_left_to_cc() {
+        // `clang++` wants llvm-ar, and it also ends in the letters
+        // `g++`: deriving from it would name `clanar`. AR is the way
+        // out for those, and cc reads it.
+        assert_eq!(shim_archiver("clang++"), None);
+        assert_eq!(shim_archiver("aarch64-linux-gnu-clang++"), None);
+    }
+
+    #[test]
+    fn a_compiler_that_merely_ends_in_gcc_is_not_one() {
+        // Same trap on the compiler side: only a bare `gcc` or a
+        // `<triple>-gcc` names a toolchain to follow.
+        assert!(shim_compiler_from("", "notgcc").is_err());
+        assert_eq!(shim_archiver("notg++"), None);
+    }
+}

@@ -64,6 +64,15 @@ guess:
 export BELA_CXX=aarch64-linux-gnu-g++
 ```
 
+`BELA_CXX` and `BELA_CC` are what this reads, and `CXX` and
+`CXX_aarch64-unknown-linux-gnu` — which `cc` would otherwise honour —
+are not consulted: the compiler has to match the one the linker
+wrapper calls, and that wrapper knows only `BELA_CC`. The archiver
+follows the compiler's name (`aarch64-linux-gnu-g++` implies
+`aarch64-linux-gnu-ar`), except for names nothing follows from, such as
+a `clang++`; `AR` and `AR_aarch64-unknown-linux-gnu` are read first
+either way, so a toolchain that needs a different one can say so.
+
 Both have to come from the same toolchain. The shim allocates a class
 whose methods live in `libbelaextra.so`, so it has to agree with it
 about layout — measured equal between the tap's g++ 15.2.0 and the

@@ -4,6 +4,11 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+// Shared with the crate's tests: a build script is not a target
+// `cargo test` builds, so the string work lives in a file both can
+// include. See shim_compiler.rs.
+include!("shim_compiler.rs");
+
 // Library locations captured on the board; see docs/board-facts.md.
 const LIB_DIRS: &[&str] = &[
     "/root/Bela/lib",
@@ -39,15 +44,20 @@ const SHIM_SOURCES: &[&str] = &["shim/midi.cpp", "shim/midi.h"];
 // Makefile puts `/root/Bela` on the include path.
 const SHIM_INCLUDE_DIRS: &[&str] = &["/root/Bela/include", "/root/Bela"];
 
+// Every spelling cc accepts for the archiver, in its own order of
+// preference (cc-1.4.0, `env_tool`).
+const AR_ENV: &[&str] = &[
+    "AR_aarch64-unknown-linux-gnu",
+    "AR_aarch64_unknown_linux_gnu",
+    "TARGET_AR",
+    "AR",
+];
+
 // The header that says whether a sysroot is one the shim can be built
 // against. `scripts/sync-sysroot.sh` has carried it since the commit
 // that added `/root/Bela/libraries`; sysroots synced before that have
 // `include` and not this.
 const SHIM_PROBE: &str = "/root/Bela/libraries/Midi/Midi.h";
-
-// The C++ compiler assumed when nothing names one: the macOS tap's,
-// matching the default in scripts/aarch64-bela-linker.sh.
-const DEFAULT_CXX: &str = "aarch64-unknown-linux-gnu-g++";
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
@@ -58,6 +68,12 @@ fn main() {
     // Named for the same reason as BELA_CC below: it chooses a
     // compiler, and changing it has to rebuild what that compiler made.
     println!("cargo::rerun-if-env-changed=BELA_CXX");
+    // What cc reads for the archiver. Named here so that setting one
+    // rebuilds the shim, and read in build_shim so that setting one
+    // still wins over what this script would pick.
+    for name in AR_ENV {
+        println!("cargo::rerun-if-env-changed={name}");
+    }
     // Nothing here reads BELA_CC — scripts/aarch64-bela-linker.sh
     // does, and cargo cannot see into a linker it was handed as a path.
     // Declaring it makes changing the compiler rebuild this crate, and
@@ -98,8 +114,19 @@ fn main() {
 // `cargo clippy` for the device target never link, and that is what CI
 // does, having no board to sync one from. A build that does link
 // without a sysroot fails either way — at `-lbela` if not here.
+#[allow(
+    clippy::panic,
+    reason = "a build script reports a misconfiguration by failing the build"
+)]
 fn build_shim(sysroot: &str) {
-    if !Path::new(&format!("{sysroot}{SHIM_PROBE}")).exists() {
+    let probe = format!("{sysroot}{SHIM_PROBE}");
+    // Declared whether or not it is there. A missing path re-runs this
+    // script on every build, which is what makes the warning below
+    // recoverable: syncing a sysroot into a path that was already
+    // named by BELA_SYSROOT changes no file cargo would otherwise be
+    // watching, and the shim would stay uncompiled with nothing said.
+    println!("cargo::rerun-if-changed={probe}");
+    if !Path::new(&probe).exists() {
         let where_ = if sysroot.is_empty() {
             "BELA_SYSROOT is unset and this is not a board".to_owned()
         } else {
@@ -113,6 +140,13 @@ fn build_shim(sysroot: &str) {
         return;
     }
 
+    let compiler = match shim_compiler_from(
+        &env::var("BELA_CXX").unwrap_or_default(),
+        &env::var("BELA_CC").unwrap_or_default(),
+    ) {
+        Ok(compiler) => compiler,
+        Err(message) => panic!("{message}"),
+    };
     let mut build = cc::Build::new();
     build
         .cpp(true)
@@ -123,7 +157,15 @@ fn build_shim(sysroot: &str) {
         // the standard is one fewer way for that to drift.
         .std("c++14")
         .file("shim/midi.cpp")
-        .compiler(shim_compiler());
+        .compiler(&compiler);
+    // cc resolves the archiver from the target triple rather than from
+    // the compiler, so it has to be told; an AR already in the
+    // environment is left to win, as it would without this.
+    if !AR_ENV.iter().any(|name| env::var_os(name).is_some()) {
+        if let Some(archiver) = shim_archiver(&compiler) {
+            build.archiver(archiver);
+        }
+    }
     for dir in SHIM_INCLUDE_DIRS {
         build.include(format!("{sysroot}{dir}"));
     }
@@ -137,40 +179,6 @@ fn build_shim(sysroot: &str) {
         build.include(format!("{sysroot}/usr/include/aarch64-linux-gnu"));
     }
     build.compile("bela_midi_shim");
-}
-
-// Which C++ compiler builds the shim.
-//
-// It has to agree with the one that links, so the default follows
-// scripts/aarch64-bela-linker.sh: BELA_CC names the C compiler there
-// and defaults to the macOS tap's aarch64-unknown-linux-gnu-gcc.
-// BELA_CXX names this one. When only BELA_CC is set, a name ending in
-// `gcc` answers for both — which covers the two cases
-// docs/cross-compile.md documents, aarch64-linux-gnu-gcc on Debian and
-// plain gcc on the board itself.
-#[allow(
-    clippy::panic,
-    reason = "a build script reports a misconfiguration by failing the build"
-)]
-fn shim_compiler() -> String {
-    let cxx = env::var("BELA_CXX").unwrap_or_default();
-    if !cxx.is_empty() {
-        return cxx;
-    }
-    let cc = env::var("BELA_CC").unwrap_or_default();
-    if cc.is_empty() {
-        return DEFAULT_CXX.to_owned();
-    }
-    if let Some(prefix) = cc.strip_suffix("gcc") {
-        return format!("{prefix}g++");
-    }
-    // Guessing here would compile the shim with one toolchain and link
-    // it with another, which is how a binary ends up asking the board
-    // for symbols its libstdc++ does not have.
-    panic!(
-        "BELA_CC is `{cc}`, and no C++ compiler name follows from it; \
-         set BELA_CXX to the matching C++ compiler"
-    )
 }
 
 // Debian ships the `libstdc++.so` linker symlink under a

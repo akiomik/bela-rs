@@ -85,7 +85,11 @@ does on the audio thread.
 Bela's `libraries/Midi` sources, and skips it — with a warning — when
 it does not, so that a check without a sysroot still works. The
 compiler comes from `BELA_CXX`, or from `BELA_CC` when that ends in
-`gcc`; see [docs/cross-compile.md](../docs/cross-compile.md).
+`gcc`, and the archiver follows the compiler's name; see
+[docs/cross-compile.md](../docs/cross-compile.md). That choice is the
+one piece of the build script with more than one answer, so it lives in
+`shim_compiler.rs` and is tested from `src/lib.rs` — `cargo test` does
+not build a build script.
 
 The class is LGPL 3.0, like the vendored headers; the shim reaches it
 by linking `libbelaextra.so` dynamically.
