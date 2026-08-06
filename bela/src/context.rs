@@ -53,10 +53,6 @@ const DIGITAL_VALUE_SHIFT: usize = 16;
 /// how a `BelaContext` can spell "one render thread".
 ///
 /// [`thread_count`]: RenderContext::thread_count
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "ThreadInfo::frame_range is the public spelling of it, and lives in another module"
-)]
 #[inline]
 pub(crate) const fn partition(len: usize, thread: usize, count: usize) -> Range<usize> {
     let count = if count == 0 { 1 } else { count };
@@ -1163,10 +1159,6 @@ const fn set_bits(word: &mut u32, mask: u32, on: bool) {
     clippy::cast_precision_loss,
     clippy::float_cmp,
     reason = "tests use small exact values where these casts and comparisons are lossless"
-)]
-#[allow(
-    clippy::redundant_pub_crate,
-    reason = "the fixture is shared with the runtime tests, which are in another module"
 )]
 pub(crate) mod tests {
     use core::mem;

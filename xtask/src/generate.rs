@@ -28,7 +28,7 @@ const BELA_DEFINES: &[&str] = &[
     "-DNDEBUG",
 ];
 
-pub fn generate(root: &Path, sysroot: Option<PathBuf>) {
+pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     let vendor = root.join("bela-sys/vendor/bela");
     let source = fs::read_to_string(vendor.join("SOURCE")).expect("read vendor SOURCE file");
     let source = source.trim();

@@ -14,6 +14,7 @@ panic = "abort"
 
 [workspace.lints.rust]
 missing_docs = "warn"
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 cargo = { level = "warn", priority = -1 }
@@ -45,6 +46,17 @@ allow_attributes = "allow"
 module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
 similar_names = "allow"
+
+# - redundant_pub_crate is off because it and rustc's `unreachable_pub`
+#   propose each other's fix: one asks a `pub(crate)` in a private
+#   module to become `pub`, the other asks it back. The cycle is
+#   rust-clippy#5369, open since 2020. `unreachable_pub` wins here: it
+#   is a stable rustc lint rather than a nursery one, it only ever
+#   narrows visibility, and in a crate whose modules come and go with
+#   `cfg(bela_device)`, `pub(crate)` says "crate-internal on purpose"
+#   where a bare `pub` cannot be told from a re-export that was
+#   forgotten.
+redundant_pub_crate = "allow"
 
 [workspace.package]
 version = "0.3.0"

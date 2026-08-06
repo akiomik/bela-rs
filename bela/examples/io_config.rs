@@ -247,7 +247,7 @@ mod probes {
 
     /// What the board is, and what libbela expects of it, with no audio
     /// system anywhere in the picture.
-    pub fn hardware() {
+    pub(crate) fn hardware() {
         let board = Board::detect(DETECT_CACHED);
         report("detect-hw", &hardware_name(board));
         // The library that answered, which is not necessarily the one
@@ -318,7 +318,7 @@ mod probes {
     }
 
     /// One audio system, one configuration, both ends of one block.
-    pub fn context(settings: &Settings) {
+    pub(crate) fn context(settings: &Settings) {
         let app = Report { first_block: true };
         let mut bela = match Bela::new(app, settings) {
             Ok(bela) => bela,

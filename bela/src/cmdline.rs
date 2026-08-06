@@ -54,7 +54,7 @@ use crate::error::Error;
         reason = "only the device-gated audio system parses arguments; still unit-tested on the host"
     )
 )]
-pub struct Arguments {
+pub(crate) struct Arguments {
     /// Owns the argument bytes. Never mutated once `argv` points into
     /// it: each `CString` keeps its own allocation, so the pointers
     /// stay valid as long as this vector is neither changed nor
@@ -84,7 +84,7 @@ impl Arguments {
     /// NUL byte, which a C string cannot carry. Arguments a process was
     /// started with never do — the kernel hands them over
     /// NUL-terminated — so this only concerns hand-built lists.
-    pub fn new<I, S>(args: I) -> Result<Self, Error>
+    pub(crate) fn new<I, S>(args: I) -> Result<Self, Error>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -126,7 +126,10 @@ impl Arguments {
 /// Returns [`Error::CommandLine`] when an argument is not one of the
 /// standard options, is missing its value, or is rejected by libbela.
 #[cfg(bela_device)]
-pub fn parse(arguments: &mut Arguments, raw: &mut bela_sys::BelaInitSettings) -> Result<(), Error> {
+pub(crate) fn parse(
+    arguments: &mut Arguments,
+    raw: &mut bela_sys::BelaInitSettings,
+) -> Result<(), Error> {
     // `Bela_getopt_long` handles the standard options itself and
     // returns only what is left over, exactly as `getopt_long` would.
     // With no options of our own added, the only thing it can return

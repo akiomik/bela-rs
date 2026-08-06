@@ -30,7 +30,7 @@ use crate::check_vendor;
 /// Repository tasks.
 #[derive(Parser, Debug, PartialEq, Eq)]
 #[command(bin_name = "cargo xtask", about, long_about = None)]
-pub struct Cli {
+pub(crate) struct Cli {
     /// The task to run.
     #[command(subcommand)]
     pub task: Task,
@@ -38,7 +38,7 @@ pub struct Cli {
 
 /// A task named on the command line.
 #[derive(Subcommand, Debug, PartialEq, Eq)]
-pub enum Task {
+pub(crate) enum Task {
     /// Regenerate bela-sys/src/bindings.rs from the vendored headers.
     Bindgen {
         /// Sysroot providing the aarch64-linux libc headers Bela.h

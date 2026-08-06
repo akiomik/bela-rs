@@ -44,7 +44,7 @@ static STATE: AtomicU8 = AtomicU8::new(FREE);
 /// [poisoned](Claim::poison) first releases into [`POISONED`] instead,
 /// which no later claim can take.
 #[derive(Debug)]
-pub struct Claim {
+pub(crate) struct Claim {
     /// Whether releasing this claim leaves the audio system unusable
     /// rather than free.
     poisoned: bool,
@@ -65,7 +65,7 @@ impl Claim {
             reason = "only the device-gated audio system takes it; still unit-tested on the host"
         )
     )]
-    pub fn take() -> Result<Self, Error> {
+    pub(crate) fn take() -> Result<Self, Error> {
         // Acquire on success: everything the previous holder did before
         // releasing happens-before whatever this one does to the same
         // globals.
@@ -97,7 +97,7 @@ impl Claim {
             reason = "only the device-gated audio system poisons it; still unit-tested on the host"
         )
     )]
-    pub const fn poison(&mut self) {
+    pub(crate) const fn poison(&mut self) {
         self.poisoned = true;
     }
 }
