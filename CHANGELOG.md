@@ -66,6 +66,27 @@ and this project adheres to
   analog channel count instead of the audio block, measured at 8
   channels giving half the audio frames, 4 giving the same number and 2
   giving twice.
+- The example on `Bela::set_line_out_level` could not compile: it named
+  a `Context` type that does not exist and an `unsafe impl
+  BelaApplication` without the `RenderState` the trait has carried
+  since 0.3.0 replaced both. Nothing caught it, because a doc example
+  on a device-gated item is compiled by neither of the two things that
+  could — the host doc tests never see it, and the device documentation
+  build only renders it. The example is gone rather than corrected: it
+  repeated the one on `Bela::until_stopped`, which is where it now
+  points, alongside `examples/levels.rs` — a whole program, and one CI
+  does compile for the device.
+- The three examples marked `ignore` — the crate's own, the one on
+  `Board` and `Version`, and the `audio_out` loop on `RenderContext` —
+  are compiled doc tests now. `ignore` compiles nothing at all, which
+  is how the example above came to rot. The `RenderContext` one is
+  checked in full. The crate's own no longer shows the `Bela::run` call
+  inside the code block, so what remains of it is checked in full too.
+  What is left unchecked is the three lines on `Board` and `Version`
+  that need a board: they sit behind a `bela_device` cfg, and unlike
+  the files in `examples/`, which CI compiles for the device, no job
+  compiles a doc test for it — running one means linking, so it needs a
+  cross-linker and a sysroot CI does not have.
 
 ## [0.3.0] - 2026-08-06
 

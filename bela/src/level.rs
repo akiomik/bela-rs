@@ -166,28 +166,18 @@ impl<T: BelaApplication> Bela<T> {
     /// Takes effect immediately once audio is running, and is otherwise
     /// remembered and applied when it starts — so this is also how a
     /// program that uses [`until_stopped`](Bela::until_stopped) sets
-    /// the level audio comes up with:
-    ///
-    /// ```no_run
-    /// use bela::{Bela, Channel, Settings};
-    /// # use bela::{BelaApplication, Context};
-    /// # struct App;
-    /// # unsafe impl BelaApplication for App {
-    /// #     fn render(&mut self, _context: &mut Context) {}
-    /// # }
-    ///
-    /// fn main() -> Result<(), bela::Error> {
-    ///     let mut bela = Bela::new(App, &Settings::new())?;
-    ///     bela.set_line_out_level(Channel::All, -6.0)?;
-    ///     bela.until_stopped()
-    /// }
-    /// ```
+    /// the level audio comes up with. The example on
+    /// [`until_stopped`](Bela::until_stopped) is that program, and
+    /// [`examples/levels.rs`][example] is a whole one that sets all
+    /// four controls and reports what each call returned.
     ///
     /// # Errors
     /// Returns [`Error::LineOutLevel`] when the codec refuses the call,
     /// which on a Bela Gem Stereo is what a channel above 1 gets, and
     /// [`Error::Decibels`] for a level libbela could not convert — see
     /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
+    ///
+    /// [example]: https://github.com/akiomik/bela-rs/blob/main/bela/examples/levels.rs
     pub fn set_line_out_level(&mut self, channel: Channel, decibels: f32) -> Result<(), Error> {
         check_decibels(decibels)?;
         // Safety: an audio system exists — this needs the handle that

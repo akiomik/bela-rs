@@ -4,8 +4,8 @@
 //! implements the [`BelaApplication`] trait and hands an instance to
 //! [`Bela::run`]:
 //!
-//! ```ignore
-//! use bela::{Bela, BelaApplication, RenderContext, Settings, SetupContext, ThreadInfo};
+//! ```
+//! use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
 //!
 //! struct Passthrough;
 //!
@@ -15,14 +15,28 @@
 //!     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
 //!
 //!     fn render(&self, _state: &mut (), context: &mut RenderContext) {
-//!         // Copy audio input to audio output, for this thread's frames...
+//!         let channels = context
+//!             .audio_in_channels()
+//!             .min(context.audio_out_channels());
+//!         // This thread's share of the block; with one render thread,
+//!         // all of it.
+//!         for frame in context.audio_frame_range() {
+//!             for channel in 0..channels {
+//!                 let sample = context.audio_read(frame, channel);
+//!                 context.audio_write(frame, channel, sample);
+//!             }
+//!         }
 //!     }
 //! }
-//!
-//! fn main() -> Result<(), bela::Error> {
-//!     Bela::run(Passthrough, &Settings::new().period_size(64))
-//! }
 //! ```
+//!
+//! `Bela::run(Passthrough, &Settings::new().period_size(64))` then runs
+//! it until something asks it to stop. That line is not part of the
+//! example above because [`Bela`] only exists on the device target, and
+//! this doc test is compiled on the host — where the application is,
+//! which is the part that has to keep up with the trait.
+//! `examples/passthrough.rs` is the whole program, and the rest of
+//! `examples/` covers the crate a piece at a time.
 //!
 //! # One application model, one or four threads
 //!

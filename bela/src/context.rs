@@ -323,11 +323,14 @@ pub struct BlockContext(BelaContext);
 /// [`audio_out`](RenderContext::audio_out) and its siblings — which
 /// work it out once:
 ///
-/// ```ignore
+/// ```
+/// # use bela::RenderContext;
+/// # fn fill(context: &mut RenderContext, value: f32) {
 /// let channels = context.audio_out_channels();
 /// for samples in context.audio_out().chunks_mut(channels) {
 ///     samples.fill(value);
 /// }
+/// # }
 /// ```
 ///
 /// # What is not here
