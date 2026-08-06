@@ -284,7 +284,7 @@ const fn monitoring_data() -> Option<BelaCpuData> {
 /// Returns [`Error::CpuMonitoring`] when `Bela_cpuMonitoringInit`
 /// fails.
 #[cfg(bela_device)]
-pub fn apply_monitoring(cycle: Option<c_int>) -> Result<(), Error> {
+pub(crate) fn apply_monitoring(cycle: Option<c_int>) -> Result<(), Error> {
     let Some(count) = cycle else {
         return disable_monitoring();
     };
@@ -364,7 +364,7 @@ pub const MAX_MONITORED_PERIOD_SIZE: c_int = 128;
         reason = "only the device-gated audio system applies settings; still unit-tested on the host"
     )
 )]
-pub const fn check_period_size(period_size: c_int) -> Result<(), Error> {
+pub(crate) const fn check_period_size(period_size: c_int) -> Result<(), Error> {
     if period_size <= MAX_MONITORED_PERIOD_SIZE {
         Ok(())
     } else {
@@ -386,7 +386,7 @@ pub const fn check_period_size(period_size: c_int) -> Result<(), Error> {
         reason = "only the device-gated audio system enables monitoring; still unit-tested on the host"
     )
 )]
-pub const fn check_cycle(measurements_per_cycle: NonZeroU32) -> Result<c_int, Error> {
+pub(crate) const fn check_cycle(measurements_per_cycle: NonZeroU32) -> Result<c_int, Error> {
     let count = measurements_per_cycle.get();
     // Bela stores the count in an `unsigned int` but takes it as an
     // `int`, so anything above `int::MAX` would arrive as something

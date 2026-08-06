@@ -347,7 +347,7 @@ fn to_c_int(value: u32) -> c_int {
         reason = "only the device-gated audio system applies settings; still unit-tested on the host"
     )
 )]
-pub fn render_threads(raw: &BelaInitSettings) -> usize {
+pub(crate) fn render_threads(raw: &BelaInitSettings) -> usize {
     (raw.threadCount as usize).max(1)
 }
 

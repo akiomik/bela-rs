@@ -318,7 +318,7 @@ impl Drop for Active<'_> {
 
 /// Owns the application and its per-thread render states, and hands
 /// them to the callbacks under [`Guard`].
-pub struct Runtime<T: BelaApplication> {
+pub(crate) struct Runtime<T: BelaApplication> {
     /// `&mut` during the single-threaded phases, `&` during `render`;
     /// which of the two is what the guard decides.
     app: UnsafeCell<T>,
@@ -359,7 +359,7 @@ impl<T: BelaApplication> Runtime<T> {
     /// [`Settings::thread_count`](crate::Settings::thread_count)
     /// through unchanged and creates extra threads only above 1, so
     /// both spellings mean the same single render thread.
-    pub fn new(application: T, threads: usize) -> Self {
+    pub(crate) fn new(application: T, threads: usize) -> Self {
         let threads = threads.max(1);
         Self {
             app: UnsafeCell::new(application),
@@ -375,7 +375,7 @@ impl<T: BelaApplication> Runtime<T> {
     /// system was asked to stop because a callback arrived somewhere it
     /// could not be served safely. See [`Guard::fault`] for what this
     /// deliberately does not count.
-    pub fn faults(&self) -> u32 {
+    pub(crate) fn faults(&self) -> u32 {
         self.guard.faults()
     }
 
@@ -384,7 +384,7 @@ impl<T: BelaApplication> Runtime<T> {
     ///
     /// Expected rather than alarming, and usually 0 or 1: see
     /// [`Guard::fault`].
-    pub fn faults_while_stopping(&self) -> u32 {
+    pub(crate) fn faults_while_stopping(&self) -> u32 {
         self.guard.faults_while_stopping()
     }
 
@@ -577,14 +577,14 @@ impl<T: BelaApplication> Runtime<T> {
         reason = "only called by the device-gated system module; still unit-tested on the host"
     )
 )]
-pub mod trampoline {
+pub(crate) mod trampoline {
     use core::ffi::c_void;
 
     use bela_sys::BelaContext;
 
     use super::{BelaApplication, Runtime};
 
-    pub unsafe extern "C" fn setup<T: BelaApplication>(
+    pub(crate) unsafe extern "C" fn setup<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) -> bool {
@@ -592,7 +592,7 @@ pub mod trampoline {
         unsafe { runtime.setup(context) }
     }
 
-    pub unsafe extern "C" fn render_pre<T: BelaApplication>(
+    pub(crate) unsafe extern "C" fn render_pre<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) {
@@ -600,7 +600,7 @@ pub mod trampoline {
         unsafe { runtime.render_pre(context) };
     }
 
-    pub unsafe extern "C" fn render<T: BelaApplication>(
+    pub(crate) unsafe extern "C" fn render<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) {
@@ -608,7 +608,7 @@ pub mod trampoline {
         unsafe { runtime.render(context) };
     }
 
-    pub unsafe extern "C" fn render_post<T: BelaApplication>(
+    pub(crate) unsafe extern "C" fn render_post<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) {
@@ -616,7 +616,7 @@ pub mod trampoline {
         unsafe { runtime.render_post(context) };
     }
 
-    pub unsafe extern "C" fn cleanup<T: BelaApplication>(
+    pub(crate) unsafe extern "C" fn cleanup<T: BelaApplication>(
         context: *mut BelaContext,
         user_data: *mut c_void,
     ) {
@@ -634,7 +634,7 @@ pub mod trampoline {
         reason = "only the device-gated system module hands the pointer over"
     )
 )]
-pub const fn user_data<T: BelaApplication>(runtime: *mut Runtime<T>) -> *mut c_void {
+pub(crate) const fn user_data<T: BelaApplication>(runtime: *mut Runtime<T>) -> *mut c_void {
     runtime.cast::<c_void>()
 }
 

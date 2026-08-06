@@ -26,7 +26,7 @@ use std::{env, fs, process};
 
 /// The board `scripts/update-vendor.sh` and `scripts/smoke-test.sh`
 /// default to.
-pub const DEFAULT_HOST: &str = "root@bela.local";
+pub(crate) const DEFAULT_HOST: &str = "root@bela.local";
 
 /// Where `scripts/update-vendor.sh --board` takes the files from.
 const REMOTE_ROOT: &str = "/root/Bela";
@@ -42,7 +42,7 @@ const SSH_OPTIONS: &[&str] = &["-o", "ConnectTimeout=10"];
 /// few.
 const MAX_DIFF_LINES: usize = 60;
 
-pub fn check(root: &Path, host: &str) -> ! {
+pub(crate) fn check(root: &Path, host: &str) -> ! {
     let vendor = root.join("bela-sys/vendor/bela");
     let source = fs::read_to_string(vendor.join("SOURCE")).expect("read vendor SOURCE file");
     let files = vendored_files(&vendor);

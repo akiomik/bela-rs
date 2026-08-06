@@ -228,7 +228,7 @@ mod probes {
     ///
     /// `render_time` is also how long the device stays held, which is
     /// what makes this the holder for `busy-probe`.
-    pub fn render_check(render_time: Option<Duration>) {
+    pub(crate) fn render_check(render_time: Option<Duration>) {
         report(
             "cycle",
             &outcome(cycle_for(render_time.unwrap_or(RENDER_TIME))),
@@ -236,27 +236,27 @@ mod probes {
     }
 
     /// One aborted initialisation and nothing else.
-    pub fn abort() {
+    pub(crate) fn abort() {
         report("abort", &abort_init());
     }
 
     /// An aborted initialisation, then the call that might have undone
     /// it — from outside the crate, so after the application is gone.
-    pub fn abort_cleanup() {
+    pub(crate) fn abort_cleanup() {
         report("abort", &abort_init());
         hand_back();
     }
 
     /// An aborted initialisation, then another audio system in the same
     /// process with nothing handed back.
-    pub fn abort_then_new() {
+    pub(crate) fn abort_then_new() {
         report("abort", &abort_init());
         report("second", &outcome(cycle()));
     }
 
     /// An aborted initialisation, the state handed back, then another
     /// audio system in the same process.
-    pub fn abort_cleanup_then_new() {
+    pub(crate) fn abort_cleanup_then_new() {
         report("abort", &abort_init());
         hand_back();
         report("second", &outcome(cycle()));
@@ -305,7 +305,7 @@ mod probes {
     /// mirroring what `Bela::new` does up to and including the failing
     /// `Bela_initAudio`, and hands the state back with the application
     /// still alive.
-    pub fn raw_cleanup() {
+    pub(crate) fn raw_cleanup() {
         let app = Box::into_raw(Box::new(RawApp {
             marker: [7; 64],
             cleaned: false,
@@ -335,14 +335,14 @@ mod probes {
 
     /// A cycle attempted while another process holds the audio device,
     /// and another once `wait` has given that process time to go.
-    pub fn busy_probe(wait: Duration) {
+    pub(crate) fn busy_probe(wait: Duration) {
         report("busy-first", &outcome(cycle()));
         thread::sleep(wait);
         report("busy-second", &outcome(cycle()));
     }
 
     /// Full cycles, one after another, in one process.
-    pub fn cycles(count: u32) {
+    pub(crate) fn cycles(count: u32) {
         for index in 1..=count {
             report(&format!("cycle-{index}"), &outcome(cycle()));
         }
@@ -352,7 +352,7 @@ mod probes {
     /// Audio systems built and dropped without ever being started,
     /// which is the cycle the board notes put the bus error on — a
     /// different one from [`cycles`], where audio actually runs.
-    pub fn init_cycles(count: u32) {
+    pub(crate) fn init_cycles(count: u32) {
         for index in 1..=count {
             let outcome = match Bela::new(Idle, &Settings::new()) {
                 Err(error) => format!("failed-{error:?}"),

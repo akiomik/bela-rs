@@ -71,7 +71,7 @@ struct Lifecycle {
         reason = "only the device-gated system module tears an audio system down"
     )
 )]
-pub fn teardown<R>(shut_down: impl FnOnce() -> R) -> R {
+pub(crate) fn teardown<R>(shut_down: impl FnOnce() -> R) -> R {
     // Reopens the window even if the teardown panics on the way out.
     struct Reopen;
     impl Drop for Reopen {

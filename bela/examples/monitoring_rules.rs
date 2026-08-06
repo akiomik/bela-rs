@@ -140,14 +140,14 @@ mod checks {
     ///
     /// Prints nothing itself — the reading is libbela's own output, and
     /// this run is the only thing producing it.
-    pub fn fifo_probe(period_size: u32) {
+    pub(crate) fn fifo_probe(period_size: u32) {
         let settings = Settings::new().period_size(period_size).verbose(true);
         // `Err` is expected: `Abort` refuses in `setup`.
         drop(Bela::new(Abort, &settings));
     }
 
     /// A second audio system must be refused while the first is alive.
-    pub fn second_new() {
+    pub(crate) fn second_new() {
         let outcome = match Bela::new(Idle, &Settings::new()) {
             Err(error) => format!("first-new-failed-{error}"),
             Ok(first) => {
@@ -166,7 +166,7 @@ mod checks {
 
     /// Reports whether `setup` saw monitoring on, with it either asked
     /// for or left unset.
-    pub fn monitoring(requested: bool) {
+    pub(crate) fn monitoring(requested: bool) {
         let settings = if requested {
             Settings::new().cpu_monitoring(cycle())
         } else {
@@ -203,7 +203,7 @@ mod checks {
     /// `Bela::new` is the segfault recorded in `docs/board-facts.md`,
     /// so a run that gets as far as printing its line has already
     /// demonstrated most of what is being asserted.
-    pub fn poisoned() {
+    pub(crate) fn poisoned() {
         // `Abort` refuses in `setup`, which fails `Bela_initAudio`
         // after libbela has brought the hardware up — the state there
         // is no way back from.
