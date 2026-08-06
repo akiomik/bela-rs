@@ -94,6 +94,16 @@ and this project adheres to
   message ring, and the alternative it offers is a callback on its own
   input thread. System common messages are dropped by that parser
   before they reach anything.
+- `examples/midi`, a monosynth that plays the note it is sent, prints
+  every message it receives and echoes it back out, and sends an
+  all-notes-off on every channel on the way down. It remembers which
+  note it is playing, so a key released while a later one is held does
+  not stop it. It is the example of where MIDI goes
+  in an application: input in `render_pre`, output through a sender
+  kept in a render state, and the closing message from `cleanup`. With
+  no arguments it opens the first port `midi_ports` reports for both
+  directions, which on a board with nothing attached is the USB gadget;
+  two arguments name the input and output ports separately.
 - `MidiOutput` and `MidiSender`: sending MIDI, with the audio thread
   doing none of the sending. `render` queues a message and asks an
   auxiliary task to empty the queue; the task is what writes to Bela's

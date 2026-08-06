@@ -25,12 +25,13 @@ BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-smoke"
 # `print` carries the numeric checks, `task_lifecycle` the auxiliary
 # task ones, `cpu` the CPU monitoring ones, `command_line` the
-# command-line option ones and `levels` the codec level ones; the others
-# only have to start, keep running and stop cleanly. `monitoring_rules`
-# is not here: it answers one question per run and exits, so it is
-# driven separately below rather than run for the duration. Neither is
-# `parallel`, which is run once per thread count.
-EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line levels"
+# command-line option ones, `levels` the codec level ones and `midi`
+# the MIDI ones; the others only have to start, keep running and stop
+# cleanly. `monitoring_rules` is not here: it answers one question per
+# run and exits, so it is driven separately below rather than run for
+# the duration. Neither is `parallel`, which is run once per thread
+# count.
+EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line levels midi"
 # Thread counts `parallel` is run at, lowest first: the last one has to
 # spread the same work over more cores than the first.
 THREAD_COUNTS="1 2 4"
@@ -387,6 +388,48 @@ else
     pass "levels: a level libbela could not convert was refused before the call"
   else
     fail "levels: a level libbela could not convert was ${not_a_number:-not reported}"
+  fi
+fi
+
+# MIDI. What a board with nothing attached can answer is that a port
+# opens, that the drain task behind the output queue can be created,
+# and that closing both on the way out does not hang — which is not
+# nothing, since the input side joins a thread that polls with a 50 ms
+# timeout and the output side deletes a port the task also holds.
+#
+# The messages themselves need something on the other end of the wire.
+# `snd-virmidi` provides one without any hardware, and doing that is a
+# measurement rather than a check: see docs/midi.md, which records what
+# arrived when it was run that way.
+log="$LOG_DIR/midi.log"
+if [ ! -s "$log" ]; then
+  fail "midi: produced no output"
+else
+  # setup: in hw:0,0,0, out hw:0,0,0, of 1 port(s)
+  # The port names carry commas of their own, so only the one the
+  # line puts at the end of each field comes off.
+  in_port="$(awk '/^setup:/ { print $3; exit }' "$log" | sed 's/,$//')"
+  out_port="$(awk '/^setup:/ { print $5; exit }' "$log" | sed 's/,$//')"
+  ports="$(awk '/^setup:/ { print $7; exit }' "$log")"
+  if [ -z "$in_port" ]; then
+    # Which of the three it was — no port to open, a port that would
+    # not open, or a setup that never got that far — is in the log,
+    # which is printed below rather than guessed at here.
+    fail "midi: no setup line"
+    sed 's/^/        /' "$log" >&2
+  else
+    pass "midi: opened $in_port for input and $out_port for output, of ${ports:-?} port(s)"
+  fi
+
+  # cleanup: 0 message(s) received, 0 echoed, 0 dropped
+  received="$(awk '/^cleanup:/ { print $2; exit }' "$log")"
+  if [ -z "$received" ]; then
+    # A cleanup that did not report is a cleanup that did not run, or
+    # one that did not finish; a setup returning false produces the
+    # first and never reaches the second.
+    fail "midi: no cleanup line"
+  else
+    pass "midi: cleanup reported $received message(s) received"
   fi
 fi
 

@@ -10,21 +10,22 @@ Rust bindings for the [Bela](https://bela.io) core API, targeting
 
 > **Status: works on hardware, API not yet settled.** The examples
 > cross-build on a host and produce sound on a Bela Gem Stereo. The
-> scope is still the core audio API — the C++ libraries and most of
-> the auxiliary-task surface are not wrapped yet, and the API may
-> change in any 0.x release.
+> scope is the core audio API plus MIDI — the other C++ libraries are
+> not wrapped, and the API may change in any 0.x release.
 
 ## Crates
 
 | Crate | Description |
 |-------|-------------|
-| [`bela-sys`](bela-sys) | Raw FFI bindings to `libbela` (bindgen, C core API only) |
-| [`bela`](bela) | Safe API: settings builder, real-time render trait, RAII lifecycle |
+| [`bela-sys`](bela-sys) | Raw FFI bindings to `libbela`, plus a C surface over Bela's `Midi` |
+| [`bela`](bela) | Safe API: settings builder, real-time render trait, RAII lifecycle, MIDI |
 
-The scope is intentionally the C core API (`BelaContext`,
-`setup`/`render`/`cleanup`, `Bela_initAudio`/`Bela_startAudio`/...).
-The C++ libraries (Scope, Trill, Fft, Gui, Midi) are out of scope for
-now and may be added incrementally.
+The scope is the C core API (`BelaContext`,
+`setup`/`render`/`cleanup`, `Bela_initAudio`/`Bela_startAudio`/...)
+and MIDI, which is C++ and reached through a shim this workspace
+compiles — see [MIDI](docs/midi.md). The other C++ libraries (Scope,
+Trill, Fft, Gui) are out of scope for now and may be added
+incrementally.
 
 The integration model is the officially supported one: a standalone
 binary that defines the render callbacks and links `libbela`,
