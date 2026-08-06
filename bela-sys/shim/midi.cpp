@@ -21,6 +21,17 @@ namespace {
 
 Midi *self(BelaMidi *midi) { return reinterpret_cast<Midi *>(midi); }
 
+// Runs on the input thread, once per byte of an incoming system
+// exclusive message, and does nothing with it.
+//
+// Not having a callback is not the same as not wanting one: with none
+// set, Bela's parser prints every sysex byte with rt_printf, and a
+// "Receiving sysex" line around them (Midi.cpp:41). A controller
+// announcing itself would fill the program's console. Sysex does not
+// reach the message ring either way, so this drops what would
+// otherwise be printed.
+void discard_sysex(midi_byte_t, void *) {}
+
 } // namespace
 
 extern "C" {
@@ -57,6 +68,7 @@ BelaMidi *bela_midi_new(void) {
 		// Before any port is open, so no input thread is reading the
 		// flag this sets.
 		midi->enableParser(true);
+		midi->getParser()->setSysexCallback(discard_sysex, nullptr);
 	} catch (...) {
 		return nullptr;
 	}

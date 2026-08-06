@@ -48,7 +48,11 @@ unsigned int bela_midi_list_ports(char *buf, unsigned int len);
  * order Midi_c uses (readFrom, then enableParser) sets it under a
  * running reader. Nothing turns it off again, which also keeps
  * enableParser(false) — a delete that leaves the pointer behind — out
- * of reach. */
+ * of reach.
+ *
+ * A callback that discards system exclusive bytes is set at the same
+ * time. Sysex never reaches the message ring, and a parser with no
+ * sysex callback prints every byte of it to the console instead. */
 BelaMidi *bela_midi_new(void);
 
 /* Destroys a Midi object, joining its input thread. NULL is accepted
