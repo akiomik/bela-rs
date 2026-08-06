@@ -68,6 +68,10 @@ and this project adheres to
   compiled by `build.rs`), because Bela's — `libraries/Midi/Midi_c.h` —
   covers input only, cannot report a port that failed to open, and
   enables the input parser after starting the thread that reads it.
+  A port that does not exist is reported as `BELA_MIDI_NO_SUCH_PORT`
+  and a second open of the same direction as `BELA_MIDI_ALREADY_OPEN`,
+  both far outside the `errno` range so that neither collides with an
+  ALSA failure passed through as `-errno`.
   Ports are listed with `bela_midi_list_ports`, which exists because
   Bela's port names are not the ones `amidi -l` prints: `hw:0,0,0`
   against `hw:0,0`, and only the first opens anything. Device builds

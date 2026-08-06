@@ -27,6 +27,18 @@ typedef struct BelaMidi BelaMidi;
  * the two data bytes of the longest channel message. */
 #define BELA_MIDI_MESSAGE_MAX 3
 
+/* Why a port could not be opened, where ALSA had no say.
+ *
+ * Everything else a port-opening call returns is `-errno` as ALSA
+ * reported it, so these sit far outside the errno range rather than at
+ * -1: -1 would be both "no port by that name" and EPERM. */
+#define BELA_MIDI_NO_SUCH_PORT (-1000)
+#define BELA_MIDI_ALREADY_OPEN (-1001)
+
+/* Except where a function says otherwise, `midi` must be a pointer
+ * from bela_midi_new that has not been passed to bela_midi_delete, and
+ * `port` and `buf` must not be NULL. Nothing here checks. */
+
 /* Writes the names of every MIDI port ALSA reports into `buf` as
  * NUL-terminated strings, one after another, and returns the number of
  * bytes the whole list needs — which may be more than `len`, in which
@@ -36,6 +48,13 @@ typedef struct BelaMidi BelaMidi;
  * `hw:0,0,0` where `amidi -l` prints `hw:0,0`. Midi::readFrom and
  * Midi::writeTo compare the string they are given against this list, so
  * the two-number form opens nothing.
+ *
+ * A return of 0 means there are no ports, and also means the query
+ * itself threw. Those are not told apart, and there is nothing finer
+ * to report: Midi::listAllPorts answers an ALSA failure by printing
+ * and returning the ports it had collected so far, so a partial list
+ * already looks like a complete one. What remains for the exception
+ * path is allocation failure.
  *
  * Allocates and reads the ALSA control interface; not for render. */
 unsigned int bela_midi_list_ports(char *buf, unsigned int len);
@@ -52,7 +71,14 @@ unsigned int bela_midi_list_ports(char *buf, unsigned int len);
  *
  * A callback that discards system exclusive bytes is set at the same
  * time. Sysex never reaches the message ring, and a parser with no
- * sysex callback prints every byte of it to the console instead. */
+ * sysex callback prints every byte of it to the console instead.
+ *
+ * The parser it creates is never destroyed: Midi::cleanup() frees the
+ * output task and the ALSA handles but not the parser, so each object
+ * costs about 2.4 KB that bela_midi_delete does not give back. Calling
+ * enableParser(false) would free it and is not an option — it deletes
+ * before it clears the flag the input thread is reading. One object
+ * per port for the life of a program is what this is sized for. */
 BelaMidi *bela_midi_new(void);
 
 /* Destroys a Midi object, joining its input thread. NULL is accepted
@@ -64,24 +90,40 @@ void bela_midi_delete(BelaMidi *midi);
 
 /* Opens `port` for input and starts reading from it.
  *
- * Returns 0 when input is enabled afterwards, and a negative value
- * otherwise. The answer comes from Midi::isInputEnabled rather than
- * from the return value of readFrom, which reports a port that does
- * not exist and a port that failed to open with the same -1. */
+ * **Once per object.** Midi's own `inputEnabled` never goes false
+ * again, so a second call cannot be judged by it — and Bela's readFrom
+ * would overwrite the ALSA handle and start a second reader thread on
+ * the same object. A second call is refused with
+ * BELA_MIDI_ALREADY_OPEN instead.
+ *
+ * Returns 0 when input is enabled afterwards,
+ * BELA_MIDI_NO_SUCH_PORT when no port has that name — the names are
+ * bela_midi_list_ports's, which carry the subdevice —
+ * BELA_MIDI_ALREADY_OPEN as above, and otherwise a negative value from
+ * Bela, which is `-errno` when ALSA refused the device. That input is
+ * open at all is read back from Midi::isInputEnabled rather than taken
+ * from readFrom, whose 1 and -1 each cover more than one case. */
 int bela_midi_read_from(BelaMidi *midi, const char *port);
 
 /* Opens `port` for output.
  *
- * Returns 0 when output is enabled afterwards, and a negative value
- * otherwise. Reading Midi::isOutputEnabled is what makes that
- * trustworthy: writeTo returns 1 both when it succeeded and when the
- * port does not exist, and in the second case every later write is
- * discarded by a check the caller cannot see. */
+ * **Once per object**, on the same terms as bela_midi_read_from, and
+ * with the same return values. Reading Midi::isOutputEnabled is what
+ * makes the success answer trustworthy: writeTo returns 1 both when it
+ * succeeded and when the port does not exist, and in the second case
+ * every later write is discarded by a check the caller cannot see. */
 int bela_midi_write_to(BelaMidi *midi, const char *port);
 
 /* Returns how many parsed messages are waiting, or 0 if there is no
  * parser. Reads two indices of a ring the input thread writes: no
- * allocation, no system call, safe to call from render. */
+ * allocation, no system call, safe to call from render.
+ *
+ * "Safe" here means real-time safe and single-reader. The two indices
+ * are plain unsigned ints that the input thread writes without
+ * synchronisation, which is a data race by the letter of C++ and is
+ * how Bela's own examples read this ring; what it can cost is a count
+ * one message stale, never a torn pointer, on a target where those
+ * loads are atomic. */
 int bela_midi_available_messages(BelaMidi *midi);
 
 /* Writes the oldest waiting message into `buf`, which must have room
@@ -91,6 +133,9 @@ int bela_midi_available_messages(BelaMidi *midi);
  * Returns 0 when nothing was waiting, leaving `buf` untouched. Bela's
  * version answers that case with a one-byte message built out of a
  * cleared record, which cannot be told from a real one.
+ *
+ * One reader only: taking a message advances a pointer nothing
+ * synchronises. Same data-race note as above.
  *
  * The status byte carries the channel in its low nibble, as it does on
  * the wire. Safe to call from render, on the same terms as
@@ -105,9 +150,17 @@ unsigned int bela_midi_get_message(BelaMidi *midi, unsigned char *buf);
  * when it is full; the crate calls this from an auxiliary task
  * instead. docs/midi.md is the whole argument.
  *
- * A caller that ignores that should still know the return value is not
- * evidence: 1 means the bytes were handed over, not that they were
- * queued, and certainly not that they were sent. */
+ * The value is passed through from Midi::writeOutput rather than
+ * folded the way the port-opening calls are, because there is nothing
+ * to fold: the -1 in that function is unreachable while
+ * AuxTaskNonRT::commsSend reports success unconditionally, so 1 and 0
+ * are the whole range. If that is ever fixed upstream, -1 becomes
+ * reachable and this contract changes with it — see docs/midi.md,
+ * finding 4.
+ *
+ * So a caller should know the return value is not evidence: 1 means
+ * the bytes were handed over, not that they were queued, and certainly
+ * not that they were sent. */
 int bela_midi_write_output(BelaMidi *midi, const unsigned char *bytes,
                            unsigned int length);
 

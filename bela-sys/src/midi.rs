@@ -14,6 +14,11 @@
 //! Off the device target the shim is not compiled, so these symbols do
 //! not resolve. Declaring them anyway keeps the module compiling
 //! everywhere the rest of the crate does.
+//!
+//! Every function takes a `midi` from [`bela_midi_new`] that has not
+//! been deleted, and a non-null `port` or `buf` where it takes one.
+//! Nothing checks; [`bela_midi_delete`] is the one that also accepts
+//! null.
 
 use core::ffi::{c_char, c_int, c_uchar, c_uint};
 
@@ -31,11 +36,30 @@ pub struct BelaMidi {
 /// status byte and two data bytes.
 pub const BELA_MIDI_MESSAGE_MAX: usize = 3;
 
+/// No port has the name that was given.
+///
+/// The names are [`bela_midi_list_ports`]'s, which carry the
+/// subdevice. Far outside the `errno` range on purpose: `-1` would be
+/// this and `EPERM` at once.
+pub const BELA_MIDI_NO_SUCH_PORT: c_int = -1000;
+
+/// That direction of this object is already open.
+///
+/// Bela's `inputEnabled` and `outputEnabled` are set once and never
+/// cleared, so a second open cannot be judged by them; it is refused
+/// rather than allowed to leak an ALSA handle and start a second
+/// reader thread.
+pub const BELA_MIDI_ALREADY_OPEN: c_int = -1001;
+
 unsafe extern "C" {
     /// Writes every MIDI port ALSA reports into `buf` as NUL-terminated
     /// names, one after another, and returns the bytes the whole list
     /// needs. A `len` shorter than that holds as many whole names as
     /// fit, so passing 0 asks for the size.
+    ///
+    /// 0 means there are no ports, and also means the query threw;
+    /// the two are not told apart, because the C++ underneath answers
+    /// an ALSA failure with a partial list rather than an error.
     ///
     /// The names carry card, device *and* subdevice — `hw:0,0,0` where
     /// `amidi -l` prints `hw:0,0` — and [`bela_midi_read_from`] and
@@ -53,16 +77,21 @@ unsafe extern "C" {
     /// which is up to its 50 ms poll timeout.
     pub fn bela_midi_delete(midi: *mut BelaMidi);
 
-    /// Opens `port` for input and starts reading from it. Returns 0
-    /// when input is enabled afterwards, a negative value otherwise.
+    /// Opens `port` for input and starts reading from it, once per
+    /// object. Returns 0 when input is enabled afterwards,
+    /// [`BELA_MIDI_NO_SUCH_PORT`], [`BELA_MIDI_ALREADY_OPEN`], or a
+    /// negative value from Bela — `-errno` when ALSA refused the
+    /// device.
     pub fn bela_midi_read_from(midi: *mut BelaMidi, port: *const c_char) -> c_int;
 
-    /// Opens `port` for output. Returns 0 when output is enabled
-    /// afterwards, a negative value otherwise.
+    /// Opens `port` for output, once per object, with the same return
+    /// values as [`bela_midi_read_from`].
     pub fn bela_midi_write_to(midi: *mut BelaMidi, port: *const c_char) -> c_int;
 
     /// How many parsed messages are waiting. Reads two ring indices:
-    /// no allocation, no system call.
+    /// no allocation, no system call — and no synchronisation either,
+    /// the input thread writing them as plain `unsigned int`s. What
+    /// that can cost is a count one message stale.
     pub fn bela_midi_available_messages(midi: *mut BelaMidi) -> c_int;
 
     /// Writes the oldest waiting message into `buf`, which must have
@@ -74,7 +103,9 @@ unsafe extern "C" {
 
     /// Hands `length` bytes to Bela's output task. Returns 1, or 0 if
     /// output was never enabled — and 1 says the bytes were handed
-    /// over, not that they were queued or sent.
+    /// over, not that they were queued or sent. The `-1` in the C++ is
+    /// unreachable while `commsSend` reports success unconditionally,
+    /// which is what makes 1 and 0 the whole range.
     ///
     /// Not to be called from `render`: on a full pipe the path below
     /// this prints to `stderr` from the calling thread.

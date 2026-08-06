@@ -71,6 +71,16 @@ Practical consequences of the choice:
   these crates are MIT OR Apache-2.0. Dynamic linking against
   `libbelaextra.so` is the ordinary arrangement for that; linking
   `libbelaextra.a` would not be, and this workspace does not.
+
+  The shim is not quite only a caller, though. `Midi.h` defines
+  functions inline, and the shim calls one that is thirteen lines —
+  `MidiParser::getNextChannelMessage` (`Midi.h:253`) — so a copy of it
+  ends up inside `libbela_midi_shim.a` and then inside the binary.
+  LGPL 3.0 §3 waives its conditions for inline functions of ten lines
+  or fewer, and that one is longer, so §4's apply: a binary shipped to
+  someone else carries a notice that it uses the library and a copy of
+  the licence. Nothing changes for a binary that is only run, which is
+  what a Bela program usually is.
 - Half a C surface already exists — `Midi_c.cpp` exports `Midi_new`,
   `Midi_delete`, `Midi_availableMessages`, `Midi_getMessage` — but it
   covers input only, drops `readFrom`'s return value, and enables the
@@ -315,9 +325,11 @@ There is one port, and its name depends on who is asking:
 
 Bela's names carry the subdevice, and `readFrom`/`writeTo` compare the
 string they are given against exactly that list (`Midi.cpp:313`), so
-the name `amidi` prints opens nothing and reports `-1`. That is worth a
-listing call of its own in the shim rather than a line in a
-documentation comment nobody reads before the first failure.
+the name `amidi` prints opens nothing, and reports so as
+`BELA_MIDI_NO_SUCH_PORT` rather than as the `-1` Bela answers with —
+which would also be `EPERM`. That is worth a listing call of its own in
+the shim rather than a line in a documentation comment nobody reads
+before the first failure.
 
 The port itself is the USB gadget (`f_midi`, from `g_multi`), which is
 present whether or not a host is attached — `/proc/asound/cards` shows
@@ -329,8 +341,12 @@ where there is no cable either.
 Measured with the shim, on the same board:
 
 - opening `hw:0,0,0` for input and for output both report success;
-- opening `hw:9,9` — a port that does not exist — reports `-1` for
-  both, which is the case Bela's own `writeTo` answers with `1`;
+- opening `hw:0,0` — the name `amidi -l` prints, which no Bela port
+  has — reports `BELA_MIDI_NO_SUCH_PORT` for input and for output,
+  where Bela's own `writeTo` answers `1`, the same value it returns on
+  success;
+- opening either direction twice reports `BELA_MIDI_ALREADY_OPEN`
+  rather than opening a second ALSA handle over the first;
 - `bela_midi_write_output` returns 1 with the port open and 0 without
   one, and there is nothing to receive it with the cable out.
 
@@ -341,7 +357,8 @@ Measured with the shim, on the same board:
 | `Midi.cpp:350` | `writeTo()` returns `1` for a port that does not exist — the same value as success — leaving `outputEnabled` false | the shim pairs it with `isOutputEnabled()` and reports that |
 | `Midi.cpp:359` | `writeTo()` marks `inPortFull.hasOutput`, the *input* port descriptor | not exposed |
 | `Midi.cpp:559` | `writeMessage(const MidiChannelMessage&)` sizes a VLA `1 + getNumDataBytes()` but always writes `bytes[1]`: a one-byte stack overflow for a type with no data bytes | the shim calls `writeOutput(bytes, len)` and never this |
-| `Midi.cpp:151` | `enableParser(false)` deletes `inputParser` without clearing it; twice is a double free, and `cleanup()` never deletes it at all | the parser is on for the object's whole life, established once in the shim |
+| `Midi.cpp:151` | `enableParser(false)` deletes `inputParser` without clearing it; twice is a double free, and it also deletes before clearing the flag the input thread reads | the parser is on for the object's whole life, established once in the shim |
+| `Midi.cpp:148` | `cleanup()` frees the output task and the ALSA handles and never the parser, so a `Midi` leaks its 100-message ring — about 2.4 KB — when it is destroyed | accepted rather than fixed: the only call that would free it is the one above, which cannot be made safely while the input thread runs. One object per port for the life of a program is what the wrapper is sized for |
 | `Midi_c.cpp:19` | `Midi_new` enables the parser after starting the input thread | the shim enables it first |
 | `Midi.cpp:52` | `MidiParser::parse()` counts each status byte twice in its return value | no caller uses it |
 

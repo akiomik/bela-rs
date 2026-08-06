@@ -43,7 +43,7 @@ mod midi;
 
 pub use bindings::*;
 pub use midi::{
-    BELA_MIDI_MESSAGE_MAX, BelaMidi, bela_midi_available_messages, bela_midi_delete,
-    bela_midi_get_message, bela_midi_list_ports, bela_midi_new, bela_midi_read_from,
-    bela_midi_write_output, bela_midi_write_to,
+    BELA_MIDI_ALREADY_OPEN, BELA_MIDI_MESSAGE_MAX, BELA_MIDI_NO_SUCH_PORT, BelaMidi,
+    bela_midi_available_messages, bela_midi_delete, bela_midi_get_message, bela_midi_list_ports,
+    bela_midi_new, bela_midi_read_from, bela_midi_write_output, bela_midi_write_to,
 };

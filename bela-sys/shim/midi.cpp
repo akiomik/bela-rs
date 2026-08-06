@@ -62,7 +62,7 @@ unsigned int bela_midi_list_ports(char *buf, unsigned int len) {
 }
 
 BelaMidi *bela_midi_new(void) {
-	Midi *midi;
+	Midi *midi = nullptr;
 	try {
 		midi = new Midi();
 		// Before any port is open, so no input thread is reading the
@@ -70,6 +70,9 @@ BelaMidi *bela_midi_new(void) {
 		midi->enableParser(true);
 		midi->getParser()->setSysexCallback(discard_sysex, nullptr);
 	} catch (...) {
+		// enableParser allocates, so the object can outlive the
+		// failure by one line if this is not here.
+		delete midi;
 		return nullptr;
 	}
 	return reinterpret_cast<BelaMidi *>(midi);
@@ -86,8 +89,19 @@ void bela_midi_delete(BelaMidi *midi) {
 
 int bela_midi_read_from(BelaMidi *midi, const char *port) {
 	Midi *m = self(midi);
+	// inputEnabled is set once and never cleared, so after a first
+	// success it can no longer answer for a second call — and readFrom
+	// would leak the ALSA handle and start a second reader.
+	if (m->isInputEnabled()) {
+		return BELA_MIDI_ALREADY_OPEN;
+	}
 	int ret;
 	try {
+		// Asked before readFrom, which reports a name no port has with
+		// the same -1 it uses for a device it could not open.
+		if (!Midi::exists(port)) {
+			return BELA_MIDI_NO_SUCH_PORT;
+		}
 		ret = m->readFrom(port);
 	} catch (...) {
 		return -1;
@@ -95,17 +109,21 @@ int bela_midi_read_from(BelaMidi *midi, const char *port) {
 	if (m->isInputEnabled()) {
 		return 0;
 	}
-	// readFrom answers a port that does not exist with -1, an ALSA
-	// failure with -errno, and a thread it could not start with -1.
-	// Only the middle one carries anything, so it is passed through and
-	// the rest collapse to -1.
+	// What is left is an ALSA failure, which readFrom passes on as
+	// -errno, and a thread it could not start, which is -1.
 	return ret < 0 ? ret : -1;
 }
 
 int bela_midi_write_to(BelaMidi *midi, const char *port) {
 	Midi *m = self(midi);
+	if (m->isOutputEnabled()) {
+		return BELA_MIDI_ALREADY_OPEN;
+	}
 	int ret;
 	try {
+		if (!Midi::exists(port)) {
+			return BELA_MIDI_NO_SUCH_PORT;
+		}
 		ret = m->writeTo(port);
 	} catch (...) {
 		return -1;
