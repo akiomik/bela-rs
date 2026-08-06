@@ -3,6 +3,8 @@
 #[cfg(bela_device)]
 use core::ffi::c_void;
 use core::ops::DerefMut;
+#[cfg(test)]
+use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::ffi::CString;
 use std::sync::{Mutex, PoisonError};
@@ -377,6 +379,23 @@ impl AuxiliaryTask {
     const fn schedule_raw(&self) {}
 }
 
+/// A handle standing in for one from the current audio system, for
+/// tests in other modules.
+///
+/// Its pointer is never dereferenced. `cfg(test)` is not a target
+/// condition, so this is compiled for the device target too — the CI
+/// job that lints it builds the test targets — and there the pointer
+/// reaches `Bela_scheduleAuxiliaryTask` only if a test schedules it,
+/// which none does. Nothing outside `cfg(test)` can build an
+/// `AuxiliaryTask` without libbela agreeing to one.
+#[cfg(test)]
+pub(crate) fn test_handle() -> AuxiliaryTask {
+    AuxiliaryTask {
+        raw: ptr::null_mut(),
+        generation: GENERATION.load(Ordering::Acquire),
+    }
+}
+
 /// The `extern "C"` shim libbela calls on the task's thread.
 ///
 /// Safety: `arg` must point to a live `F` that nothing else touches.
@@ -391,7 +410,6 @@ unsafe extern "C" fn trampoline<F: FnMut()>(arg: *mut c_void) {
 
 #[cfg(test)]
 mod tests {
-    use core::ptr;
     use core::time::Duration;
     use std::panic::catch_unwind;
     use std::sync::mpsc;
@@ -406,15 +424,7 @@ mod tests {
     /// takes itself.
     static SERIALISE: Mutex<()> = Mutex::new(());
 
-    /// A handle standing in for one from the current audio system. Its
-    /// pointer is never dereferenced: off-device `schedule_raw` does
-    /// nothing.
-    fn handle() -> AuxiliaryTask {
-        AuxiliaryTask {
-            raw: ptr::null_mut(),
-            generation: GENERATION.load(Ordering::Acquire),
-        }
-    }
+    use super::test_handle as handle;
 
     #[test]
     fn tearing_down_the_audio_system_retires_the_handles() {

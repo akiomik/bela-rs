@@ -174,8 +174,9 @@ and `Private` constructs with the default, so the ring is a plain byte
 stream: every later read takes `m.size` bytes from the wrong offset.
 That is corruption of the whole output stream from that point on, not
 one lost message, and nothing in the API resynchronizes it short of
-constructing a new `Midi`. **Not measured** — it is what the two files
-say when read together.
+constructing a new `Midi`. **Measured** — see [Which threads may write,
+measured](#which-threads-may-write-measured), where a write from a
+thread EVL does not know about produces exactly this.
 
 **4. Nothing above learns about any of it.** `commsSend` assigns a
 `bool` to an `int` and tests it for negativity
@@ -267,10 +268,18 @@ Four reasons, in the order they matter:
   property of the type rather than a rule to follow. With one render
   thread it is one queue; with four it is four, drained by one task.
 - **The consumer end is one drain at a time**, which is what reason 1
-  above rests on. Two things can drain — the task, and a `flush` from
-  the thread that opened the port — so they take turns rather than
-  overlap, and `writeOutput` sees one caller however many threads are
-  rendering.
+  above rests on. Two things can drain — the task, and a `send` or
+  `flush` from the thread that opened the port — so they take turns
+  rather than overlap, and `writeOutput` sees one caller however many
+  threads are rendering. The task gives up when the other holds it;
+  the other waits, being outside the real-time context.
+- **A drain looks again before it stops.** A `schedule` arriving while
+  the task's callback runs is dropped rather than queued, so a drain
+  that emptied the queues once and returned could leave a message
+  behind with nothing left to ask for it — until the program next sent
+  something, which for a note off is a note that does not stop. The
+  loop closes that down to the few instructions between the last look
+  and the callback returning.
 - **Ordering between render threads is not guaranteed.** Each thread's
   messages keep their order; two threads' messages interleave by drain
   order. Any program where that matters should emit MIDI from
@@ -409,19 +418,74 @@ reaching the FIFO means writing the output thread and the
 one of the four things listed at the top of this file as worth
 inheriting. Two of the four, on the output side, to avoid one queue.
 
+## Which threads may write, measured
+
+Bela's pipe is written with `oob_write`, an EVL out-of-band call, and
+EVL only knows about threads that have been attached to it. Measured on
+the board on 2026-08-07, with `snd-virmidi` looping one port into
+another and `amidi -d` reading the far end:
+
+| written from | reported | arrived |
+| --- | --- | --- |
+| the thread that opened the port | 1 | yes |
+| a Bela auxiliary task's thread | 1 | yes |
+| a plain `std::thread` | 1 | **no** |
+
+`cleanup` is on the first of those rows and not by luck: libbela calls
+`setup` and `cleanup` from the thread that called `Bela_initAudio` and
+`Bela_cleanupAudio`, which is the thread a program opens its port on.
+That is what the measurement below shows, where a control change sent
+from `cleanup` arrives — and it is the assumption to check if libbela
+ever moves those callbacks, since what would happen then is a `send`
+returning `Err` where nothing is looking.
+
+The first two are the ones this crate uses: `MidiOutput::send` and
+`flush` from the thread that opened the port, and the drain from the
+task. The third is why `send` and `flush` check which thread they are
+on and refuse rather than write.
+
+They refuse because the failure is not a lost message. Continuing the
+same run:
+
+1. from the opening thread, note on `90 3C 64` — **arrives**;
+2. from a plain thread, note off `80 3C 40` — arrives nowhere;
+3. from the opening thread, control change `B0 07 7F` — **`80 3C 40`
+   arrives**.
+
+Which is finding 3, reproduced: the payload of step 2 reached the
+`CircularBuffer` and its header did not, so step 3's header was paired
+with step 2's bytes. Every later message is read from the wrong offset,
+for the rest of the run, and nothing in the API resynchronises it. What
+was "not measured" above is measured now, and it is corruption rather
+than loss.
+
+## The output path, measured end to end
+
+Also 2026-08-07, through the same loopback, with a program using
+`MidiOutput`:
+
+- `MidiOutput::send` from `setup` — a control change, before audio
+  started;
+- `MidiSender::send` from `render` — a note on and, later, a note off,
+  each queued in a block and written by the drain task;
+- `MidiOutput::send` from `cleanup` — control change 123, all notes
+  off, after the last block;
+
+arrived in that order, and with `Settings::thread_count(4)` each of the
+four render threads' notes arrived as well. The receiving end shows
+them in running-status form, which is the ALSA sequencer's re-encoding
+between the two virtual ports rather than anything this side does.
+
 ## Open, and needing a board
 
-- **Whether the overflow lags or corrupts** (finding 3). Reachable by
-  putting more than 256 messages between one drain and the next and
-  watching the receiving end start reading from the wrong offset. There
-  is no signal to wait for — `stderr` stays quiet, since the one line
-  that path could print belongs to finding 2 — and **that silence is
-  itself part of what the run has to confirm**.
-- **Whether Bela's `cleanup` callback runs on a thread attached to
-  EVL.** `evl_get_self()` answers it in one call, and the answer says
-  whether a flush can run there at all or whether it has to happen
-  while rendering.
+- **What a full queue does to timing.** `MidiSender::send` reports
+  `Err` at its own capacity, and what has never been measured is a
+  block that produces enough messages to reach it, or what the drain
+  costs when it does.
 - **Whether more than one port ever needs opening at once.** One `Midi`
   is one port pair, and a program wanting several devices holds several
   of them, each with its own input thread. Nothing here says where that
   stops being reasonable.
+- **Whether the parser's real-time-byte defect shows in practice**
+  (the last row of the table above). It needs a device that sends clock
+  while a note is in flight.

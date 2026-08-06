@@ -80,6 +80,15 @@
 //! rather than bytes, because a note and a velocity are two numbers in
 //! the same range.
 //!
+//! Sending goes through [`MidiOutput`], which hands each render thread
+//! a [`MidiSender`] to keep in its render state. Sending queues a
+//! message and schedules a task; the writing to Bela happens on that
+//! task's thread rather than on the audio thread, for reasons
+//! `docs/midi.md` sets out. What has no block left to be sent in — a
+//! closing all-notes-off — goes through
+//! [`MidiOutput::send`](MidiOutput::send) from
+//! [`cleanup`](BelaApplication::cleanup).
+//!
 //! Debugging output from the audio thread goes through
 //! [`rt_println!`], which formats into a fixed-size stack buffer and
 //! hands it to Bela's real-time print function — `println!` allocates
@@ -153,8 +162,8 @@ pub use error::Error;
 pub use hardware::{Board, DetectMode, Version};
 pub use level::{Channel, MAX_DECIBELS};
 pub use midi::{
-    ControlValue, Controller, MidiChannel, MidiInput, MidiMessage, Note, PitchBend, Pressure,
-    Program, Velocity, midi_ports,
+    ControlValue, Controller, MidiChannel, MidiInput, MidiMessage, MidiOutput, MidiSender, Note,
+    PitchBend, Pressure, Program, Velocity, midi_ports,
 };
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;

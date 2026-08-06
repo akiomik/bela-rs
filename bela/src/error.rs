@@ -135,6 +135,24 @@ pub enum Error {
         /// number"`, `"velocity"`, `"channel"`.
         kind: &'static str,
     },
+    /// A render thread queued more MIDI messages between drains than
+    /// [`MidiOutput::capacity`](crate::MidiOutput::capacity) allows.
+    ///
+    /// The message was not queued, and nothing else was affected. This
+    /// says the program outran the budget it declared and nothing about
+    /// the device: neither Bela's output pipe nor ALSA reports anything
+    /// this crate could pass on.
+    MidiQueueFull,
+    /// MIDI was sent from a thread that cannot send it.
+    ///
+    /// [`MidiOutput::send`](crate::MidiOutput::send) and
+    /// [`flush`](crate::MidiOutput::flush) write to Bela's pipe through
+    /// an EVL out-of-band call, which only a thread EVL knows about can
+    /// make. This crate's answer is the thread that opened the port: a
+    /// write from any other reports success, delivers nothing, and
+    /// leaves the output stream misaligned for the rest of the run, so
+    /// it is refused instead.
+    MidiThread,
     /// A level or gain was not a number of decibels libbela can convert
     /// into register values: not finite, or larger in magnitude than
     /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
@@ -218,6 +236,16 @@ impl fmt::Display for Error {
             Self::MidiValue { value, max, kind } => {
                 write!(f, "{value} is more than the {max} a {kind} carries")
             }
+            Self::MidiQueueFull => write!(
+                f,
+                "this render thread's MIDI output queue is full; it holds what the program asked \
+                 MidiOutput::open for, per drain"
+            ),
+            Self::MidiThread => write!(
+                f,
+                "MIDI can only be sent from the thread that opened the port; a write from any \
+                 other thread is lost and misaligns the output stream"
+            ),
             Self::Decibels => write!(
                 f,
                 "a level must be a finite number of decibels of at most {max} in magnitude, \
