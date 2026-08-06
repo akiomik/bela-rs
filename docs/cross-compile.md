@@ -1,8 +1,11 @@
 # Cross-compilation setup
 
 How to build for Bela Gem (`aarch64-unknown-linux-gnu`) from a host
-machine (instructions assume macOS). Verified end to end: examples
-cross-built this way run on the board.
+machine. The macOS path is verified end to end: examples cross-built
+that way run on the board. Cross-building from an x86_64 Linux host is
+not — it differs only in which compiler the linker wrapper calls, but
+nothing built that way has been run on hardware. An arm64 Linux host
+differs by more than the compiler, and is untried as well.
 
 ## 1. Rust target
 
@@ -16,9 +19,17 @@ Non-linking checks need nothing else installed:
 cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu
 ```
 
-## 2. Cross-linker
+## 2. Linker wrapper
 
-From the [messense/macos-cross-toolchains] tap:
+`.cargo/config.toml` points the linker at
+[`scripts/aarch64-bela-linker.sh`](../scripts/aarch64-bela-linker.sh),
+a wrapper that adds the sysroot-specific flags Debian needs (see the
+comments in the script for why each is required). The wrapper calls a
+compiler, which has to be installed, and `BELA_CC` says which one. A
+cross toolchain is named after the triple it was built for, so the name
+depends on where the toolchain came from.
+
+On macOS, from the [messense/macos-cross-toolchains] tap:
 
 ```sh
 brew tap messense/macos-cross-toolchains
@@ -26,10 +37,48 @@ brew trust messense/macos-cross-toolchains
 brew install aarch64-unknown-linux-gnu
 ```
 
-`.cargo/config.toml` points the linker at
-[`scripts/aarch64-bela-linker.sh`](../scripts/aarch64-bela-linker.sh),
-a wrapper that adds the sysroot-specific flags Debian needs (see the
-comments in the script for why each is required).
+That one is the wrapper's default, so `BELA_CC` can stay unset.
+
+On Debian or Ubuntu, from the distribution:
+
+```sh
+sudo apt install gcc-aarch64-linux-gnu
+export BELA_CC=aarch64-linux-gnu-gcc
+```
+
+Any other aarch64 Linux compiler is used the same way: install it and
+name it in `BELA_CC`. The value is a name to find on `PATH` or an
+absolute path — the wrapper runs it as a program, so it cannot carry
+arguments or a prefix command like `ccache`.
+
+Not every build that comes through the wrapper is a cross build. It is
+attached to the target in `.cargo/config.toml`, not to cross-compiling,
+so building on the board itself goes through it as well — with no
+sysroot to add, and the board's own compiler to call:
+
+```sh
+export BELA_CC=gcc
+```
+
+An arm64 Linux host, building for the board with a sysroot, is the case
+nobody here has tried. Host and target triple are equal there, and
+whether `[target.<triple>]` also governs what cargo compiles to run on
+the host is `target-applies-to-host`, which is on and can only be
+turned off on nightly — so the board's sysroot may end up linked into
+programs meant to run on the host machine. Expect to find that out by a
+build script failing to run.
+
+What the wrapper asks of a toolchain is that it targets aarch64 Linux
+and honours `--sysroot`. The C library, its headers and the startup
+files the `-B` covers (`Scrt1.o`, `crti.o`, `crtn.o`) then come from
+the board's sysroot rather than the toolchain, so its own copies of
+those need not match the board. Its `libgcc` does not follow that rule:
+`crtbeginS.o`, `crtendS.o` and the `libgcc` the compiler links come
+from the toolchain's own directory, and a toolchain much newer than the
+board's gcc can leave a binary asking for `GCC_x.y` symbols the board's
+`libgcc_s.so.1` does not have. That failure appears when the binary
+runs, not when it links, which is the other reason to run the smoke
+test on a board after changing toolchains.
 
 [messense/macos-cross-toolchains]: https://github.com/messense/macos-cross-toolchains
 
