@@ -6,7 +6,7 @@ use std::error;
 const UNRECOGNISED_OPTION: i32 = b'?' as i32;
 
 /// Errors returned by the Bela audio system lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Error {
     /// `Bela_initAudio` failed with the contained return code.

@@ -115,7 +115,7 @@ fn check_decibels(decibels: f32) -> Result<(), Error> {
 ///
 /// Channels are numbered as the context's audio channels are, from
 /// zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
     /// Every channel the codec has.
     All,

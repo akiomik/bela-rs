@@ -8,7 +8,7 @@ use crate::context::{BlockContext, CleanupContext, RenderContext, SetupContext, 
 /// Handed to
 /// [`create_render_state`](BelaApplication::create_render_state), which
 /// is called once per thread, in order, before audio starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ThreadInfo {
     index: usize,
     count: usize,

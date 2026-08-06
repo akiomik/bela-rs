@@ -28,7 +28,7 @@ use bela_sys::BelaContext;
 
 /// Direction of a digital (GPIO) pin. All pins begin as inputs, which
 /// is what [`PinMode::default()`](Default::default) is.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PinMode {
     /// The pin reads external logic levels (the default).
     #[default]
