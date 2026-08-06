@@ -111,6 +111,9 @@ audio callback boundary aborts the process either way.
 - [Multithreaded rendering](docs/multithreaded-rendering.md) — what
   `threadCount` does on the board, how the safe API divides a block
   across the render threads, and what it measurably buys
+- [MIDI](docs/midi.md) — what part of Bela's MIDI code the crate
+  wraps, and why output leaves `render` through a queue of the crate's
+  own rather than Bela's
 - [Release procedure](docs/release.md)
 - [Changelog](CHANGELOG.md) / [Contributing](CONTRIBUTING.md)
 
