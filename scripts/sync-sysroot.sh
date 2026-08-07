@@ -1,6 +1,14 @@
 #!/bin/sh
 # Sync the parts of a Bela board's filesystem needed to cross-link
-# device binaries (the equivalent of Bela's own SyncBelaSysroot).
+# device binaries (the equivalent of Bela's own SyncBelaSysroot), plus
+# the sources that answer what the headers do not.
+#
+# The two are not the same thing. Everything under /usr, /root/Bela/lib
+# and /root/Bela/include is compiled or linked against, and so is
+# /root/Bela/libraries, which is where <libraries/<Name>/<Name>.h>
+# resolves to. /root/Bela/core is neither: nothing here builds it, and
+# it is carried because what a call into libbela costs the audio thread
+# is written in the .cpp and nowhere else.
 #
 # Usage: scripts/sync-sysroot.sh [destination] [user@host]
 #   destination defaults to ./bela-sysroot, host to root@bela.local
@@ -13,16 +21,23 @@ DEST="${1:-bela-sysroot}"
 HOST="${2:-root@bela.local}"
 
 # Paths recorded in docs/board-facts.md: the Bela headers, the sources
-# a program reaches as <libraries/<Name>/<Name>.h>, the Bela shared
-# objects, the EVL real-time runtime, seasocks, and the Debian
-# headers/libraries they all depend on.
+# a program reaches as <libraries/<Name>/<Name>.h>, the sources of the
+# real-time plumbing underneath them, the Bela shared objects, the EVL
+# real-time runtime, seasocks, and the Debian headers/libraries they
+# all depend on.
 #
-# /root/Bela/libraries is 3 MB against the sysroot's 850, and without it
+# /root/Bela/libraries is 3 MB against the sysroot's 820, and without it
 # the only trace of a class like Midi is the forwarding shim left in
 # include/legacy — which says where the header is but does not carry it.
-PATHS="/root/Bela/include /root/Bela/libraries /root/Bela/lib \
-/usr/evl /usr/local/lib /usr/include /usr/lib/aarch64-linux-gnu \
-/usr/lib/gcc"
+#
+# /root/Bela/core is 564 KB and answers the question the headers cannot:
+# include/ declares AuxTaskNonRT, RtNonRtMsgFifo and CircularBuffer,
+# while what a call through them costs the audio thread — whether it
+# blocks, what it does when a pipe is full, which side of the EVL
+# boundary it runs on — is written in the .cpp.
+PATHS="/root/Bela/include /root/Bela/libraries /root/Bela/core \
+/root/Bela/lib /usr/evl /usr/local/lib /usr/include \
+/usr/lib/aarch64-linux-gnu /usr/lib/gcc"
 
 mkdir -p "$DEST"
 # -R keeps the absolute paths, -l/-K preserve the many symlinks Debian

@@ -91,8 +91,11 @@ runtime and the Debian libraries they depend on:
 scripts/sync-sysroot.sh            # ./bela-sysroot from root@bela.local
 ```
 
-The result is about 850 MB and is git-ignored. Re-run it after
-updating the board image.
+The result is about 820 MB and is git-ignored. Re-run it after
+updating the board image, and after a change to the script's own list
+of paths: a sysroot synced by an earlier version has only what that
+version copied, and nothing in a build notices what is missing unless
+it is something the build needs.
 
 The transfer takes whichever path `bela.local` resolves to, the USB
 gadget network by default. Attaching a USB Ethernet adapter is an
