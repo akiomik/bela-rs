@@ -27,6 +27,13 @@ compiles — see [MIDI](docs/midi.md). The other C++ libraries (Scope,
 Trill, Fft, Gui) are out of scope for now and may be added
 incrementally.
 
+One corner of the core API is left out on purpose: the Multiplexer
+Capelet accessors. The Capelet is an accessory for the original Bela
+cape and cannot be attached to a Gem, so what a reading means — which
+Capelet pin it came from — cannot be checked on the board this crate is
+measured against. What a Gem does with `--mux-channels` regardless is
+recorded in [Board facts](docs/board-facts.md).
+
 The integration model is the officially supported one: a standalone
 binary that defines the render callbacks and links `libbela`,
 cross-compiled on a host machine and copied to the board.
