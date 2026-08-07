@@ -115,6 +115,14 @@
 //! [`Settings`], so the application keeps its own defaults, and
 //! [`print_usage`] prints the list.
 //!
+//! One corner of the C core API has no safe accessors here on purpose:
+//! the Multiplexer Capelet, `multiplexerAnalogRead` and
+//! `multiplexerChannelForFrame`. The Capelet is an accessory for the
+//! original Bela cape and cannot be attached to a Gem, so what a
+//! reading means — which Capelet pin it came from — cannot be checked
+//! on the board this crate is measured against. `docs/board-facts.md`
+//! records what a Gem does with the multiplexer settings regardless.
+//!
 //! What the program is running on is [`Board::detect`] and
 //! [`Version::running`] — the board libbela says it found, and the
 //! version of the library it found it with. Both answer before there is

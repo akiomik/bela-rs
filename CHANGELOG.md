@@ -211,6 +211,13 @@ and this project adheres to
   the files in `examples/`, which CI compiles for the device, no job
   compiles a doc test for it — running one means linking, so it needs a
   cross-linker and a sysroot CI does not have.
+- Neither the `bela` documentation nor the workspace `README.md` said
+  that the Multiplexer Capelet accessors are missing on purpose, which
+  left the one omission in the core API reading as an oversight. The
+  Capelet is an accessory for the original Bela cape and cannot be
+  attached to a Gem, so which Capelet pin a reading came from — what
+  the accessors are for — cannot be checked on the board this crate is
+  measured against.
 
 ## [0.3.0] - 2026-08-06
 
