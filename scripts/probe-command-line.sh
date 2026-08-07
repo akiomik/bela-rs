@@ -47,6 +47,13 @@ ALL_CASES="unknown-option missing-value receive-port transmit-port"
 ALL_CASES="$ALL_CASES server-name json-file-missing json-string-malformed"
 ALL_CASES="$ALL_CASES analog-3 analog-0 analog-100 digital-100 digital-0"
 ALL_CASES="$ALL_CASES period-0 period-3 rate-text rate-negative"
+# The ladder that locates the period floor. Every integer rather than a
+# bisection: a bisection assumes the boundary is clean, and whether it
+# is one is part of the question.
+ALL_CASES="$ALL_CASES period-2 period-4 period-5 period-6 period-7 period-8"
+ALL_CASES="$ALL_CASES period-9 period-10 period-11 period-12 period-13"
+ALL_CASES="$ALL_CASES period-14 period-15 period-16 period-3-no-analog"
+ALL_CASES="$ALL_CASES period-1-no-analog period-3-analog-2"
 ALL_CASES="$ALL_CASES analog-flag-2 uniform-5 pru-number-5 board-mismatch"
 ALL_CASES="$ALL_CASES board-unknown stop-pin-9999 disabled-digitals-all"
 ALL_CASES="$ALL_CASES pru-file-missing codec-mode-garbage mux-1 mux-8"
@@ -77,6 +84,27 @@ case_arguments() {
   # by the parser, so both of these ask what happens below the floor.
   period-0) echo "-p 0" ;;
   period-3) echo "-p 3" ;;
+  # Where the floor is. The failure names the ADC — `PRU SPI
+  # transactions not done on time` — so the last case asks the same
+  # small period with analog off, since a floor that moves with the
+  # configuration is not a number a caller-side check could hold.
+  period-2) echo "-p 2" ;;
+  period-4) echo "-p 4" ;;
+  period-5) echo "-p 5" ;;
+  period-6) echo "-p 6" ;;
+  period-7) echo "-p 7" ;;
+  period-8) echo "-p 8" ;;
+  period-9) echo "-p 9" ;;
+  period-10) echo "-p 10" ;;
+  period-11) echo "-p 11" ;;
+  period-12) echo "-p 12" ;;
+  period-13) echo "-p 13" ;;
+  period-14) echo "-p 14" ;;
+  period-15) echo "-p 15" ;;
+  period-16) echo "-p 16" ;;
+  period-3-no-analog) echo "-p 3 -N 0" ;;
+  period-1-no-analog) echo "-p 1 -N 0" ;;
+  period-3-analog-2) echo "-p 3 -C 2" ;;
   # `atof` on something that is not a number gives 0, and the parser
   # clamps a negative rate to the same 0.
   rate-text) echo "-r abc" ;;
@@ -117,7 +145,11 @@ CASES="${*:-$ALL_CASES}"
 
 # A case that comes up runs until this interrupts it, so this is the
 # length of a successful case rather than a ceiling for a stuck one.
-RUN_TIMEOUT=4
+# Four seconds is enough to tell a case that starts from one that does
+# not; PROBE_SECONDS raises it for the other question, whether a case
+# that started keeps up — an underrun is reported when it happens, not
+# at startup.
+RUN_TIMEOUT="${PROBE_SECONDS:-4}"
 
 daemon_was_active=no
 board_prepared=no
