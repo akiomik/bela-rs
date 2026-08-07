@@ -411,6 +411,89 @@ measurement and is not recorded here yet.
   both of which run on the main audio thread; what a secondary render
   thread reports is measured by `examples/parallel` instead.
 
+## The Multiplexer Capelet
+
+Collected 2026-08-07: partly on the board with a throwaway C++ project
+that printed the multiplexer fields of `BelaContext`, partly by reading
+the board's own sources (`/root/Bela`, `/opt/source/dtb-6.12-Beagle`).
+The question behind it is whether the Capelet API in `Bela.h` means
+anything on a Gem; the short answer is that the software path works and
+the hardware cannot be attached.
+
+- **The Capelet is not a Gem accessory.** It is an add-on for the Bela
+  cape — Bela's shop says it "is not compatible with Bela Gem [and]
+  only works in conjunction with a Bela cape", and the knowledge base
+  adds that it is not compatible with a Bela Mini either. Its channel
+  select lines are six PRU outputs on `P8.41`–`P8.46`
+  (`pr1_pru1_pru_r30_[0-5]`, `MODE5 | OUTPUT | PRU`), which is a
+  BeagleBone header; a Gem has PocketBeagle 2's `P1`/`P2`.
+- **Every select line does reach a PocketBeagle 2 header pin, but the
+  stock overlay routes none of them.** Cross-referencing the header
+  table (`/opt/source/.../pocketbeagle2-pins.txt`) with what
+  `PB2-BELA.dtbo` claims and what `bela_hw_settings.h` uses each pin
+  for:
+
+  | `R30` | pin (ball, mode) | what the Gem uses it for |
+  |---|---|---|
+  | `GPO0` | P1_02 (AA19, 3) / **P2_02 (U22, 2)** | audio (`MCASP2_AXR4`) / blue LED (`GPIO0_45`) |
+  | `GPO1` | **P1_35 (AE21, 3)** / P2_04 (V24, 2) | nothing / red underrun LED (`GPIO0_46`) |
+  | `GPO2` | P1_04 (Y18, 3) / **P2_06 (W25, 2)** | audio / stop button (`GPIO0_47`) |
+  | `GPO3` | **P2_08 (W24, 2)** / P2_31 (AA18, 3) | nothing libbela names (`GPIO0_48`) / audio |
+  | `GPO4` | P2_10 (AD21, 3) / **P2_20 (Y25, 2)** | audio / SPI DAC chip select (`GPIO0_49`) |
+  | `GPO5` | **P1_20 (Y24, 2)** | nothing |
+
+  None of the six needs an audio, SPI-ADC, I²C or ADC-reset pin
+  (`P2_18`, `GPIO0_53`), and none collides with the 16 digital channels
+  (`P1_21`–`P2_35`). So a hand-wired rig is conceivable at the cost
+  of two LEDs, the stop button and a custom overlay — but on an
+  unmodified image `PB2-BELA.dtbo` leaves all six in GPIO mode, where
+  the PRU's `r30` writes reach no pin at all.
+- **libbela still implements the whole path on this board, and the PRU
+  firmware still runs the multiplexer state machine.** `--mux-channels`
+  is in the option list, `pru/pru_rtaudio_irq.p` has `ENABLE_MUXER`
+  enabled, and with `-X 8` a Gem Stereo initialises, runs and stops
+  with no complaint.
+- **The state machine can be caught running, but only at a period size
+  that makes it drift.** With mux 8 and 16 analog frames per block,
+  `multiplexerStartingChannel` stays 0 for every block, which proves
+  nothing: it is what a PRU that never wrote `COMM_MUX_END_CHANNEL`
+  would also give. At `--period 20` it advances by 2 per block — 4, 6,
+  0, 2, … with 8 channels, and 0, 2, 0, 2 with 4 — and that value is
+  derived from what the PRU writes, so the firmware is cycling. The
+  step of 2 is `10 mod 8`: the hardware still samples 8 channels at
+  22050 Hz (10 frames per 20-frame block) and the resampling to 44100
+  that `uniformSampleRate` performs happens afterwards.
+- **The demultiplexed buffer is filled.** With `-X 8` the context
+  carries `multiplexerChannels = 8` and a non-null `multiplexerAnalogIn`
+  whose entries track the analog inputs. With nothing wired to the
+  board, and with no select lines routed, what the eight slots hold is
+  the same input sampled at eight different times — not eight pins.
+- **Off, the context reports 0 channels and a null buffer** —
+  `multiplexerChannels = 0`, `multiplexerAnalogIn = (nil)`, measured in
+  `setup` and in the block. The header's field comment says the count
+  "will be 2, 4 or 8 [...] otherwise it will be 1"; the value is 0. And
+  `multiplexerChannelForFrame` returns **1**, not 0, for a disabled
+  multiplexer — its guard is `if(multiplexerChannels <= 1) return 1;`.
+  A safe wrapper mirroring the C helper has to reproduce that, or
+  refuse to answer at all.
+- **The accepted counts are 0, 2, 4 and 8; `1` is an error.** `-X 1`
+  and `-X 3` both print `Error: N is not a valid number of multiplexer
+  channels (options: 0 = off, 2, 4, 8)` and fail
+  `Bela_initAudio` — which, as "Audio thread" above records, poisons
+  the process.
+- **Two more combinations fail, one of them badly.** `-X 8` with fewer
+  than 8 analog inputs (`-C 4`) is refused with `Error: multiplexer
+  capelet can only be used with 8 analog channels`, and
+  `--pru-number 0 -X 8` with `Incompatible settings: multiplexer can
+  only be run using PRU 1`. But `-X 8 --use-analog 0` passes every
+  check libbela makes on the ARM side and dies in the firmware instead:
+  `Invalid PRU configuration settings`, `PRU timeout`, `McASP error,
+  abort`.
+- **What cannot be measured here** is the only thing the API's
+  documentation is really about: which Capelet pin a given
+  `multiplexerAnalogRead(context, x, y)` reading came from. That needs
+  the Capelet, and no Gem can carry one.
+
 ## Operations
 
 - USB gadget network: the board is `bela.local` (host-side interface
