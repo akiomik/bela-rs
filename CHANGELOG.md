@@ -62,6 +62,38 @@ and this project adheres to
   is every public type that can be a key rather than some of them —
   a run keyed by its settings, or faults counted per error, no longer
   depends on which type the crate happened to derive it for.
+- `MidiInput`, `MidiMessage` and the values a message carries — `Note`,
+  `Velocity`, `Controller`, `ControlValue`, `Program`, `Pressure`,
+  `PitchBend` and `MidiChannel` — plus `midi_ports`, which lists what
+  can be opened. A port is opened in `setup` and read with
+  `MidiInput::read`, or `messages` for the iterator over the same
+  thing, which takes a message out of Bela's parser ring: two index
+  reads and a copy of at most three bytes, so it belongs in
+  `render_pre`. It takes `&mut self` because that ring has one reader
+  and nothing synchronises it, which also means `render` — where the
+  application is `&self` on every render thread at once — cannot call
+  it.
+  Each value is its own type rather than a `u8`, because a note and a
+  velocity are two numbers in the same range and swapping them is what
+  a call site does by accident; each rejects what the wire cannot carry
+  rather than masking it off, as Bela's own `writeMessage` does, and
+  each converts both ways — `From<Note> for u8`, `TryFrom<u8> for
+  Note` — with `Error::MidiValue` carrying what was given, the largest
+  that type takes, and which type it was, so that a note and a velocity
+  do not fail identically.
+  `midi_ports` exists because Bela's port names are not the ones
+  `amidi -l` prints — `hw:0,0,0` against `hw:0,0` — and only the longer
+  form opens anything.
+  Running status is not delivered either, and that one is worth knowing
+  before choosing this crate for a keyboard: a device that leaves the
+  status byte out when it repeats — most of them, for a stream of
+  notes — loses every message after the first of a run, because Bela's
+  parser discards a data byte it was not expecting. Measured; nothing
+  here can fix it without writing a parser instead of wrapping one.
+  System exclusive is not delivered: Bela's parser keeps it out of the
+  message ring, and the alternative it offers is a callback on its own
+  input thread. System common messages are dropped by that parser
+  before they reach anything.
 - `bela_midi_*` in `bela-sys`: raw bindings to a C surface over Bela's
   `Midi` class, which is C++ in `libbelaextra` and so out of reach of
   the generated bindings. The C is this crate's own (`shim/midi.cpp`,
@@ -77,9 +109,10 @@ and this project adheres to
   against `hw:0,0`, and only the first opens anything. Device builds
   therefore link `libbelaextra` as well as `libbela`, and cross builds
   need a C++ compiler from the same toolchain as the linker's — named
-  by `BELA_CXX`, or derived from `BELA_CC`. A safe API is still to
-  come; `docs/midi.md` records what the class does on the audio thread
-  and what the safe API will be shaped by.
+  by `BELA_CXX`, or derived from `BELA_CC`. The safe API over it is
+  `MidiInput` and the types around it, above; `docs/midi.md` records
+  what the class does on the audio thread and what that API is shaped
+  by.
 
 ### Changed
 
