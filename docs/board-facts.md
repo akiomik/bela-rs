@@ -524,7 +524,9 @@ caller different things.
   | `--pru-number 5` | `Bela_initAudio` |
   | `-X 1` | `Bela_initAudio` |
   | `--pru-file /nonexistent` | `Bela_startAudio` |
-  | `-p 0`, `-p 3` | **nothing; the PRU gives up** |
+  | `-p 0` (i.e. 1), `-p 3` | **nothing; the PRU gives up** |
+  | `-p 2`, `-p 4` … `-p 16` | nothing; they ran |
+  | `-p 1 -N 0`, `-p 3 -N 0`, `-p 3 -C 2` | nothing; they ran |
   | `-X 8 -N 0` | **nothing; the PRU gives up** |
   | `--json-file /nonexistent.json` | nothing; it ran |
   | `-C 0`, `-C 3`, `-C 100` | nothing; it ran |
@@ -564,6 +566,27 @@ caller different things.
   abort`. The process exits 1 **from inside libbela** — `run_with_args`
   returns nothing, so a program cannot report on this or clean up after
   it. `-X 8 -N 0` ends the same way.
+- **There is no floor to check for: the sizes that fail are 1 and 3,
+  and only with eight analog inputs.** Every integer from 1 to 16 was
+  run with the defaults, and 2 and 4 through 16 all came up — odd sizes
+  included. Both failures move as soon as the analog configuration
+  does:
+
+  | `--period` | default (8 analog in) | `-N 0` | `-C 2` |
+  |---|---|---|---|
+  | 1 | PRU timeout | runs | — |
+  | 2 | runs | — | — |
+  | 3 | PRU timeout | runs | runs |
+  | 4–16 | run | — | — |
+
+  So `periodSize >= n` is not a check anyone can write: 2 is fine where
+  3 is not, and 3 is fine as soon as there are two analog inputs rather
+  than eight. **Why 3 fails where 2 does not was not established** —
+  both give the same hardware analog frame count on this board — and
+  guessing at the mechanism is not what this file is for. The runs
+  above were repeated at 15 seconds as well as the probe's default 4,
+  with the same outcome each way and no underrun reported by the ones
+  that ran.
 - **A sample rate of 0 fails initialisation, and says something else.**
   `-r abc` (`atof` gives 0) and `-r -5` (clamped to 0) both fail with
   `Error: audio sampling rate is 0. Is the codec enabled?` followed by
