@@ -15,11 +15,37 @@
 #include <cstring>
 #include <vector>
 
+#include <alsa/asoundlib.h>
 #include <libraries/Midi/Midi.h>
 
 namespace {
 
 Midi *self(BelaMidi *midi) { return reinterpret_cast<Midi *>(midi); }
+
+// Whether `port` can be opened for output right now, as an errno.
+//
+// Midi::writeTo opens the output device *blocking* (Midi.cpp:354),
+// alone among the four opens in that file — the other three pass
+// SND_RAWMIDI_NONBLOCK. On a port another process already holds for
+// output, that call does not fail: it waits, with no timeout, and
+// measured on the board it never came back. A program would hang in
+// setup.
+//
+// So the device is opened non-blocking here first, and closed again.
+// It answers -EBUSY where writeTo would have waited. Between this and
+// the real open there is a window in which someone else can take the
+// port, and then writeTo blocks after all; closing that would mean
+// owning the handle rather than Bela's class, which is a different
+// design than this shim.
+int output_available(const char *port) {
+	snd_rawmidi_t *out = nullptr;
+	int err = snd_rawmidi_open(nullptr, &out, port, SND_RAWMIDI_NONBLOCK);
+	if (err) {
+		return err;
+	}
+	snd_rawmidi_close(out);
+	return 0;
+}
 
 // Runs on the input thread, once per byte of an incoming system
 // exclusive message, and does nothing with it.
@@ -124,6 +150,11 @@ int bela_midi_write_to(BelaMidi *midi, const char *port) {
 		if (!Midi::exists(port)) {
 			return BELA_MIDI_NO_SUCH_PORT;
 		}
+		// Before writeTo, which would wait rather than refuse.
+		ret = output_available(port);
+		if (ret) {
+			return ret;
+		}
 		ret = m->writeTo(port);
 	} catch (...) {
 		return -1;
@@ -146,15 +177,22 @@ int bela_midi_available_messages(BelaMidi *midi) {
 
 unsigned int bela_midi_get_message(BelaMidi *midi, unsigned char *buf) {
 	MidiParser *parser = self(midi)->getParser();
-	if (!parser || parser->numAvailableMessages() <= 0) {
+	if (!parser) {
 		return 0;
 	}
-	// Returned by value, and advances the read pointer whatever the
-	// caller does with it — hence the check above rather than after.
-	MidiChannelMessage message = parser->getNextChannelMessage();
-	if (message.getType() == kmmNone) {
-		return 0;
-	}
+	MidiChannelMessage message;
+	// A loop so that 0 means one thing. getNextChannelMessage advances
+	// the read pointer whatever it finds, so a record of type kmmNone
+	// — which should not reach a counted slot, but the class allows it
+	// — has already been consumed by the time it can be recognised.
+	// Returning 0 for it would tell a caller draining until 0 that the
+	// ring is empty when it is not.
+	do {
+		if (parser->numAvailableMessages() <= 0) {
+			return 0;
+		}
+		message = parser->getNextChannelMessage();
+	} while (message.getType() == kmmNone);
 	buf[0] = message.getStatusByte() | message.getChannel();
 	unsigned int size = message.getNumDataBytes();
 	// The table it reads maxes out at 2 (Midi.cpp:39). The clamp is so

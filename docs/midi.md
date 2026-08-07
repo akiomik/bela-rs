@@ -347,6 +347,12 @@ Measured with the shim, on the same board:
   success;
 - opening either direction twice reports `BELA_MIDI_ALREADY_OPEN`
   rather than opening a second ALSA handle over the first;
+- a **second object** on a port the first has open reports `-16`
+  (`EBUSY`) for both directions, and ALSA prints a line of its own
+  about the busy device. Output only answers that way because the shim
+  checks first: through `Midi::writeTo` alone, the same call waited
+  with no timeout and the program had to be killed (see the defect
+  table);
 - `bela_midi_write_output` returns 1 with the port open and 0 without
   one, and there is nothing to receive it with the cable out.
 
@@ -360,6 +366,7 @@ Measured with the shim, on the same board:
 | `Midi.cpp:151` | `enableParser(false)` deletes `inputParser` without clearing it; twice is a double free, and it also deletes before clearing the flag the input thread reads | the parser is on for the object's whole life, established once in the shim |
 | `Midi.cpp:148` | `cleanup()` frees the output task and the ALSA handles and never the parser, so a `Midi` leaks its 100-message ring — about 2.4 KB — when it is destroyed | accepted rather than fixed: the only call that would free it is the one above, which cannot be made safely while the input thread runs. One object per port for the life of a program is what the wrapper is sized for |
 | `Midi_c.cpp:19` | `Midi_new` enables the parser after starting the input thread | the shim enables it first |
+| `Midi.cpp:354` | `writeTo` opens the output device **blocking**, alone among the four `snd_rawmidi_open` calls in the file — the other three pass `SND_RAWMIDI_NONBLOCK`. On a port another process holds for output it therefore waits rather than failing, with no timeout: measured on the board, a program calling it never came back and had to be killed | the shim opens the port non-blocking first and closes it again, so the answer is `-EBUSY`. There is a window between the check and the real open that only owning the handle would close |
 | `Midi.cpp:332` | `readFrom` and `writeTo` can fail with the ALSA device already open — neither closes it when the port information or the thread cannot be had — and leave `inputEnabled` / `outputEnabled` false, which is what a caller has to read to know whether it worked | the shim refuses a second open, but only when the first one set the flag; a failed open therefore ends the object, and the safe API makes a new one per `open` and drops that one on failure, which closes the device |
 | `Midi.cpp:52` | `MidiParser::parse()` counts each status byte twice in its return value | no caller uses it |
 

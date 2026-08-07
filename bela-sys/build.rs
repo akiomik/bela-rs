@@ -32,7 +32,10 @@ const LIB_DIRS: &[&str] = &[
 // there. rustc links with `--as-needed`, so a `libbela` named earlier
 // than the library that needs it is dropped as unused and then the
 // link fails on those symbols.
-const LIBS: &[&str] = &["belaextra", "bela", "seasocks", "evl", "stdc++"];
+// `asound` is for the shim itself, which opens a port non-blocking to
+// find out whether it is free — see shim/midi.cpp. It resolves in the
+// multiarch directory, and `libbelaextra` needs it anyway.
+const LIBS: &[&str] = &["belaextra", "bela", "asound", "seasocks", "evl", "stdc++"];
 
 // The C surface this crate compiles over Bela's `Midi` class. See
 // shim/midi.h for what it exports and docs/midi.md for why.

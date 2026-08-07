@@ -125,7 +125,11 @@ int bela_midi_read_from(BelaMidi *midi, const char *port);
 /* Opens `port` for output.
  *
  * **Once per object**, on the same terms as bela_midi_read_from, with
- * the same return values, and with the same end after a failure.
+ * the same return values, and with the same end after a failure. A
+ * port another process holds for output reports -EBUSY, which takes a
+ * check of its own: Midi::writeTo opens the device blocking, and
+ * measured on the board it waits for it with no timeout rather than
+ * failing.
  * Reading Midi::isOutputEnabled is what makes the success answer
  * trustworthy: writeTo returns 1 both when it succeeded and when the
  * port does not exist, and in the second case every later write is
@@ -148,9 +152,12 @@ int bela_midi_available_messages(BelaMidi *midi);
  * for BELA_MIDI_MESSAGE_MAX bytes, and returns how many bytes were
  * written.
  *
- * Returns 0 when nothing was waiting, leaving `buf` untouched. Bela's
- * version answers that case with a one-byte message built out of a
- * cleared record, which cannot be told from a real one.
+ * Returns 0 when nothing was waiting, leaving `buf` untouched — and
+ * only then, so a caller may drain until 0. A record the parser left
+ * unusable is skipped rather than reported as an empty ring, since
+ * reading one has already consumed it. Bela's version answers the
+ * empty case with a one-byte message built out of a cleared record,
+ * which cannot be told from a real one.
  *
  * One reader only: taking a message advances a pointer nothing
  * synchronises. Same data-race note as above.
