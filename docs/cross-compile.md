@@ -51,6 +51,44 @@ name it in `BELA_CC`. The value is a name to find on `PATH` or an
 absolute path — the wrapper runs it as a program, so it cannot carry
 arguments or a prefix command like `ccache`.
 
+A **C++** compiler from the same toolchain is needed as well, because
+`bela-sys` compiles a small shim over Bela's `Midi` class (see
+[midi.md](midi.md)). `bela-sys/build.rs` picks it in this order:
+
+1. `BELA_CXX`, if set.
+2. Otherwise a name derived from `BELA_CC`, if that is set and ends in
+   `gcc`: `aarch64-linux-gnu-gcc` gives `aarch64-linux-gnu-g++`,
+   `/usr/bin/gcc` gives `/usr/bin/g++`, plain `gcc` gives `g++`.
+3. Otherwise — `BELA_CC` unset as well — the tap's
+   `aarch64-unknown-linux-gnu-g++`.
+
+A `BELA_CC` that is set and does not end in `gcc` **fails the build**
+rather than falling back to the default, because the fallback would
+compile the shim with a toolchain the linker is not using. `BELA_CXX`
+is the answer for those:
+
+```sh
+export BELA_CXX=aarch64-linux-gnu-g++
+```
+
+`BELA_CXX` and `BELA_CC` are what this reads, and `CXX` and
+`CXX_aarch64-unknown-linux-gnu` — which `cc` would otherwise honour —
+are not consulted: the compiler has to match the one the linker
+wrapper calls, and that wrapper knows only `BELA_CC`. The archiver
+follows the compiler's name (`aarch64-linux-gnu-g++` implies
+`aarch64-linux-gnu-ar`), except for names nothing follows from, such as
+a `clang++`; `AR` and `AR_aarch64-unknown-linux-gnu` are read first
+either way, so a toolchain that needs a different one can say so.
+
+Both have to come from the same toolchain. The shim allocates a class
+whose methods live in `libbelaextra.so`, so it has to agree with it
+about layout — measured equal between the tap's g++ 15.2.0 and the
+board's own `clang++`, and recorded in
+[board-facts.md](board-facts.md). Compiling with one toolchain and
+linking with another is also how a binary ends up asking the board for
+`libstdc++` or `libgcc_s` symbols it does not have, which is a failure
+that waits until the program runs.
+
 Not every build that comes through the wrapper is a cross build. It is
 attached to the target in `.cargo/config.toml`, not to cross-compiling,
 so building on the board itself goes through it as well — with no

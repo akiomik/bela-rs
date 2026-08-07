@@ -1,0 +1,228 @@
+/* Implementation of shim/midi.h. See that file for the contract and
+ * ../../docs/midi.md for the decisions behind it.
+ *
+ * Two rules hold throughout:
+ *
+ * - No C++ exception may reach Rust, so everything that can allocate is
+ *   wrapped. Midi's constructor resizes two vectors, and readFrom and
+ *   writeTo build std::strings and a port list.
+ * - What a call succeeded at is read back from the object (isInputEnabled,
+ *   isOutputEnabled) rather than taken from a return value, because the
+ *   return values conflate cases the caller has to tell apart.
+ */
+#include "midi.h"
+
+#include <cstring>
+#include <vector>
+
+#include <alsa/asoundlib.h>
+#include <libraries/Midi/Midi.h>
+
+namespace {
+
+Midi *self(BelaMidi *midi) { return reinterpret_cast<Midi *>(midi); }
+
+// Whether `port` can be opened for output right now, as an errno.
+//
+// Midi::writeTo opens the output device *blocking* (Midi.cpp:354),
+// alone among the four opens in that file — the other three pass
+// SND_RAWMIDI_NONBLOCK. On a port another process already holds for
+// output, that call does not fail: it waits, with no timeout, and
+// measured on the board it never came back. A program would hang in
+// setup.
+//
+// So the device is opened non-blocking here first, and closed again.
+// It answers -EBUSY where writeTo would have waited. Between this and
+// the real open there is a window in which someone else can take the
+// port, and then writeTo blocks after all; closing that would mean
+// owning the handle rather than Bela's class, which is a different
+// design than this shim.
+int output_available(const char *port) {
+	snd_rawmidi_t *out = nullptr;
+	int err = snd_rawmidi_open(nullptr, &out, port, SND_RAWMIDI_NONBLOCK);
+	if (err) {
+		return err;
+	}
+	snd_rawmidi_close(out);
+	return 0;
+}
+
+// Runs on the input thread, once per byte of an incoming system
+// exclusive message, and does nothing with it.
+//
+// Not having a callback is not the same as not wanting one: with none
+// set, Bela's parser prints every sysex byte with rt_printf, and a
+// "Receiving sysex" line around them (Midi.cpp:41). A controller
+// announcing itself would fill the program's console. Sysex does not
+// reach the message ring either way, so this drops what would
+// otherwise be printed.
+void discard_sysex(midi_byte_t, void *) {}
+
+} // namespace
+
+extern "C" {
+
+unsigned int bela_midi_list_ports(char *buf, unsigned int len) {
+	std::vector<Midi::Port> ports;
+	try {
+		ports = Midi::listAllPorts();
+	} catch (...) {
+		return 0;
+	}
+	unsigned int needed = 0;
+	bool copying = true;
+	for (const Midi::Port &port : ports) {
+		const unsigned int size = port.name.size() + 1;
+		// Whole names, and no gaps: a caller reading NUL-terminated
+		// strings out of a short buffer must not find a truncated name,
+		// nor a later short one written past a longer one that did not
+		// fit.
+		if (copying && needed + size <= len) {
+			memcpy(buf + needed, port.name.c_str(), size);
+		} else {
+			copying = false;
+		}
+		needed += size;
+	}
+	return needed;
+}
+
+BelaMidi *bela_midi_new(void) {
+	Midi *midi = nullptr;
+	try {
+		midi = new Midi();
+		// Before any port is open, so no input thread is reading the
+		// flag this sets.
+		midi->enableParser(true);
+		midi->getParser()->setSysexCallback(discard_sysex, nullptr);
+	} catch (...) {
+		// enableParser allocates, so the object can outlive the
+		// failure by one line if this is not here.
+		delete midi;
+		return nullptr;
+	}
+	return reinterpret_cast<BelaMidi *>(midi);
+}
+
+void bela_midi_delete(BelaMidi *midi) {
+	// ~Midi joins the input thread; nothing it does throws, but a
+	// destructor reached through C is the last place to find out.
+	try {
+		delete self(midi);
+	} catch (...) {
+	}
+}
+
+int bela_midi_read_from(BelaMidi *midi, const char *port) {
+	Midi *m = self(midi);
+	// inputEnabled is set once and never cleared, so after a first
+	// success it can no longer answer for a second call — and readFrom
+	// would leak the ALSA handle and start a second reader.
+	if (m->isInputEnabled()) {
+		return BELA_MIDI_ALREADY_OPEN;
+	}
+	int ret;
+	try {
+		// Asked before readFrom, which reports a name no port has with
+		// the same -1 it uses for a device it could not open.
+		if (!Midi::exists(port)) {
+			return BELA_MIDI_NO_SUCH_PORT;
+		}
+		ret = m->readFrom(port);
+	} catch (...) {
+		return -1;
+	}
+	if (m->isInputEnabled()) {
+		return 0;
+	}
+	// What is left is an ALSA failure, which readFrom passes on as
+	// -errno, and a thread it could not start, which is -1.
+	return ret < 0 ? ret : -1;
+}
+
+int bela_midi_write_to(BelaMidi *midi, const char *port) {
+	Midi *m = self(midi);
+	if (m->isOutputEnabled()) {
+		return BELA_MIDI_ALREADY_OPEN;
+	}
+	int ret;
+	try {
+		if (!Midi::exists(port)) {
+			return BELA_MIDI_NO_SUCH_PORT;
+		}
+		// Before writeTo, which would wait rather than refuse.
+		ret = output_available(port);
+		if (ret) {
+			return ret;
+		}
+		ret = m->writeTo(port);
+	} catch (...) {
+		return -1;
+	}
+	if (m->isOutputEnabled()) {
+		return 0;
+	}
+	// The case this exists for: writeTo returns 1 for a port that does
+	// not exist, which is also what it returns on success.
+	return ret < 0 ? ret : -1;
+}
+
+int bela_midi_available_messages(BelaMidi *midi) {
+	MidiParser *parser = self(midi)->getParser();
+	if (!parser) {
+		return 0;
+	}
+	return parser->numAvailableMessages();
+}
+
+unsigned int bela_midi_get_message(BelaMidi *midi, unsigned char *buf) {
+	MidiParser *parser = self(midi)->getParser();
+	if (!parser) {
+		return 0;
+	}
+	MidiChannelMessage message;
+	// A loop so that 0 means one thing. getNextChannelMessage advances
+	// the read pointer whatever it finds, so a record of type kmmNone
+	// — which should not reach a counted slot, but the class allows it
+	// — has already been consumed by the time it can be recognised.
+	// Returning 0 for it would tell a caller draining until 0 that the
+	// ring is empty when it is not.
+	do {
+		if (parser->numAvailableMessages() <= 0) {
+			return 0;
+		}
+		message = parser->getNextChannelMessage();
+	} while (message.getType() == kmmNone);
+	buf[0] = message.getStatusByte() | message.getChannel();
+	unsigned int size = message.getNumDataBytes();
+	// The table it reads maxes out at 2 (Midi.cpp:39). The clamp is so
+	// that the buffer contract in the header can be checked here rather
+	// than believed about a table in another file.
+	if (size > BELA_MIDI_MESSAGE_MAX - 1) {
+		size = BELA_MIDI_MESSAGE_MAX - 1;
+	}
+	for (unsigned int n = 0; n < size; ++n) {
+		buf[n + 1] = message.getDataByte(n);
+	}
+	return size + 1;
+}
+
+int bela_midi_write_output(BelaMidi *midi, const unsigned char *bytes,
+                           unsigned int length) {
+	// The one call here with no try around it, and deliberately: the
+	// path below it — schedule, commsSend, writeRt, and the rt_fprintf
+	// on its failure branch — allocates nothing and throws nothing, so
+	// a try would suggest there is something to catch.
+	//
+	// That is the whole of the claim, and it is not that the call is
+	// real-time safe. The same failure branch sleeps for 10 ms
+	// (Midi.cpp:525), reachable only if commsSend ever learns to
+	// report a failure; and why render is the wrong caller either way
+	// is in the header.
+	//
+	// const_cast: writeOutput takes a non-const pointer and reads
+	// through it (Midi.cpp:512).
+	return self(midi)->writeOutput(const_cast<midi_byte_t *>(bytes), length);
+}
+
+} /* extern "C" */

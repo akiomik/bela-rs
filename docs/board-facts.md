@@ -146,6 +146,26 @@ Captured from a verbose on-board build:
   (`/usr/local/lib`), `libstdc++`, `libbpf`, `libelf`, `libz`, `libm`,
   `libc` — so the expected external link is `-L/root/Bela/lib -lbela`
   with a sysroot that carries those transitive dependencies.
+- **`libbelaextra.so` needs `libbela.so` and does not say so.**
+  `readelf -d` lists `libstdc++`, `libseasocks`, `libasound.so.2`,
+  `libNE10.so.10`, `libm`, `libgcc_s` and `libc` — not `libbela` —
+  while its undefined symbols include `RtThread::create`,
+  `SchedulableTask::create`, `AuxTaskNonRT::~AuxTaskNonRT`,
+  `IoUtils::glob` and `StringUtils::trim`, all defined in `libbela.so`.
+  So `-lbelaextra` has to come *before* `-lbela` on a link line using
+  `--as-needed`, which rustc does: named the other way round, `libbela`
+  is dropped as unused before the library that needs it is read.
+- **The board's C++ layout and a cross toolchain's agree** (measured
+  2026-08-07). `libbelaextra.so` was built by the image's `clang++`
+  with `-std=c++14`, and code that allocates one of its classes has to
+  match it. Compiling the same file both ways —
+  `aarch64-unknown-linux-gnu-g++` 15.2.0 against the sysroot, and the
+  board's `clang++` on the board — gives `sizeof(Midi)` 456 and
+  `alignof` 8 on both, with `MidiParser` 72/8, `MidiChannelMessage`
+  24/8 and `RtThread` 88. Nothing in those classes is conditional on
+  the build defines, and libstdc++'s `std::string`, `std::vector` and
+  `std::function` have not changed layout since GCC 5, which is what
+  makes the agreement expected rather than lucky.
 
 ## Audio thread
 

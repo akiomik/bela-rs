@@ -62,6 +62,24 @@ and this project adheres to
   is every public type that can be a key rather than some of them —
   a run keyed by its settings, or faults counted per error, no longer
   depends on which type the crate happened to derive it for.
+- `bela_midi_*` in `bela-sys`: raw bindings to a C surface over Bela's
+  `Midi` class, which is C++ in `libbelaextra` and so out of reach of
+  the generated bindings. The C is this crate's own (`shim/midi.cpp`,
+  compiled by `build.rs`), because Bela's — `libraries/Midi/Midi_c.h` —
+  covers input only, cannot report a port that failed to open, and
+  enables the input parser after starting the thread that reads it.
+  A port that does not exist is reported as `BELA_MIDI_NO_SUCH_PORT`
+  and a second open of the same direction as `BELA_MIDI_ALREADY_OPEN`,
+  both far outside the `errno` range so that neither collides with an
+  ALSA failure passed through as `-errno`.
+  Ports are listed with `bela_midi_list_ports`, which exists because
+  Bela's port names are not the ones `amidi -l` prints: `hw:0,0,0`
+  against `hw:0,0`, and only the first opens anything. Device builds
+  therefore link `libbelaextra` as well as `libbela`, and cross builds
+  need a C++ compiler from the same toolchain as the linker's — named
+  by `BELA_CXX`, or derived from `BELA_CC`. A safe API is still to
+  come; `docs/midi.md` records what the class does on the audio thread
+  and what the safe API will be shaped by.
 
 ### Changed
 
