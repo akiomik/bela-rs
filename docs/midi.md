@@ -476,6 +476,47 @@ four render threads' notes arrived as well. The receiving end shows
 them in running-status form, which is the ALSA sequencer's re-encoding
 between the two virtual ports rather than anything this side does.
 
+## Exercising it without a MIDI device
+
+`snd-virmidi` is on the board's image, and gives four virtual ports
+that behave like real ones. Two of them, connected through the ALSA
+sequencer, are a cable:
+
+```sh
+ssh root@bela.local
+modprobe snd-virmidi          # hw:1,0,0 .. hw:1,3,0, clients 20..23
+aconnect 20:0 21:0            # what is written to hw:1,0,0 arrives at hw:1,1,0
+aconnect 22:0 23:0            # and hw:1,2,0 arrives at hw:1,3,0
+```
+
+Then `examples/midi` reads one end and echoes to the other, with
+`amidi` at both ends of the loop:
+
+```sh
+amidi -p hw:1,3,0 -d &                 # watch what the program echoes
+./midi hw:1,1,0 hw:1,2,0 &             # in, then out
+amidi -p hw:1,0,0 -S "903C64"          # send it a note on
+```
+
+Measured that way on 2026-08-07, with a note on, a control change and
+a note off sent in:
+
+```
+setup: in hw:1,1,0, out hw:1,2,0, of 65 port(s)
+NoteOn { channel: MidiChannel(0), note: Note(60), velocity: Velocity(100) }
+ControlChange { channel: MidiChannel(0), controller: Controller(7), value: ControlValue(69) }
+NoteOff { channel: MidiChannel(0), note: Note(60), velocity: Velocity(64) }
+cleanup: 3 message(s) received, 3 echoed, 0 dropped
+```
+
+and at the far end `90 3C 64`, `B0 07 45`, `80 3C 40`, then an
+all-notes-off on every channel — `B0 7B 00` through `BF 7B 00` — which
+is what `cleanup` sends after the last block.
+
+`rmmod snd-virmidi` puts the board back. Note that while it is loaded
+the board reports 65 ports rather than 1, which is worth knowing before
+reading a port count in a log.
+
 ## Open, and needing a board
 
 - **What a full queue does to timing.** `MidiSender::send` reports
