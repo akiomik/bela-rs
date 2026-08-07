@@ -21,15 +21,22 @@
 //! null.
 
 use core::ffi::{c_char, c_int, c_uchar, c_uint};
+use core::marker::{PhantomData, PhantomPinned};
 
 /// An opened `Midi` object, as an opaque pointee.
 ///
 /// Deliberately not a description of the C++ class: nothing on this
 /// side may depend on its layout, and the shim is what allocates it.
+///
+/// The marker is what the nomicon asks of an opaque type: a bare
+/// zero-length array would make this `Send`, `Sync` and `Unpin`, and
+/// the object behind it is none of those — it owns a thread that reads
+/// the port, and its address is in the C++ object's own members.
 #[repr(C)]
 #[derive(Debug)]
 pub struct BelaMidi {
-    _opaque: [u8; 0],
+    _data: [u8; 0],
+    _marker: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 /// Bytes of the longest message [`bela_midi_get_message`] writes: a
@@ -55,7 +62,8 @@ unsafe extern "C" {
     /// Writes every MIDI port ALSA reports into `buf` as NUL-terminated
     /// names, one after another, and returns the bytes the whole list
     /// needs. A `len` shorter than that holds as many whole names as
-    /// fit, so passing 0 asks for the size.
+    /// fit. `buf` may be null when `len` is 0, which is how to ask for
+    /// the size before allocating.
     ///
     /// 0 means there are no ports, and also means the query threw;
     /// the two are not told apart, because the C++ underneath answers
@@ -82,10 +90,16 @@ unsafe extern "C" {
     /// [`BELA_MIDI_NO_SUCH_PORT`], [`BELA_MIDI_ALREADY_OPEN`], or a
     /// negative value from Bela — `-errno` when ALSA refused the
     /// device.
+    ///
+    /// A failure ends the object: Bela can fail with the ALSA device
+    /// already open and the flag the guard reads still false, so a
+    /// retry opens a second device over the first. Delete it and make
+    /// another.
     pub fn bela_midi_read_from(midi: *mut BelaMidi, port: *const c_char) -> c_int;
 
     /// Opens `port` for output, once per object, with the same return
-    /// values as [`bela_midi_read_from`].
+    /// values as [`bela_midi_read_from`] and the same end after a
+    /// failure.
     pub fn bela_midi_write_to(midi: *mut BelaMidi, port: *const c_char) -> c_int;
 
     /// How many parsed messages are waiting. Reads two ring indices:

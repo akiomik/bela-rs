@@ -53,12 +53,19 @@ arguments or a prefix command like `ccache`.
 
 A **C++** compiler from the same toolchain is needed as well, because
 `bela-sys` compiles a small shim over Bela's `Midi` class (see
-[midi.md](midi.md)). `bela-sys/build.rs` derives its name from
-`BELA_CC` when that ends in `gcc` — `aarch64-linux-gnu-gcc` gives
-`aarch64-linux-gnu-g++`, plain `gcc` gives `g++` — and otherwise
-defaults to the tap's `aarch64-unknown-linux-gnu-g++`. `BELA_CXX`
-overrides it, and is what to set for a toolchain the derivation cannot
-guess:
+[midi.md](midi.md)). `bela-sys/build.rs` picks it in this order:
+
+1. `BELA_CXX`, if set.
+2. Otherwise a name derived from `BELA_CC`, if that is set and ends in
+   `gcc`: `aarch64-linux-gnu-gcc` gives `aarch64-linux-gnu-g++`,
+   `/usr/bin/gcc` gives `/usr/bin/g++`, plain `gcc` gives `g++`.
+3. Otherwise — `BELA_CC` unset as well — the tap's
+   `aarch64-unknown-linux-gnu-g++`.
+
+A `BELA_CC` that is set and does not end in `gcc` **fails the build**
+rather than falling back to the default, because the fallback would
+compile the shim with a toolchain the linker is not using. `BELA_CXX`
+is the answer for those:
 
 ```sh
 export BELA_CXX=aarch64-linux-gnu-g++

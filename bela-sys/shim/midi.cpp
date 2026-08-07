@@ -171,6 +171,17 @@ unsigned int bela_midi_get_message(BelaMidi *midi, unsigned char *buf) {
 
 int bela_midi_write_output(BelaMidi *midi, const unsigned char *bytes,
                            unsigned int length) {
+	// The one call here with no try around it, and deliberately: the
+	// path below it — schedule, commsSend, writeRt, and the rt_fprintf
+	// on its failure branch — allocates nothing and throws nothing, so
+	// a try would suggest there is something to catch.
+	//
+	// That is the whole of the claim, and it is not that the call is
+	// real-time safe. The same failure branch sleeps for 10 ms
+	// (Midi.cpp:525), reachable only if commsSend ever learns to
+	// report a failure; and why render is the wrong caller either way
+	// is in the header.
+	//
 	// const_cast: writeOutput takes a non-const pointer and reads
 	// through it (Midi.cpp:512).
 	return self(midi)->writeOutput(const_cast<midi_byte_t *>(bytes), length);

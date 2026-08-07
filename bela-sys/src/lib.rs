@@ -121,10 +121,81 @@ mod shim_compiler {
     }
 
     #[test]
+    fn a_compiler_named_by_its_path_is_still_one() {
+        // docs/cross-compile.md allows an absolute path, and
+        // /usr/bin/gcc is the board's own compiler.
+        assert_eq!(
+            shim_compiler_from("", "/usr/bin/gcc"),
+            Ok("/usr/bin/g++".to_owned())
+        );
+        assert_eq!(
+            shim_compiler_from("", "/opt/tc/bin/aarch64-linux-gnu-gcc"),
+            Ok("/opt/tc/bin/aarch64-linux-gnu-g++".to_owned())
+        );
+        assert_eq!(
+            shim_archiver("/usr/bin/g++"),
+            Some("/usr/bin/ar".to_owned()),
+            "and the archiver beside it"
+        );
+    }
+
+    #[test]
     fn a_compiler_that_merely_ends_in_gcc_is_not_one() {
         // Same trap on the compiler side: only a bare `gcc` or a
         // `<triple>-gcc` names a toolchain to follow.
         assert!(shim_compiler_from("", "notgcc").is_err());
         assert_eq!(shim_archiver("notg++"), None);
+        assert_eq!(
+            shim_archiver("/usr/bin/clang++"),
+            None,
+            "a path does not make it one"
+        );
+    }
+}
+
+// The shim's header and the declarations mirroring it are edited by
+// hand, and a value that drifts between them is not a compile error —
+// it is a safe API that reads one failure as another. This is the
+// cheap half of the guard: the numbers.
+#[cfg(test)]
+mod shim_header {
+    extern crate std;
+
+    use std::format;
+
+    /// `shim/midi.h`, read at compile time from the crate this
+    /// declares the shim for.
+    const HEADER: &str = include_str!("../shim/midi.h");
+
+    /// The value of `#define <name> ...`, with one level of
+    /// parentheses taken off — the header writes negative constants as
+    /// `(-1000)`, as a C header should.
+    fn defined(name: &str) -> i64 {
+        let line = HEADER
+            .lines()
+            .find(|line| line.starts_with(&format!("#define {name} ")))
+            .unwrap_or_else(|| panic!("{name} is not defined in shim/midi.h"));
+        let value = line.split_whitespace().nth(2).expect("a value");
+        value
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .parse()
+            .expect("a number")
+    }
+
+    #[test]
+    fn the_constants_match_the_header() {
+        assert_eq!(
+            defined("BELA_MIDI_MESSAGE_MAX"),
+            i64::try_from(super::BELA_MIDI_MESSAGE_MAX).expect("a small buffer size")
+        );
+        assert_eq!(
+            defined("BELA_MIDI_NO_SUCH_PORT"),
+            i64::from(super::BELA_MIDI_NO_SUCH_PORT)
+        );
+        assert_eq!(
+            defined("BELA_MIDI_ALREADY_OPEN"),
+            i64::from(super::BELA_MIDI_ALREADY_OPEN)
+        );
     }
 }

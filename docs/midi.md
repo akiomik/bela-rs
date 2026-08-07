@@ -360,6 +360,7 @@ Measured with the shim, on the same board:
 | `Midi.cpp:151` | `enableParser(false)` deletes `inputParser` without clearing it; twice is a double free, and it also deletes before clearing the flag the input thread reads | the parser is on for the object's whole life, established once in the shim |
 | `Midi.cpp:148` | `cleanup()` frees the output task and the ALSA handles and never the parser, so a `Midi` leaks its 100-message ring — about 2.4 KB — when it is destroyed | accepted rather than fixed: the only call that would free it is the one above, which cannot be made safely while the input thread runs. One object per port for the life of a program is what the wrapper is sized for |
 | `Midi_c.cpp:19` | `Midi_new` enables the parser after starting the input thread | the shim enables it first |
+| `Midi.cpp:332` | `readFrom` and `writeTo` can fail with the ALSA device already open — neither closes it when the port information or the thread cannot be had — and leave `inputEnabled` / `outputEnabled` false, which is what a caller has to read to know whether it worked | the shim refuses a second open, but only when the first one set the flag; a failed open therefore ends the object, and the safe API makes a new one per `open` and drops that one on failure, which closes the device |
 | `Midi.cpp:52` | `MidiParser::parse()` counts each status byte twice in its return value | no caller uses it |
 
 ## Not the third way

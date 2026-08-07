@@ -6,9 +6,9 @@
 // shim with one toolchain and links it with another. Included rather
 // than imported because those two are different crates.
 //
-// Doc comments are ordinary comments here for the same reason: the
-// file is pasted into a crate that lints for missing documentation on
-// what it exports, and none of this is exported.
+// This header is `//` rather than `//!` because the file is pasted
+// into the middle of two others, where an inner doc comment is a
+// syntax error. The items below keep their `///`.
 
 /// The C++ compiler assumed when nothing names one: the macOS tap's,
 /// matching the default in `scripts/aarch64-bela-linker.sh`.
@@ -65,8 +65,9 @@ fn shim_archiver(compiler: &str) -> Option<String> {
     Some(format!("{prefix}ar"))
 }
 
-/// The triple prefix of a GNU tool name — `aarch64-linux-gnu-` for
-/// `aarch64-linux-gnu-gcc`, and the empty string for a bare `gcc`.
+/// Everything before the tool in a GNU tool name — `aarch64-linux-gnu-`
+/// for `aarch64-linux-gnu-gcc`, `/usr/bin/` for `/usr/bin/gcc`, and the
+/// empty string for a bare `gcc`.
 ///
 /// [`None`] for a name that merely ends in those letters: `clang++`
 /// ends in `g++` without being one, and deriving `clanar` from it is
@@ -75,6 +76,12 @@ fn gnu_prefix<'a>(name: &'a str, tool: &str) -> Option<&'a str> {
     if name == tool {
         return Some("");
     }
-    name.strip_suffix(tool)
-        .filter(|prefix| prefix.ends_with('-'))
+    name.strip_suffix(tool).filter(|prefix| {
+        // A triple ends in `-`, and a path in `/`: both
+        // aarch64-linux-gnu-gcc and /usr/bin/gcc name a toolchain,
+        // and docs/cross-compile.md allows either spelling. What is
+        // ruled out is a longer word that merely ends in these
+        // letters.
+        prefix.ends_with('-') || prefix.ends_with('/')
+    })
 }

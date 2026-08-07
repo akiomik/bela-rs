@@ -37,7 +37,12 @@ typedef struct BelaMidi BelaMidi;
 
 /* Except where a function says otherwise, `midi` must be a pointer
  * from bela_midi_new that has not been passed to bela_midi_delete, and
- * `port` and `buf` must not be NULL. Nothing here checks. */
+ * `port` and `buf` must not be NULL. Nothing here checks.
+ *
+ * The exceptions, both named again where they apply: bela_midi_delete
+ * accepts NULL, and bela_midi_list_ports accepts a NULL `buf` when
+ * `len` is 0, which is how a caller asks for the size before
+ * allocating. */
 
 /* Writes the names of every MIDI port ALSA reports into `buf` as
  * NUL-terminated strings, one after another, and returns the number of
@@ -48,6 +53,10 @@ typedef struct BelaMidi BelaMidi;
  * `hw:0,0,0` where `amidi -l` prints `hw:0,0`. Midi::readFrom and
  * Midi::writeTo compare the string they are given against this list, so
  * the two-number form opens nothing.
+ *
+ * `buf` may be NULL when `len` is 0: nothing is written, and the
+ * return value is what a buffer would have to hold. That is the
+ * intended way to size one.
  *
  * A return of 0 means there are no ports, and also means the query
  * itself threw. Those are not told apart, and there is nothing finer
@@ -102,16 +111,25 @@ void bela_midi_delete(BelaMidi *midi);
  * BELA_MIDI_ALREADY_OPEN as above, and otherwise a negative value from
  * Bela, which is `-errno` when ALSA refused the device. That input is
  * open at all is read back from Midi::isInputEnabled rather than taken
- * from readFrom, whose 1 and -1 each cover more than one case. */
+ * from readFrom, whose 1 and -1 each cover more than one case.
+ *
+ * **A failure is the end of this object.** Bela's readFrom can fail
+ * with the ALSA device already open — it does not close it on the way
+ * out of a port-information or thread-creation failure — and leaves
+ * inputEnabled false, which is the flag the guard above reads. So a
+ * second call after a failed one is allowed through and opens a second
+ * device over the first. Delete the object and make another rather
+ * than retrying on this one. */
 int bela_midi_read_from(BelaMidi *midi, const char *port);
 
 /* Opens `port` for output.
  *
- * **Once per object**, on the same terms as bela_midi_read_from, and
- * with the same return values. Reading Midi::isOutputEnabled is what
- * makes the success answer trustworthy: writeTo returns 1 both when it
- * succeeded and when the port does not exist, and in the second case
- * every later write is discarded by a check the caller cannot see. */
+ * **Once per object**, on the same terms as bela_midi_read_from, with
+ * the same return values, and with the same end after a failure.
+ * Reading Midi::isOutputEnabled is what makes the success answer
+ * trustworthy: writeTo returns 1 both when it succeeded and when the
+ * port does not exist, and in the second case every later write is
+ * discarded by a check the caller cannot see. */
 int bela_midi_write_to(BelaMidi *midi, const char *port);
 
 /* Returns how many parsed messages are waiting, or 0 if there is no
