@@ -167,10 +167,31 @@ pub(crate) fn parse(
 /// This is the usage text every Bela program shares; a program with
 /// options of its own prints them around it.
 ///
+/// # Three of the options it lists are not accepted
+///
+/// libbela's own list advertises `--receive-port`, `--transmit-port`
+/// and `--server-name`, which it no longer implements: they are in
+/// neither of its option tables, and `BelaInitSettings` has no field
+/// behind them, so passing one fails the parse with
+/// [`Error::CommandLine`]. A note saying so is printed after the list.
+///
+/// The list itself stays libbela's. A filtered one of this crate's own
+/// would have to track the library's options to stay true, and the
+/// next disagreement would point the other way — an option that works
+/// but goes unlisted, which is harder to notice than one that is
+/// listed but refused. See "Command-line options" in
+/// `docs/board-facts.md`, where the three are measured.
+///
 /// Only available on the device target (`aarch64-unknown-linux-gnu`).
 #[cfg(bela_device)]
 pub fn print_usage() {
     unsafe { bela_sys::Bela_usage() }
+    // A leading space, which is how libbela's own footnote below the
+    // list is set apart from the entries.
+    eprintln!(
+        " Note: --receive-port [-R], --transmit-port [-T] and --server-name [-S] appear above \
+         but are not implemented; passing one is an error."
+    );
 }
 
 #[cfg(test)]

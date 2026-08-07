@@ -211,6 +211,15 @@ and this project adheres to
   the files in `examples/`, which CI compiles for the device, no job
   compiles a doc test for it — running one means linking, so it needs a
   cross-linker and a sysroot CI does not have.
+- `print_usage` advertised three options that are not accepted.
+  libbela's usage text lists `--receive-port`, `--transmit-port` and
+  `--server-name`, which it no longer implements — they are in neither
+  of its option tables and `BelaInitSettings` has no field behind them
+  — so a program that printed the list was telling its users about
+  options `Bela::run_with_args` would then reject with
+  `Error::CommandLine`. A note after the list now says so. The list
+  stays libbela's rather than becoming a filtered copy of this crate's,
+  which would have to track the library's options to stay true.
 - Neither the `bela` documentation nor the workspace `README.md` said
   that the Multiplexer Capelet accessors are missing on purpose, which
   left the one omission in the core API reading as an oversight. The
