@@ -94,6 +94,42 @@ and this project adheres to
   message ring, and the alternative it offers is a callback on its own
   input thread. System common messages are dropped by that parser
   before they reach anything.
+- `MidiOutput` and `MidiSender`: sending MIDI, with the audio thread
+  doing none of the sending. `render` queues a message and asks an
+  auxiliary task to empty the queue; the task is what writes to Bela's
+  output pipe. Bela's own `writeOutput` is built to be called from
+  `render`, and `docs/midi.md` is the argument for not doing so — in
+  short, that a full pipe makes it print to stderr from the calling
+  thread, that the pipe holds far fewer records than its documented
+  size suggests, and that the buffer underneath it asks in its own
+  documentation to be written from one thread, which several render
+  threads are not.
+  There is one queue per render thread, taken once with
+  `MidiOutput::take_sender` and kept in that thread's render state, so
+  single-writer is a property of the type. Messages from one thread
+  keep their order; messages from different threads do not have one.
+  `MidiOutput::capacity` is a budget the program declares — how many
+  messages a thread may queue between drains — and `Error::MidiQueueFull`
+  means that budget was exceeded and nothing else. Neither Bela's pipe
+  nor ALSA reports anything this crate could pass on, which is why
+  there is no error that means the device did not receive something.
+  The task's thread is started from `setup` rather than by the first
+  `render` that sends, since libbela starts one by raising a priority
+  and two render threads doing that at once make it print to standard
+  error — which is what this arrangement exists to avoid.
+  A drain takes at most one queue's worth from each thread and looks
+  again before it stops, because a `schedule` that arrives while it
+  runs is dropped rather than queued — without the second look, a
+  message pushed mid-drain would wait for whatever the program sent
+  next.
+  `MidiOutput::send` sends from outside the real-time context, for the
+  all-notes-off that has no block left to be drained in; it drains and
+  writes in one go, so it lands behind what was queued and never
+  writes to Bela's pipe alongside the task;
+  it and `flush` refuse with `Error::MidiThread` when called from a
+  thread that cannot write to Bela's pipe. Measured on the board: such
+  a write reports success, delivers nothing, and leaves every later
+  message read from the wrong offset.
 - `bela_midi_*` in `bela-sys`: raw bindings to a C surface over Bela's
   `Midi` class, which is C++ in `libbelaextra` and so out of reach of
   the generated bindings. The C is this crate's own (`shim/midi.cpp`,
