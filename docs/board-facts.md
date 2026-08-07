@@ -494,6 +494,96 @@ the hardware cannot be attached.
   `multiplexerAnalogRead(context, x, y)` reading came from. That needs
   the Capelet, and no Gem can carry one.
 
+## Command-line options
+
+Collected 2026-08-08 with `scripts/probe-command-line.sh`, which runs
+`bela/examples/command_line` one case per process and records where
+each one was caught. The question is not whether libbela accepts an
+option — it is which of four places notices, because they cost the
+caller different things.
+
+- **There are four places, and only two of them leave the caller able
+  to do anything about it.** The parse (`Bela_getopt_long` returns a
+  positive value, which this crate turns into `Error::CommandLine`);
+  `Bela_initAudio` (`Error::Init` — and, as "Audio thread" above
+  records, the process can no longer build any audio system);
+  `Bela_startAudio` (`Error::Start`, by which point `setup` has already
+  run); and nowhere at all. A case in the last group either runs, or
+  ends the process from inside libbela with no Rust error returned.
+
+  | case | caught |
+  |---|---|
+  | `--nonsense` | parse |
+  | `--period` (no value) | parse |
+  | `--receive-port 9998` | parse |
+  | `--transmit-port 9999` | parse |
+  | `--server-name 127.0.0.1` | parse |
+  | `--json-string {` | **`SIGABRT` in the parse** |
+  | `-r abc` | `Bela_initAudio` |
+  | `-r -5` | `Bela_initAudio` |
+  | `--pru-number 5` | `Bela_initAudio` |
+  | `-X 1` | `Bela_initAudio` |
+  | `--pru-file /nonexistent` | `Bela_startAudio` |
+  | `-p 0`, `-p 3` | **nothing; the PRU gives up** |
+  | `-X 8 -N 0` | **nothing; the PRU gives up** |
+  | `--json-file /nonexistent.json` | nothing; it ran |
+  | `-C 0`, `-C 3`, `-C 100` | nothing; it ran |
+  | `-B 0`, `-B 100` | nothing; it ran |
+  | `-N 2`, `-U 5` | nothing; it ran |
+  | `--board BelaMini`, `--board nonsense` | nothing; it ran |
+  | `--stop-button-pin 9999` | nothing; it ran |
+  | `--disabled-digital-channels 65535` | nothing; it ran |
+  | `--codec-mode garbage` | nothing; it ran |
+  | `-X 8` | nothing; it ran |
+  | `-Y 0,1` | nothing; it ran |
+
+- **`Bela_usage` advertises three options libbela does not implement.**
+  `--receive-port`, `--transmit-port` and `--server-name` are printed
+  by it — and therefore by this crate's `print_usage` — but appear in
+  neither `gDefaultShortOptions` nor `gDefaultLongOptions`, so getopt
+  reports them as unrecognised and the parse fails. A program that
+  prints the list this crate offers is telling its users about options
+  it will then refuse.
+- **A malformed `--json-string` takes the process down with it.**
+  `--json-string {` throws an uncaught `nlohmann::json` `parse_error`
+  and the process ends on `SIGABRT` (exit 134) — before any Bela call,
+  with no error to return and nothing a caller could catch. The
+  neighbouring option fails the other way: `--json-file` naming a
+  missing file prints `jsonSettingsInitFile: missing, empty or
+  corrupted file` and then carries on with the settings it already had.
+- **Channel counts are reshaped rather than refused.** `-C` snaps to 8,
+  4 or 2 — `-C 0` and `-C 3` both give **2** analog inputs, `-C 100`
+  gives 8 — and `-B` clamps to 16, with `-B 0` turning digital off
+  altogether. Asking for no analog channels and being given two is the
+  one worth remembering: `-N 0` is the way to have none.
+- **A period size the hardware cannot keep up with is caught by
+  nothing until the PRU gives up, and `setup` has run by then.** `-p 0`
+  is clamped to 1 by the parser and `-p 3` is taken as it stands; both
+  reach `setup`, which reports the block size, and then print `PRU SPI
+  transactions not done on time`, `PRU timeout` and `McASP error,
+  abort`. The process exits 1 **from inside libbela** — `run_with_args`
+  returns nothing, so a program cannot report on this or clean up after
+  it. `-X 8 -N 0` ends the same way.
+- **A sample rate of 0 fails initialisation, and says something else.**
+  `-r abc` (`atof` gives 0) and `-r -5` (clamped to 0) both fail with
+  `Error: audio sampling rate is 0. Is the codec enabled?` followed by
+  `Error while retrieving hardware settings Bela hardware: is a cape
+  connected?` — a message about hardware for a number the command line
+  supplied.
+- **`--board` naming a board you do not have is ignored.** With
+  `--board BelaMini` on this board, verbose logging reports `Hardware
+  specified at the command line: BelaMini` and then `Hardware to be
+  used: GemStereo`; the run is indistinguishable from one without the
+  option. An unrecognised name behaves the same way.
+- **Several options are accepted and then do nothing visible.**
+  `--codec-mode garbage`, `--disabled-digital-channels 65535` (the
+  context still reports 16 digital channels), `-N 2` and `-U 5` — the
+  last two are documented as booleans — and `-Y 0,1`, which asks for an
+  Audio Expander Capelet that, like the Multiplexer, is not a Gem
+  accessory. `--stop-button-pin 9999` prints
+  `Gpio::getBankAddress(): requested module 62 out of range` and runs
+  on without a working stop button.
+
 ## Operations
 
 - USB gadget network: the board is `bela.local` (host-side interface
