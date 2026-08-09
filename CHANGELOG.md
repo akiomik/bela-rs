@@ -31,6 +31,8 @@ and this project adheres to
 
 ### Removed
 
+- Breaking: `bela-sys` no longer exports glibc's `FILE`, `va_list`,
+  and related internal stdio types that no Bela API uses.
 - Breaking: `Bela::request_stop` and `Bela::stop_requested` are now the
   crate-root functions [`request_stop`](https://docs.rs/bela/latest/bela/fn.request_stop.html)
   and [`stop_requested`](https://docs.rs/bela/latest/bela/fn.stop_requested.html).

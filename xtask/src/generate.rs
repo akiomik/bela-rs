@@ -50,6 +50,17 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
         // into the bindings and are not usable from Rust anyway.
         .blocklist_function("(rt|Bela)_v?fprintf")
         .blocklist_function("(rt|Bela)_vprintf")
+        .blocklist_type("^FILE$")
+        .blocklist_type("^_IO_FILE$")
+        .blocklist_type("^_IO_marker$")
+        .blocklist_type("^_IO_codecvt$")
+        .blocklist_type("^_IO_wide_data$")
+        .blocklist_type("^_IO_lock_t$")
+        .blocklist_type("^__off_t$")
+        .blocklist_type("^__off64_t$")
+        .blocklist_type("^va_list$")
+        .blocklist_type("^__gnuc_va_list$")
+        .blocklist_type("^__BindgenOpaqueArray$")
         .derive_default(true)
         // Formatting is left to `cargo fmt`; see `format`.
         .formatter(bindgen::Formatter::None)
