@@ -36,10 +36,12 @@ Version meanings while pre-1.0:
 
 ## Minor or patch: the drop-in test
 
-The question a version number answers is what happens to somebody who
-has `bela = "0.x"` in their `Cargo.toml`, runs `cargo update`, and
-reads nothing. If that can leave them worse off than they were, the
-release bumps the minor.
+The question a version number answers is a counterfactual, because a
+caret requirement on `0.x` does not cross into the next minor: were
+this release to go out as a patch, `cargo update` would hand it to
+somebody who has `bela = "0.x"` in their `Cargo.toml` and reads
+nothing. If that would leave them worse off than the version they
+already had, it goes out as a minor instead.
 
 The Rust API is only part of what can leave them worse off. This crate
 wraps a C library, a board image and a cross toolchain, and a release
@@ -48,10 +50,15 @@ can break a build without a single signature changing. What counts:
 - **The API.** An item removed, renamed or given a different
   signature; a trait gaining a required method or associated type; a
   variant added to an enum that is not `#[non_exhaustive]`. Additions
-  are not this: a new type, a new `impl` of a standard trait, a new
-  variant on `Error` — which is `#[non_exhaustive]`, so matching on it
-  already has a wildcard arm — and a method made `const`, all leave
-  existing code compiling.
+  usually are not this — a new type, a new variant on `Error`, which
+  is `#[non_exhaustive]` so matching on it already has a wildcard arm,
+  a method made `const` — but additive is not a synonym for safe. A
+  new `impl` of a standard trait can leave an existing `.into()`
+  without a type to infer, and a new inherent method can shadow the
+  one an extension trait was providing; the Cargo book files both
+  under [possibly-breaking](https://doc.rust-lang.org/cargo/reference/semver.html)
+  rather than never-breaking. What decides it is whether a plausible
+  caller stops compiling, not whether anything was taken away.
 - **What a device build links or needs.** A library added to the link
   line, a compiler the toolchain did not have to include, an
   environment variable a build now depends on. `0.4.0` is the worked

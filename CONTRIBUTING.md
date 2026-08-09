@@ -61,10 +61,11 @@ rather than in a marker.
 Keep a Changelog has no category for breaking changes, so mark one by
 opening its entry with `Breaking:`. What earns the marker is the
 drop-in test in [docs/release.md](docs/release.md): an entry opens with
-`Breaking:` when it is a reason somebody who runs `cargo update` inside
-the caret range ends up worse off than before. That is wider than the
-API — what a device build links and needs, the MSRV and the board image
-all count.
+`Breaking:` when it is a reason the release could not go out as a patch
+— a reason somebody handed it by `cargo update`, having read nothing,
+would be worse off than on the version they already had. That is wider
+than the API: what a device build links and needs, the MSRV and the
+board image all count.
 
 Which heading it goes under is a separate question: `Removed` when a
 feature is gone, `Changed` when something that still exists behaves
@@ -77,7 +78,11 @@ reads the entries, not the reasons behind them.
 
 The marker and the version then agree by construction: an
 `[Unreleased]` section with no `Breaking:` entry is a patch release,
-and one with any is a minor.
+and one with any is a minor. Read backwards over the file, that holds
+from `0.2.0` onwards. `0.1.0` is a minor with nothing marked and stays
+that way: what it broke was `0.0.1`, and under caret every `0.0.x` was
+already incompatible with every other, so there is no entry to mark —
+the release was the break.
 
 ## Releases
 
