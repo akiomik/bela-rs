@@ -12,13 +12,24 @@ use std::sync::{Mutex, PoisonError};
 use crate::context::CallbackContext;
 use crate::error::Error;
 
-/// Priority of the audio thread. Auxiliary tasks should run below it,
-/// otherwise they preempt audio rendering.
-#[allow(
-    clippy::cast_possible_wrap,
-    reason = "BELA_AUDIO_PRIORITY is 95; Bela's own range is 0..99"
-)]
-pub const AUDIO_PRIORITY: i32 = bela_sys::BELA_AUDIO_PRIORITY as i32;
+/// A real-time priority Bela accepts for an auxiliary task: 0 to 99.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Priority(u8);
+
+impl Priority {
+    /// Priority of the audio thread. Auxiliary tasks should run below
+    /// it, otherwise they preempt audio rendering.
+    pub const AUDIO: Self = Self(95);
+
+    /// A priority, or [`None`] above 99.
+    #[must_use]
+    pub const fn new(priority: u8) -> Option<Self> {
+        if priority > 99 {
+            return None;
+        }
+        Some(Self(priority))
+    }
+}
 
 /// Which set of tasks libbela currently holds.
 ///
@@ -163,7 +174,8 @@ fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
 /// use std::sync::Arc;
 ///
 /// use bela::{
-///     AuxiliaryTask, BelaApplication, RenderContext, SetupContext, ThreadInfo, rt_println,
+///     AuxiliaryTask, BelaApplication, Priority, RenderContext, SetupContext, ThreadInfo,
+///     rt_println,
 /// };
 ///
 /// struct App {
@@ -176,7 +188,8 @@ fn lifecycle() -> impl DerefMut<Target = Lifecycle> {
 ///
 ///     fn setup(&mut self, _context: &SetupContext) -> bool {
 ///         let blocks = Arc::clone(&self.blocks);
-///         self.task = AuxiliaryTask::new("report", 50, move || {
+///         let priority = Priority::new(50).expect("50 is within Bela's priority range");
+///         self.task = AuxiliaryTask::new("report", priority, move || {
 ///             rt_println!("{} blocks so far", blocks.load(Ordering::Relaxed));
 ///         })
 ///         .ok();
@@ -221,9 +234,10 @@ impl AuxiliaryTask {
     /// Creates a task that runs `callback` each time it is scheduled.
     ///
     /// `name` must be unique across the system (Bela names the
-    /// underlying thread with it), and `priority` is a real-time
-    /// priority between 0 and 99 that should stay below
-    /// [`AUDIO_PRIORITY`].
+    /// underlying thread with it), and `priority` should stay below
+    /// [`Priority::AUDIO`]. Bela permits the full range represented by
+    /// [`Priority`], including the audio thread's own priority and
+    /// priorities above it.
     ///
     /// The callback runs on a real-time thread of its own, but one
     /// that is allowed to miss deadlines: it may allocate, block and
@@ -241,7 +255,7 @@ impl AuxiliaryTask {
     /// inside that teardown — and [`Error::TaskCreate`] when Bela could
     /// not create the task, which is also what happens off-device,
     /// where there is no audio system to create it in.
-    pub fn new<F>(name: &str, priority: i32, callback: F) -> Result<Self, Error>
+    pub fn new<F>(name: &str, priority: Priority, callback: F) -> Result<Self, Error>
     where
         F: FnMut() + Send + 'static,
     {
@@ -266,7 +280,7 @@ impl AuxiliaryTask {
     #[cfg(bela_device)]
     fn create<F: FnMut()>(
         name: &CString,
-        priority: i32,
+        priority: Priority,
         generation: u64,
         state: *mut F,
     ) -> Result<Self, Error> {
@@ -275,7 +289,7 @@ impl AuxiliaryTask {
         let raw = unsafe {
             bela_sys::Bela_createAuxiliaryTask(
                 Some(trampoline::<F>),
-                priority,
+                i32::from(priority.0),
                 name.as_ptr(),
                 state.cast::<c_void>(),
             )
@@ -295,7 +309,7 @@ impl AuxiliaryTask {
     )]
     fn create<F: FnMut()>(
         _name: &CString,
-        _priority: i32,
+        _priority: Priority,
         _generation: u64,
         state: *mut F,
     ) -> Result<Self, Error> {
@@ -424,6 +438,8 @@ mod tests {
     /// takes itself.
     static SERIALISE: Mutex<()> = Mutex::new(());
 
+    const TASK_PRIORITY: Priority = Priority::new(50).expect("50 is within Bela's priority range");
+
     use super::test_handle as handle;
 
     #[test]
@@ -466,7 +482,7 @@ mod tests {
         teardown(|| {
             // What a `cleanup` callback sees: an explicit failure
             // rather than a deadlock or a task about to be deleted.
-            let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+            let error = AuxiliaryTask::new("report", TASK_PRIORITY, || {}).unwrap_err();
             assert_eq!(
                 error,
                 Error::TaskCreateWhileStopping,
@@ -474,7 +490,7 @@ mod tests {
             );
         });
 
-        let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+        let error = AuxiliaryTask::new("report", TASK_PRIORITY, || {}).unwrap_err();
         assert_ne!(
             error,
             Error::TaskCreateWhileStopping,
@@ -492,7 +508,7 @@ mod tests {
             // the window closes.
             let (sender, receiver) = mpsc::channel();
             thread::spawn(move || {
-                let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+                let error = AuxiliaryTask::new("report", TASK_PRIORITY, || {}).unwrap_err();
                 let _ = sender.send(error);
             });
 
@@ -510,7 +526,7 @@ mod tests {
         let panicked = catch_unwind(|| teardown(|| panic!("teardown blew up")));
         assert!(panicked.is_err(), "the panic should propagate");
 
-        let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+        let error = AuxiliaryTask::new("report", TASK_PRIORITY, || {}).unwrap_err();
         assert_ne!(
             error,
             Error::TaskCreateWhileStopping,
@@ -522,7 +538,7 @@ mod tests {
     fn a_name_with_an_interior_nul_is_rejected() {
         let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
 
-        let error = AuxiliaryTask::new("no\0pe", 50, || {}).unwrap_err();
+        let error = AuxiliaryTask::new("no\0pe", TASK_PRIORITY, || {}).unwrap_err();
         assert_eq!(error, Error::TaskName, "expected the name to be rejected");
     }
 
@@ -530,7 +546,7 @@ mod tests {
     fn tasks_cannot_be_created_off_device() {
         let _order = SERIALISE.lock().unwrap_or_else(PoisonError::into_inner);
 
-        let error = AuxiliaryTask::new("report", 50, || {}).unwrap_err();
+        let error = AuxiliaryTask::new("report", TASK_PRIORITY, || {}).unwrap_err();
         assert_eq!(
             error,
             Error::TaskCreate,
@@ -539,7 +555,14 @@ mod tests {
     }
 
     #[test]
+    fn priority_accepts_exactly_belas_range() {
+        assert_eq!(Priority::new(0), Some(Priority(0)));
+        assert_eq!(Priority::new(99), Some(Priority(99)));
+        assert_eq!(Priority::new(100), None);
+    }
+
+    #[test]
     fn audio_priority_matches_bela() {
-        assert_eq!(AUDIO_PRIORITY, 95, "BELA_AUDIO_PRIORITY changed");
+        assert_eq!(u32::from(Priority::AUDIO.0), bela_sys::BELA_AUDIO_PRIORITY);
     }
 }

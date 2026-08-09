@@ -42,7 +42,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use bela::{
-    AUDIO_PRIORITY, AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, CpuTimer,
+    AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, CpuTimer, Priority,
     RenderContext, SetupContext, ThreadInfo, rt_println,
 };
 
@@ -57,7 +57,7 @@ const AMPLITUDE: f32 = 0.2;
 const MEASUREMENTS_PER_CYCLE: u32 = 2000;
 
 /// The report runs below the audio thread, so it can never delay it.
-const TASK_PRIORITY: i32 = AUDIO_PRIORITY - 20;
+const TASK_PRIORITY: Priority = Priority::new(75).expect("75 is within Bela's priority range");
 
 /// The two percentages the audio thread publishes for the task to
 /// print, each as `f32::to_bits`.

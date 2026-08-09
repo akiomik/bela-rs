@@ -29,13 +29,13 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use bela::{
-    AUDIO_PRIORITY, AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, RenderContext,
+    AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, Priority, RenderContext,
     SetupContext, ThreadInfo, rt_println,
 };
 
 /// The task runs below the audio thread, so a slow report can never
 /// delay rendering.
-const TASK_PRIORITY: i32 = AUDIO_PRIORITY - 20;
+const TASK_PRIORITY: Priority = Priority::new(75).expect("75 is within Bela's priority range");
 
 struct Report {
     task: Option<AuxiliaryTask>,

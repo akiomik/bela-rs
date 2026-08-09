@@ -31,9 +31,11 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bela::{
-    AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, Error, RenderContext,
+    AuxiliaryTask, BelaApplication, BlockContext, CleanupContext, Error, Priority, RenderContext,
     SetupContext, ThreadInfo, rt_println,
 };
+
+const TASK_PRIORITY: Priority = Priority::new(50).expect("50 is within Bela's priority range");
 
 /// Creates the task whose handle is then used after its audio system
 /// is gone. Never started, only initialised and dropped.
@@ -47,7 +49,7 @@ impl BelaApplication for Abandoned {
 
     fn setup(&mut self, _context: &SetupContext) -> bool {
         let runs = Arc::clone(&self.runs);
-        match AuxiliaryTask::new("bela-rs-abandoned", 50, move || {
+        match AuxiliaryTask::new("bela-rs-abandoned", TASK_PRIORITY, move || {
             runs.fetch_add(1, Ordering::Relaxed);
         }) {
             Ok(task) => {
@@ -91,7 +93,7 @@ impl BelaApplication for Survivor {
         self.interval = (sample_rate_hz / context.audio_frames().max(1) as u64).max(1);
 
         let runs = Arc::clone(&self.fresh_runs);
-        self.fresh = AuxiliaryTask::new("bela-rs-survivor", 50, move || {
+        self.fresh = AuxiliaryTask::new("bela-rs-survivor", TASK_PRIORITY, move || {
             runs.fetch_add(1, Ordering::Relaxed);
         })
         .ok();
@@ -119,7 +121,7 @@ impl BelaApplication for Survivor {
 
     fn cleanup(&mut self, _states: &mut [()], _context: &CleanupContext) {
         // `cleanup` runs inside the teardown, so this must fail.
-        let created = AuxiliaryTask::new("bela-rs-in-cleanup", 50, || {});
+        let created = AuxiliaryTask::new("bela-rs-in-cleanup", TASK_PRIORITY, || {});
         let cleanup_create = match created {
             Err(Error::TaskCreateWhileStopping) => "rejected",
             Err(_) => "failed-otherwise",

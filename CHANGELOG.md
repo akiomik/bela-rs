@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Changed
 
+- Breaking: `AuxiliaryTask::new` now takes `Priority` instead of an
+  `i32`, so values outside Bela's 0-to-99 range cannot reach
+  `Bela_createAuxiliaryTask`. `Priority::AUDIO` replaces
+  `AUDIO_PRIORITY`.
 - Breaking: `MAX_MONITORED_PERIOD_SIZE` and the value carried by
   `Error::CpuMonitoringPeriodSize` are now `u32`, matching the rest of
   the crate's frame counts instead of exposing C's `int`.
