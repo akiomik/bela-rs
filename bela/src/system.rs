@@ -151,11 +151,12 @@ impl<T: BelaApplication> Bela<T> {
     /// away. Each was measured on a Gem Stereo failing in a place that
     /// costs the caller more than an error does.
     ///
-    /// Five of the six fail inside `Bela_initAudio` — the sanity checks
-    /// at the top of it for the sample rate and the two PRU rules, and
-    /// `BelaContextManager::setup` for the two multiplexer counts — and
-    /// what that costs is not the attempt but the process: no audio
-    /// system can be built after it, as [`new`](Bela::new) describes.
+    /// Five of the six fail inside `Bela_initAudio` — the sample rate
+    /// in `Bela_getHwConfigPrivate`, the two PRU rules in `RTAudio.cpp`'s
+    /// initial sanity checks, and the multiplexer channel and analog
+    /// input counts in `PRU::initialise` — and what that costs is not
+    /// the attempt but the process: no audio system can be built after
+    /// it, as [`new`](Bela::new) describes.
     ///
     /// The sixth, the multiplexer with the analog inputs off, is the
     /// one libbela does not check at all: its count rules sit behind an

@@ -189,8 +189,11 @@ and this project adheres to
   in `~/.bela/belaconfig` reaches the settings through Bela's parser
   either way.
   What each replaces is a failure that leaves nothing to report with.
-  Five of the six fail inside `Bela_initAudio`, which costs the process
-  every later audio system and not just the attempt. The sixth, the
+  Five of the six fail inside `Bela_initAudio`: `Bela_getHwConfigPrivate`
+  rejects the sample rate, `RTAudio.cpp`'s initial sanity checks enforce
+  the two PRU rules, and `PRU::initialise` enforces the multiplexer
+  channel and analog input counts. That costs the process every later
+  audio system and not just the attempt. The sixth, the
   multiplexer with the analog inputs off, is checked nowhere: libbela's
   count rules sit behind an `if` that analog being off skips, so the
   settings reach the PRU firmware, which gives up and ends the process

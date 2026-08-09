@@ -141,8 +141,8 @@ pub enum Error {
     /// is passed on as it stands, and 16 is as much a refusal as 4.
     ///
     /// Checked before `Bela_initAudio`, which refuses the same thing in
-    /// the `BelaContextManager::setup` it calls and leaves the process
-    /// unable to build another audio system.
+    /// `PRU::initialise` and leaves the process unable to build another
+    /// audio system.
     MultiplexerAnalogChannels(i32),
     /// `Bela_setLineOutLevel` failed with the contained return code,
     /// e.g. for a channel the codec does not have.

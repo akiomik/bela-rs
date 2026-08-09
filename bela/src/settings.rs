@@ -365,9 +365,10 @@ const MULTIPLEXER_ANALOG_CHANNELS: c_int = 8;
 /// board and costs the caller more than an error (see "The Multiplexer
 /// Capelet" and "Command-line options" in `docs/board-facts.md`):
 ///
-/// - five of them fail inside `Bela_initAudio`: a sample rate of 0 and
-///   the two PRU rules in its own sanity checks, and the two
-///   multiplexer counts in the `BelaContextManager::setup` it calls.
+/// - five of them fail inside `Bela_initAudio`: a sample rate of 0 in
+///   `Bela_getHwConfigPrivate`, the two PRU rules in `RTAudio.cpp`'s
+///   initial sanity checks, and the multiplexer channel and analog
+///   input counts in `PRU::initialise`.
 ///   What that costs is not the attempt but the process, which can
 ///   build no audio system afterwards — see
 ///   [`Bela::new`](crate::Bela::new);
