@@ -591,10 +591,11 @@ and this project adheres to
 
 ### Changed
 
-- The bindings are regenerated from the headers shipped on a Bela Gem
-  (Bela 1.18.0), which is newer than any published upstream branch.
-  `BelaContext` and `BelaInitSettings` gained fields, and the bindings
-  now cover `Bela_initRtBackend`, `Bela_clock_gettime` and friends
+- Breaking: the bindings are regenerated from the headers shipped on a
+  Bela Gem (Bela 1.18.0), which is newer than any published upstream
+  branch. `BelaContext` and `BelaInitSettings` gained fields, and the
+  bindings now cover `Bela_initRtBackend`, `Bela_clock_gettime` and
+  friends
 
 ## [0.0.1] - 2026-07-27
 

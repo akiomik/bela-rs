@@ -76,13 +76,13 @@ additive Rust, and what it did to a device build's link line and
 toolchain is not. Somebody scanning for what an update will cost them
 reads the entries, not the reasons behind them.
 
-The marker and the version then agree by construction: an
-`[Unreleased]` section with no `Breaking:` entry is a patch release,
-and one with any is a minor. Read backwards over the file, that holds
-from `0.2.0` onwards. `0.1.0` is a minor with nothing marked and stays
-that way: what it broke was `0.0.1`, and under caret every `0.0.x` was
-already incompatible with every other, so there is no entry to mark —
-the release was the break.
+The marker and the version then agree by construction: a section with
+no `Breaking:` entry is a patch release, and one with any is a minor.
+That holds for every release after the first, released sections
+included, and with no carve-out for the early ones — `0.1.0` carries
+the marker on the regenerated bindings, which moved the headers to a
+newer Bela and gave `BelaContext` and `BelaInitSettings` fields they
+had not had, neither struct being `#[non_exhaustive]`.
 
 ## Releases
 
