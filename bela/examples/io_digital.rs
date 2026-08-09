@@ -33,8 +33,8 @@
 //! block. How much later it appears is a property of the board that no
 //! header documents.
 //!
-//! So the output is toggled once every [`WRITE_PERIOD_BLOCKS`] blocks,
-//! at frame [`WRITE_FRAME`] rather than at the start of a block, and
+//! So the output is toggled once every `WRITE_PERIOD_BLOCKS` blocks,
+//! at frame `WRITE_FRAME` rather than at the start of a block, and
 //! every frame of the input channel is scanned for the edge. The
 //! distance between the two, counted in digital frames, is the latency.
 //! Writing at a frame in the middle of the block is what makes the
@@ -99,14 +99,21 @@
 //! hardware.
 //!
 //! ```text
-//! digital: split threads:2 boundary:64 edges:682 per-block:2.00 edge-frames:1..65
+//! digital: split threads:4 frames:128 boundaries:32,64,96
+//! digital: split edges:1376 per-block:4.00 edge-frames:1,33,65,97
 //! ```
 //!
+//! `boundaries` is where each share after the first begins, and
+//! `edge-frames` is every distinct frame an edge was seen on during the
+//! window — both listed in full rather than summarised, so the line can
+//! be read as the measurement rather than as evidence for one.
+//!
 //! With one render thread the whole block is one share at one level, so
-//! `edges:0` is the expected — and confirming — result there.
+//! `edges:0` and `edge-frames:none` are the expected — and confirming —
+//! result there.
 //!
 //! ```sh
-//! ./io_digital --split --thread-count 2 --period 128
+//! ./io_digital --split --threads 2 --period 128
 //! ```
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
@@ -123,6 +130,8 @@
     )
 )]
 
+use core::fmt::{self, Write as _};
+use core::str;
 use std::process::ExitCode;
 
 use bela::{
@@ -153,6 +162,14 @@ const WRITE_PERIOD_BLOCKS: u32 = 8;
 /// How long each report covers.
 const REPORT_SECONDS: f32 = 1.0;
 
+/// How many distinct edge positions one window can record.
+///
+/// Two per render thread is already more than the split mode can
+/// produce — one edge per share boundary plus the wrap into the next
+/// block — so a window that fills this has found something the model
+/// does not explain, which is worth reporting as such.
+const MAX_EDGE_FRAMES: usize = 16;
+
 #[allow(
     clippy::struct_excessive_bools,
     reason = "each one is an independent one-bit fact about the loopback, and grouping them into a state enum would only hide which are true together"
@@ -160,7 +177,7 @@ const REPORT_SECONDS: f32 = 1.0;
 struct Loopback {
     /// Whether the output is driven from `render`, one value per render
     /// thread, rather than toggled from `render_pre`. See
-    /// [`Split`](self#the-split-mode) above.
+    /// [the split mode](self#the-split-mode) above.
     split: bool,
 
     /// Whether the pin directions have been set. Done from the first
@@ -196,14 +213,91 @@ struct Loopback {
     /// write.
     out_readback: bool,
 
-    /// Where in the block the edges landed, in the split mode. The
+    /// Every distinct frame an edge landed on, in the split mode. The
     /// whole point of that mode: the frame an edge appears at is what
-    /// says where one thread's share of the block ended.
-    min_edge_frame: usize,
-    max_edge_frame: usize,
+    /// says where one thread's share of the block ended, and with more
+    /// than two threads there is a position per boundary rather than
+    /// one. Kept as the set of positions and not as a range, so that
+    /// what is written down is what was seen.
+    ///
+    /// Fixed capacity, because this is filled from the audio thread. A
+    /// window that finds more positions than fit says so with
+    /// `edge-frames-overflow` rather than dropping them quietly: more
+    /// positions than boundaries is itself the finding.
+    edge_frames: [usize; MAX_EDGE_FRAMES],
+    edge_frame_count: usize,
+    edge_frames_overflowed: bool,
 
     /// The state of the LED channel, changed once per report.
     led: bool,
+}
+
+/// A comma-separated list of numbers, built without allocating.
+///
+/// The split report wants its two lists on one line each, and both are
+/// assembled on the audio thread. `rt_println!` takes what it is given
+/// and cannot join a slice, so the joining happens here into a fixed
+/// buffer.
+struct List {
+    bytes: [u8; List::CAPACITY],
+    len: usize,
+    /// Whether anything was dropped, either by the buffer filling or by
+    /// the caller. A list that lost entries says so instead of reading
+    /// as a complete one.
+    truncated: bool,
+}
+
+impl List {
+    /// Enough for sixteen five-digit numbers and their separators.
+    const CAPACITY: usize = 96;
+
+    const fn new() -> Self {
+        Self {
+            bytes: [0; Self::CAPACITY],
+            len: 0,
+            truncated: false,
+        }
+    }
+
+    /// Appends one number, with a separator if it is not the first.
+    fn push(&mut self, value: usize) {
+        if self.len > 0 && write!(self, ",").is_err() {
+            return;
+        }
+        let _ = write!(self, "{value}");
+    }
+
+    /// Marks the list as incomplete for a reason of the caller's.
+    const fn truncated(&mut self) {
+        self.truncated = true;
+    }
+
+    /// The list so far — `none` when empty, with a `,…` when something
+    /// was dropped.
+    fn as_str(&self) -> &str {
+        if self.len == 0 {
+            return if self.truncated { "…" } else { "none" };
+        }
+        // Only ASCII digits and commas are ever written, so a prefix of
+        // the buffer is always valid UTF-8; the fallback is there to
+        // keep this total rather than because it can happen.
+        str::from_utf8(&self.bytes[..self.len]).unwrap_or("?")
+    }
+}
+
+impl fmt::Write for List {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let room = Self::CAPACITY - self.len;
+        if text.len() > room {
+            // Refusing a partial write: half a number would read as a
+            // different number.
+            self.truncated = true;
+            return Err(fmt::Error);
+        }
+        self.bytes[self.len..self.len + text.len()].copy_from_slice(text.as_bytes());
+        self.len += text.len();
+        Ok(())
+    }
 }
 
 impl Loopback {
@@ -225,10 +319,29 @@ impl Loopback {
             min_latency: u64::MAX,
             max_latency: 0,
             out_readback: false,
-            min_edge_frame: usize::MAX,
-            max_edge_frame: 0,
+            edge_frames: [0; MAX_EDGE_FRAMES],
+            edge_frame_count: 0,
+            edge_frames_overflowed: false,
             led: false,
         }
+    }
+
+    /// Adds `frame` to the positions seen this window, if it is new.
+    ///
+    /// A linear scan of at most [`MAX_EDGE_FRAMES`] entries, which is
+    /// cheaper on the audio thread than anything that would keep them
+    /// sorted, and the positions are wanted in the order they were
+    /// first met anyway: that order is the shape of the block.
+    fn record_edge_frame(&mut self, frame: usize) {
+        if self.edge_frames[..self.edge_frame_count].contains(&frame) {
+            return;
+        }
+        if self.edge_frame_count == MAX_EDGE_FRAMES {
+            self.edge_frames_overflowed = true;
+            return;
+        }
+        self.edge_frames[self.edge_frame_count] = frame;
+        self.edge_frame_count += 1;
     }
 
     /// Empties the statistics for the next window, leaving the loopback
@@ -240,8 +353,8 @@ impl Loopback {
         self.unexpected = 0;
         self.min_latency = u64::MAX;
         self.max_latency = 0;
-        self.min_edge_frame = usize::MAX;
-        self.max_edge_frame = 0;
+        self.edge_frame_count = 0;
+        self.edge_frames_overflowed = false;
     }
 
     /// One window's findings, then the LED changes state.
@@ -287,45 +400,57 @@ impl Loopback {
     /// One window's findings in the split mode.
     ///
     /// The numbers to read together are `per-block` and `edge-frames`.
-    /// Two threads writing opposite levels over their own shares make
-    /// the output low for the first share and high for the second, so
-    /// the block carries exactly two edges — one at the boundary
-    /// between the shares and one at the wrap into the next block — and
-    /// they sit at fixed frames. `boundary` is where the second
-    /// thread's share begins, and the rising edge should be one frame
-    /// past it, for the same reason the loopback latency has a `+1` in
-    /// it.
+    /// Threads writing alternating levels over their own shares make
+    /// the output change at every boundary between them, so the block
+    /// carries one edge per boundary plus one for the wrap into the
+    /// next block, and each sits at a fixed frame. `boundaries` lists
+    /// where every share after the first begins, by the same division
+    /// `RenderContext::digital_frame_range` makes, and each edge should
+    /// be one frame past one of them — for the same reason the loopback
+    /// latency has a `+1` in it.
+    ///
+    /// Both lists are printed in full rather than as a range, so that
+    /// the line can be read as the measurement instead of as evidence
+    /// for one.
     fn report_split(&mut self, context: &mut BlockContext) {
         let threads = context.thread_count();
-        // Where the second thread's share starts, by the same division
-        // `RenderContext::digital_frame_range` makes.
-        let boundary = context.digital_frames() / threads;
+        let frames = context.digital_frames();
+
+        let mut boundaries = List::new();
+        for thread in 1..threads {
+            // The start of `thread`'s share, as `partition` computes it.
+            boundaries.push(frames * thread / threads);
+        }
+
+        let mut positions = List::new();
+        for index in 0..self.edge_frame_count {
+            positions.push(self.edge_frames[index]);
+        }
+        if self.edge_frames_overflowed {
+            positions.truncated();
+        }
+
         // Edges per block to two decimals, without a float: the whole
-        // claim is that this is exactly 2, and a rounded 2.0 would hide
-        // a block that occasionally carried three.
+        // claim is that this is an exact small integer, and a rounded
+        // 2.0 would hide a block that occasionally carried three.
         let per_block = if self.blocks == 0 {
             0
         } else {
             u64::from(self.edges) * 100 / u64::from(self.blocks)
         };
-        if self.edges == 0 {
-            rt_println!(
-                "digital: split threads:{} boundary:{} edges:0 per-block:0.00 edge-frames:none",
-                threads,
-                boundary
-            );
-        } else {
-            rt_println!(
-                "digital: split threads:{} boundary:{} edges:{} per-block:{}.{:02} edge-frames:{}..{}",
-                threads,
-                boundary,
-                self.edges,
-                per_block / 100,
-                per_block % 100,
-                self.min_edge_frame,
-                self.max_edge_frame
-            );
-        }
+        rt_println!(
+            "digital: split threads:{} frames:{} boundaries:{}",
+            threads,
+            frames,
+            boundaries.as_str()
+        );
+        rt_println!(
+            "digital: split edges:{} per-block:{}.{:02} edge-frames:{}",
+            self.edges,
+            per_block / 100,
+            per_block % 100,
+            positions.as_str()
+        );
         self.blink(context);
     }
 
@@ -381,7 +506,7 @@ impl BelaApplication for Loopback {
         let frames = context.digital_frames();
         // Clamped, so that a period shorter than the intended write
         // point still writes inside the block it belongs to.
-        let write_frame = WRITE_FRAME.min(frames - 1);
+        let write_frame = WRITE_FRAME.min(frames.saturating_sub(1));
 
         if !self.configured {
             // The word before anything has been said to it: this is
@@ -410,8 +535,7 @@ impl BelaApplication for Loopback {
             if self.split {
                 // Where the edge is, not how long it took: the frame it
                 // lands on is what says where a thread's share ended.
-                self.min_edge_frame = self.min_edge_frame.min(frame);
-                self.max_edge_frame = self.max_edge_frame.max(frame);
+                self.record_edge_frame(frame);
                 self.edges += 1;
             } else if self.awaiting {
                 let latency = self.frame_clock + frame as u64 - self.write_at;
@@ -431,9 +555,13 @@ impl BelaApplication for Loopback {
         // from here would be writing over every thread's share of it.
         if !self.split && self.blocks_since_write >= WRITE_PERIOD_BLOCKS {
             if self.awaiting {
-                // The previous write never arrived. Counted and dropped,
-                // so that its edge cannot later be attributed to this
-                // one.
+                // The previous write produced no edge in the whole
+                // period it had. Counted, and then forgotten: if its
+                // edge does turn up later it will be taken for this
+                // write's, and land in `max_latency` as an outlier
+                // wider than a period. So `misses` above 0 makes every
+                // latency in the same window suspect, which is why the
+                // two are reported on one line.
                 self.misses += 1;
             }
             self.level = !self.level;
@@ -509,6 +637,15 @@ fn main() -> ExitCode {
             Some("--threads") => want_threads = true,
             _ => args.push(argument),
         }
+    }
+    if want_threads {
+        // `--threads` with nothing after it. Refusing rather than
+        // falling back to the default: the split measurement is a
+        // statement about a thread count, so a run that quietly used a
+        // different one would produce numbers that look right and mean
+        // something else.
+        eprintln!("--threads wants a number");
+        return ExitCode::FAILURE;
     }
 
     let mut settings = bela::Settings::new();

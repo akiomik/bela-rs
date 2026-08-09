@@ -327,6 +327,13 @@ pub struct CleanupContext(BelaContext);
 /// [`digital_write`](BlockContext::digital_write) (writing from `frame`
 /// to the end of the block) is unchanged.
 ///
+/// The digital pins do not work at all at a period of 256 frames or
+/// more, whether the period came from
+/// [`period_size`](crate::Settings::period_size) or from the command
+/// line: nothing written reaches a pin and nothing driven into one is
+/// read, with no error anywhere. See
+/// [#89](https://github.com/akiomik/bela-rs/issues/89).
+///
 /// Measured on the board; see `docs/board-facts.md`.
 ///
 /// # Panics
@@ -613,6 +620,13 @@ impl BlockContext {
 
     /// Value of the digital `channel` at `frame` (`digitalRead`).
     ///
+    /// On a channel set to [`PinMode::Output`] this reports the value
+    /// last written to it rather than the state of the pin: the two
+    /// share a bit, so a read after a
+    /// [`digital_write`](BlockContext::digital_write) echoes the write.
+    /// Confirmed on a Gem Stereo; see "What a digital pin does" in
+    /// `docs/board-facts.md`.
+    ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
@@ -890,6 +904,10 @@ impl RenderContext {
     }
 
     /// Value of the digital `channel` at `frame` (`digitalRead`).
+    ///
+    /// On a channel set to [`PinMode::Output`] this reports the value
+    /// last written to it rather than the state of the pin, as for
+    /// [`BlockContext::digital_read`].
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside

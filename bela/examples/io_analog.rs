@@ -258,29 +258,33 @@ impl BelaApplication for Watch {
         // independent of how many render threads the block was split
         // across.
         let channels = self.channels;
+        // This block's own extremes, gathered in the same pass as the
+        // window's. Stack arrays rather than fields: they start again
+        // at every block, and a field would have to be cleared here
+        // anyway.
+        let mut block_low = [f32::INFINITY; MAX_CHANNELS];
+        let mut block_high = [f32::NEG_INFINITY; MAX_CHANNELS];
         for frame in 0..context.analog_frames() {
             for channel in 0..channels {
                 let value = context.analog_read(frame, channel);
                 self.sum[channel] += f64::from(value);
                 self.min[channel] = self.min[channel].min(value);
                 self.max[channel] = self.max[channel].max(value);
+                // Separate accumulators for the block, because the two
+                // answer different questions: these are the frame axis
+                // within one block, those are the whole window.
+                block_low[channel] = block_low[channel].min(value);
+                block_high[channel] = block_high[channel].max(value);
             }
         }
 
-        // The within-block range, taken from this block alone. Worked
-        // out in a second pass so that the window-wide `min`/`max` above
-        // stay what they are: the two answer different questions and
-        // sharing accumulators would collapse them into one.
+        // The widest within-block range seen so far, per channel. A
+        // block with no frames leaves the sentinels untouched and
+        // contributes nothing.
         for channel in 0..channels {
-            let mut low = f32::INFINITY;
-            let mut high = f32::NEG_INFINITY;
-            for frame in 0..context.analog_frames() {
-                let value = context.analog_read(frame, channel);
-                low = low.min(value);
-                high = high.max(value);
-            }
-            if high >= low {
-                self.spread[channel] = self.spread[channel].max(high - low);
+            if block_high[channel] >= block_low[channel] {
+                self.spread[channel] =
+                    self.spread[channel].max(block_high[channel] - block_low[channel]);
             }
         }
 

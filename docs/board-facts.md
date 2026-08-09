@@ -533,22 +533,29 @@ in digital frames rather than in blocks.
   shares; the edges were then counted and located through the
   loopback:
 
-  | threads | period | edges per block | edge frames | share boundaries |
+  | threads | period | edges per block | first and last edge frame | first share boundary |
   |---|---|---|---|---|
   | 1 | 128 | 0 | none | — |
   | 2 | 16 | 2.00 | 1, 9 | 8 |
   | 2 | 128 | 2.00 | 1, 65 | 64 |
   | 2 | 160 | 2.00 | 1, 81 | 80 |
-  | 4 | 128 | 4.00 | 1, 33, 65, 97 | 32, 64, 96 |
+  | 4 | 128 | 4.00 | 1, 97 | 32 |
 
-  Every edge landed exactly one frame past a boundary — the same `+1`
-  the loopback latency carries — and the count per block was exact
-  after the first window, not an average of a wandering number. Had
-  the write run to the end of the block, the last thread to finish
-  would have taken the tail and the edge would have moved from block
-  to block. The one-thread row is the same statement from the other
-  end: one share covering the whole block leaves nothing to toggle
-  against, and no edge appeared.
+  The count per block was exact after the first window, not an average
+  of a wandering number, and with two threads the two edges a block
+  carries are the two frames in the table: one past the boundary
+  between the shares, and one past the wrap into the next block — the
+  same `+1` the loopback latency carries. Had the write run to the end
+  of the block, the last thread to finish would have taken the tail and
+  the edge would have moved from block to block. The one-thread row is
+  the same statement from the other end: one share covering the whole
+  block leaves nothing to toggle against, and no edge appeared.
+
+  The four-thread row is weaker than the others and is left as it was
+  measured. Four edges a block between frames 1 and 97 is consistent
+  with one past each of the boundaries at 32, 64 and 96, but the run
+  that produced it reported only the extremes, so the two interior
+  positions are not in evidence here.
 
 ## The Multiplexer Capelet
 
