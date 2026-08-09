@@ -533,29 +533,32 @@ in digital frames rather than in blocks.
   shares; the edges were then counted and located through the
   loopback:
 
-  | threads | period | edges per block | first and last edge frame | first share boundary |
+  | threads | period | edges per block | edge frames | share boundaries |
   |---|---|---|---|---|
-  | 1 | 128 | 0 | none | — |
+  | 1 | 128 | 0.00 | none | none |
   | 2 | 16 | 2.00 | 1, 9 | 8 |
   | 2 | 128 | 2.00 | 1, 65 | 64 |
   | 2 | 160 | 2.00 | 1, 81 | 80 |
-  | 4 | 128 | 4.00 | 1, 97 | 32 |
+  | 4 | 128 | 4.00 | 1, 33, 65, 97 | 32, 64, 96 |
 
-  The count per block was exact after the first window, not an average
-  of a wandering number, and with two threads the two edges a block
-  carries are the two frames in the table: one past the boundary
-  between the shares, and one past the wrap into the next block — the
-  same `+1` the loopback latency carries. Had the write run to the end
-  of the block, the last thread to finish would have taken the tail and
+  Both of the last two columns are what the probe printed, not what
+  the boundaries imply: every distinct frame an edge was seen on during
+  the window is listed, and there were never any others.
+
+  Every edge landed exactly one frame past a boundary, or one past the
+  wrap into the next block — the same `+1` the loopback latency
+  carries — and the count per block was exact after the first window,
+  not an average of a wandering number. Had the write run to the end of
+  the block, the last thread to finish would have taken the tail and
   the edge would have moved from block to block. The one-thread row is
   the same statement from the other end: one share covering the whole
   block leaves nothing to toggle against, and no edge appeared.
 
-  The four-thread row is weaker than the others and is left as it was
-  measured. Four edges a block between frames 1 and 97 is consistent
-  with one past each of the boundaries at 32, 64 and 96, but the run
-  that produced it reported only the extremes, so the two interior
-  positions are not in evidence here.
+  The first window of every run reports one or two edges fewer than the
+  rest and lists the positions in a rotated order — `65,1` where the
+  steady state says `1,65` — because the run begins partway through the
+  pattern and the first block's writes are still in flight. Every
+  window after it is identical.
 
 ## The Multiplexer Capelet
 
