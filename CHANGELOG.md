@@ -185,6 +185,12 @@ and this project adheres to
   that on a channel set to `PinMode::Output` they report the value last
   written rather than the state of the pin — the two share a bit.
   Documentation only.
+- `BlockContext::digital_write` and `RenderContext::digital_write` say
+  that the value outlives the program: stopping the audio system does
+  not return the pin to an input, and a pin left high stays high until
+  the next audio system starts. Ending a program is not a way of
+  reaching a safe state on whatever the pin drives. Measured on a Gem
+  Stereo; documentation only.
 - `Settings::period_size` and the Bela Gem section on `BlockContext`
   warn that a period of 256 frames or more leaves the digital pins
   dead: nothing written reaches a pin and nothing driven into one is

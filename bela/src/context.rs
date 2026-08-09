@@ -639,6 +639,15 @@ impl BlockContext {
     /// Sets the digital output `channel` from `frame` to the end of
     /// the block (`digitalWrite`).
     ///
+    /// The value persists into later blocks until something writes the
+    /// channel again — and past the end of the program: stopping the
+    /// audio system does not return the pin to an input, so a pin left
+    /// high stays high until the next audio system starts and opens
+    /// every channel as an input again. Ending a program is therefore
+    /// not a way of reaching a safe state on whatever the pin drives.
+    /// Measured on a Gem Stereo; see "What a digital pin does" in
+    /// `docs/board-facts.md`.
+    ///
     /// # Panics
     /// If `channel` is out of range.
     pub fn digital_write(&mut self, frame: usize, channel: usize, value: bool) {
@@ -930,6 +939,9 @@ impl RenderContext {
     ///
     /// Stops at the end of the range for the same reason
     /// [`analog_write`](RenderContext::analog_write) does.
+    ///
+    /// The value outlives the block and the program alike, as for
+    /// [`BlockContext::digital_write`].
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
