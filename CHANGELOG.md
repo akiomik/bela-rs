@@ -160,8 +160,45 @@ and this project adheres to
   what the class does on the audio thread and what that API is shaped
   by.
 
+- `examples/io_analog` and `examples/io_digital`, the two hardware
+  probes that put a voltage on a pin. `io_analog` reports the mean,
+  range and widest within-block spread of every analog input once a
+  second, which settles the full scale, the channel mapping and the
+  frame axis from a potentiometer and two rail ties without a meter —
+  a rail being a voltage already known. `io_digital` drives a loopback
+  from one digital channel into another and scans every frame of the
+  input for the edge, timing the round trip in digital frames rather
+  than in blocks; its `--split` moves the writing into `render` so that
+  each render thread holds its own share of the block, which is how the
+  per-thread ranges get measured. Between them they exercise every
+  analog and digital accessor on the context types against hardware,
+  which nothing had done before.
+
 ### Changed
 
+- `BlockContext::analog_read` and `RenderContext::analog_read` say what
+  their 0.0 to 1.0 means in volts: full scale is the ADC's 4.096 V
+  internal reference, so an input tied to the 3.3 V rail reads about
+  0.806 and not 1.0. Measured on a Gem Stereo. Only the documentation
+  changed; the value was always this.
+- `BlockContext::digital_read` and `RenderContext::digital_read` say
+  that on a channel set to `PinMode::Output` they report the value last
+  written rather than the state of the pin — the two share a bit.
+  Documentation only.
+- `digital_write` and `pin_mode`, on both `BlockContext` and
+  `RenderContext`, say that what they set outlives the program:
+  stopping the audio system returns no pin to an input, so a channel
+  left an output goes on driving and a pin left high stays high until
+  the next audio system starts. Ending a program is not a way of
+  reaching a safe state on whatever the pin drives. Measured on a Gem
+  Stereo; documentation only.
+- `Settings::period_size` and the Bela Gem section on `BlockContext`
+  warn that a period of 256 frames or more leaves the digital pins
+  dead: nothing written reaches a pin and nothing driven into one is
+  read, while initialisation succeeds and nothing is reported. The
+  PRU's digital buffer is 256 words and libbela checks nothing against
+  it. Nothing here rejects such a period, because only the digital
+  domain is affected.
 - `Settings::new` is a `const fn`. All thirteen builder methods
   already were, so the only thing keeping a configuration out of a
   `const` was where it started: `const SETTINGS: Settings =

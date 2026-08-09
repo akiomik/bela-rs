@@ -70,6 +70,20 @@ impl Settings {
     }
 
     /// Number of audio frames per period ("block size").
+    ///
+    /// # Digital I/O stops working at 256 frames and above
+    ///
+    /// On a Bela Gem Stereo, a period of 256 frames or more leaves the
+    /// digital pins dead: nothing written reaches a pin and nothing
+    /// driven into one is read, while initialisation succeeds, the
+    /// audio runs and no warning is printed. The PRU's digital buffer
+    /// is 256 words and libbela does not check the period against it.
+    /// The largest period measured to work is 255; see "What a digital
+    /// pin does" in `docs/board-facts.md`.
+    ///
+    /// Nothing here rejects such a period, because it is only the
+    /// digital domain that is affected and a program that never touches
+    /// a pin is unharmed by it.
     #[must_use]
     pub const fn period_size(mut self, frames: u32) -> Self {
         self.period_size = Some(frames);

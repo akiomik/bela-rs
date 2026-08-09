@@ -327,6 +327,13 @@ pub struct CleanupContext(BelaContext);
 /// [`digital_write`](BlockContext::digital_write) (writing from `frame`
 /// to the end of the block) is unchanged.
 ///
+/// The digital pins do not work at all at a period of 256 frames or
+/// more, whether the period came from
+/// [`period_size`](crate::Settings::period_size) or from the command
+/// line: nothing written reaches a pin and nothing driven into one is
+/// read, with no error anywhere. See
+/// [#89](https://github.com/akiomik/bela-rs/issues/89).
+///
 /// Measured on the board; see `docs/board-facts.md`.
 ///
 /// # Panics
@@ -567,6 +574,12 @@ impl BlockContext {
 
     /// Analog input sample at `frame` for `channel` (`analogRead`).
     ///
+    /// The value runs from 0.0 to 1.0 for an input of 0 V to 4.096 V —
+    /// the ADC's internal reference, not the 3.3 V rail, so a pin tied
+    /// to that rail reads about 0.806 rather than 1.0. Measured on a
+    /// Gem Stereo; see "What an analog input reads" in
+    /// `docs/board-facts.md`.
+    ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
@@ -607,6 +620,13 @@ impl BlockContext {
 
     /// Value of the digital `channel` at `frame` (`digitalRead`).
     ///
+    /// On a channel set to [`PinMode::Output`] this reports the value
+    /// last written to it rather than the state of the pin: the two
+    /// share a bit, so a read after a
+    /// [`digital_write`](BlockContext::digital_write) echoes the write.
+    /// Confirmed on a Gem Stereo; see "What a digital pin does" in
+    /// `docs/board-facts.md`.
+    ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
@@ -618,6 +638,15 @@ impl BlockContext {
 
     /// Sets the digital output `channel` from `frame` to the end of
     /// the block (`digitalWrite`).
+    ///
+    /// The value persists into later blocks until something writes the
+    /// channel again — and past the end of the program: stopping the
+    /// audio system does not return the pin to an input, so a pin left
+    /// high stays high until the next audio system starts and opens
+    /// every channel as an input again. Ending a program is therefore
+    /// not a way of reaching a safe state on whatever the pin drives.
+    /// Measured on a Gem Stereo; see "What a digital pin does" in
+    /// `docs/board-facts.md`.
     ///
     /// # Panics
     /// If `channel` is out of range.
@@ -641,6 +670,11 @@ impl BlockContext {
 
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of the block (`pinMode`).
+    ///
+    /// The direction outlives the program the way the value does — see
+    /// [`digital_write`](BlockContext::digital_write) — so a channel
+    /// left an output goes on driving after the audio system stops.
+    /// Every channel is an input again once the next one starts.
     ///
     /// # Panics
     /// If `channel` is out of range.
@@ -831,6 +865,9 @@ impl RenderContext {
     /// range: the analog inputs are a buffer of their own that nobody
     /// writes.
     ///
+    /// The value runs from 0.0 to 1.0 for an input of 0 V to 4.096 V,
+    /// as for [`BlockContext::analog_read`].
+    ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
@@ -882,6 +919,10 @@ impl RenderContext {
 
     /// Value of the digital `channel` at `frame` (`digitalRead`).
     ///
+    /// On a channel set to [`PinMode::Output`] this reports the value
+    /// last written to it rather than the state of the pin, as for
+    /// [`BlockContext::digital_read`].
+    ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
     /// [`digital_frame_range`](RenderContext::digital_frame_range) —
@@ -903,6 +944,9 @@ impl RenderContext {
     ///
     /// Stops at the end of the range for the same reason
     /// [`analog_write`](RenderContext::analog_write) does.
+    ///
+    /// The value outlives the block and the program alike, as for
+    /// [`BlockContext::digital_write`].
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
@@ -932,6 +976,9 @@ impl RenderContext {
 
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of **this thread's range** (`pinMode`).
+    ///
+    /// The direction outlives the block and the program alike, as for
+    /// [`BlockContext::pin_mode`].
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside

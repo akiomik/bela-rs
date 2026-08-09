@@ -411,6 +411,155 @@ measurement and is not recorded here yet.
   both of which run on the main audio thread; what a secondary render
   thread reports is measured by `examples/parallel` instead.
 
+## What an analog input reads
+
+Collected 2026-08-09 with `bela/examples/io_analog`, which reports the
+mean, the range and the widest within-block spread of every analog input
+once a second. This is the half of the section above that needed a
+voltage on a pin: those numbers were the shape of the block, these are
+what the accessor returns from it.
+
+The wiring was a potentiometer between the 3.3 V rail on P2 and GND with
+its wiper on `A0`, a direct tie from the same rail to `A1`, and `A2`
+through `A7` left floating. A rail is a voltage known without an
+instrument, which is what makes the full-scale answer below a
+measurement rather than an estimate.
+
+- **`analog_read` returns 1.0 for 4.096 V, as `Bela.h` says it does.**
+  3.3 V on `A1` reads **0.8064**, against the 0.80566 that 3.3/4.096
+  predicts — 0.1% out. The same rail through the potentiometer at its
+  top end read 0.8065 on `A0` in a separate run. A 3.3 V full scale
+  would have given 1.0, which is 24% away and outside anything a rail
+  tolerance covers. So the internal reference is in use and the
+  header's claim holds on a Gem Stereo.
+- **The channel index is the number on the silkscreen.** Between two
+  runs the only changes were the voltage on `A0` and the tie on `A1`,
+  and the only channels whose readings moved were `ch0` and `ch1`;
+  `ch2`–`ch7` held their floating values to the fourth decimal. Turning
+  the potentiometer moves `ch0` alone.
+- **The full range is covered and monotonic.** Swept end to end, `ch0`
+  ran 0.0000 to 0.8074 continuously, reaching the same top as the
+  directly tied `A1`. `ch1` stayed within 0.8064–0.8065 across all
+  twenty report windows while `ch0` swept, so a moving channel does not
+  disturb a held one.
+- **The bottom clips to exactly 0.** At the potentiometer's earthed end
+  `ch0` reads 0.0000 with a min, max and spread of 0.0000 — no noise at
+  all, where the same channel at the top of its range wobbles by about
+  0.0018. The reading does not go negative and does not dither around
+  zero.
+- **The frames within a block are in time order.** The widest
+  within-block spread sits at 0.0015 with the input still and rises to
+  0.0050–0.0059 only in the windows where the potentiometer was being
+  turned quickly. A block whose frames were not consecutive in time
+  would not track the speed of the hand turning the knob.
+- **The interleaved index survives a different frame count.** With
+  `--uniform-sample-rate 0` the analog block becomes 8 frames at
+  22050 Hz against 16 audio frames (as the section above records), and
+  every channel reports the same value and the same spread as at 16
+  frames. `frame * channels + channel` is the layout on the device.
+- **A floating input is not a zero, and it is an aerial.** Unconnected
+  channels sat at steady but unequal values — 0.147, 0.015, 0.119,
+  0.031, 0.019 and 0.043 on `A2` through `A7` — and in the windows
+  where a hand was near the board they swung much wider, `A7` ranging
+  0.0136 to 0.1053. `ch0` and `ch1` were unmoved throughout, so this is
+  pickup on the open pins rather than anything in the reading path.
+- **The ADC is held in reset until a program using analog inputs
+  starts.** `PRU.cpp` releases `gemAdcPin` (GPIO0_53, `P2_18`) inside
+  the PRU initialisation, and only when `analogInChannels` is non-zero.
+  Nothing measured on the analog pins before then means anything —
+  including the `REF` pin on P1, which reads 0 V with the board idle.
+
+## What a digital pin does
+
+Collected 2026-08-09 with `bela/examples/io_digital`, wired as a
+loopback — `D0` driving `D1` through 1 kΩ — with an LED on `D2` for the
+things a printed number cannot settle. The probe toggles the output
+every eight blocks at a frame in the middle of the block and scans every
+frame of the input for the edge, so the write-to-read distance comes out
+in digital frames rather than in blocks.
+
+- **Every channel starts as an input.** The digital word of the first
+  block, before this crate has said anything to it, is `0x0000ffff`:
+  all sixteen direction bits set, no value bits. That is
+  `PinMode::default()` and the "1 means input" reading of the layout,
+  both confirmed on the device. `PRU.cpp` agrees from the other side —
+  it opens all sixteen pins with `Gpio::INPUT` during initialisation.
+- **`pin_mode` moves the bit the accessors think it moves.** After
+  making `D0` and `D2` outputs and leaving `D1` an input the word is
+  `0x0000fffa` — bits 0 and 2 cleared, bit 1 untouched, nothing else
+  changed.
+- **The loopback works, and the index is the number on the
+  silkscreen.** Every write produced exactly one edge on the input:
+  344 or 345 edges a second against the same number of writes, with no
+  misses. The LED wired to `D2` blinks when channel 2 is written.
+- **Reading an output channel gives back what was written, not the
+  pin.** `digital_read` on the channel just written echoes the value
+  every time, which is what sharing bit *n*+16 with `digital_write`
+  implies.
+- **Outputs persist between blocks, as `Bela.h` says.** The probe
+  writes once every eight blocks and counts unasked-for edges
+  separately; that count stayed at 0. A pin that reverted when nobody
+  wrote it would have shown up there.
+- **The loopback latency is exactly two blocks plus one frame, with no
+  jitter.** Measured at every period size that works — 16, 64, 128,
+  129, 160, 192, 255 — the write-to-read distance was a single value,
+  never a range, and always `2 * period + 1` digital frames. A value
+  written at frame *f* of block *n* is readable at frame *f*+1 of block
+  *n*+2. The 128-frame boundary where libbela moves `render` behind a
+  context FIFO does not appear in it.
+- **Digital I/O stops working entirely at a period of 256 frames or
+  more, and nothing says so.** At 256 and at 320 not one edge arrived,
+  and the LED on `D2` did not blink either, so it is the whole
+  transfer and not one direction of it. `Bela_initAudio` succeeds, the
+  audio runs, and no warning is printed. The reason is in `PRU.cpp`,
+  where the PRU's shared-memory digital buffer is declared as
+  `PRU_MEM_DIGITAL_BUFFER1_OFFSET 0x400` — "256 words … 256 is the
+  maximum number of frames allowed" — and nothing checks `digitalFrames`
+  against it. The comment's 256 is optimistic by one: 255 is the
+  largest period at which digital I/O was seen to work.
+- **A program leaves its digital outputs driving after it exits, and
+  the next program to start clears them.** The LED stayed lit after a
+  run that ended with `D2` high — teardown does not return the pin to
+  an input — and went out the moment the following run started, which
+  is the initialisation opening all sixteen pins as inputs again. So a
+  pin left high outlives its process, but only until something else
+  brings the audio system up.
+- **A digital write from `render` stops at the end of the writing
+  thread's share of the block, not at the end of the block.** This is
+  where `RenderContext`'s accessors depart from the C helpers they
+  wrap, and it holds on the device. `io_digital --split` has every
+  render thread hold its own share at its own level, which makes the
+  block a square wave whose edges sit at the boundaries between the
+  shares; the edges were then counted and located through the
+  loopback:
+
+  | threads | period | edges per block | edge frames | share boundaries |
+  |---|---|---|---|---|
+  | 1 | 128 | 0.00 | none | none |
+  | 2 | 16 | 2.00 | 1, 9 | 8 |
+  | 2 | 128 | 2.00 | 1, 65 | 64 |
+  | 2 | 160 | 2.00 | 1, 81 | 80 |
+  | 4 | 128 | 4.00 | 1, 33, 65, 97 | 32, 64, 96 |
+
+  Both of the last two columns are what the probe printed, not what
+  the boundaries imply: every distinct frame an edge was seen on during
+  the window is listed, and there were never any others.
+
+  Every edge landed exactly one frame past a boundary, or one past the
+  wrap into the next block — the same `+1` the loopback latency
+  carries — and the count per block was exact after the first window,
+  not an average of a wandering number. Had the write run to the end of
+  the block, the last thread to finish would have taken the tail and
+  the edge would have moved from block to block. The one-thread row is
+  the same statement from the other end: one share covering the whole
+  block leaves nothing to toggle against, and no edge appeared.
+
+  The first window of every run reports one or two edges fewer than the
+  rest and lists the positions in a rotated order — `65,1` where the
+  steady state says `1,65` — because the run begins partway through the
+  pattern and the first block's writes are still in flight. Every
+  window after it is identical.
+
 ## The Multiplexer Capelet
 
 Collected 2026-08-07: partly on the board with a throwaway C++ project
