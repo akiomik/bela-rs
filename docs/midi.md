@@ -471,9 +471,10 @@ Also 2026-08-07, through the same loopback, with a program using
 - `MidiOutput::send` from `cleanup` — control change 123, all notes
   off, after the last block;
 
-arrived in that order, and with `Settings::thread_count(4)` each of the
-four render threads' notes arrived as well. The receiving end shows
-them in running-status form, which is the ALSA sequencer's re-encoding
+arrived in that order, and with
+`Settings::thread_count(NonZeroU32::new(4).expect("4 is not zero"))`
+each of the four render threads' notes arrived as well. The receiving
+end shows them in running-status form, which is the ALSA sequencer's re-encoding
 between the two virtual ports rather than anything this side does.
 
 ## Exercising it without a MIDI device
