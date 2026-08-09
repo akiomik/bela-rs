@@ -24,6 +24,12 @@
 # system (see "Audio thread" in docs/board-facts.md), and a case that is
 # caught nowhere costs whatever the board does about it.
 #
+# Since the pre-init checks landed, a case can also be refused by the
+# crate, which is the column the ones that used to fail late are
+# expected to move into: `Bela::new_with_args` looks at the resolved
+# settings before `Bela_initAudio`, so the caller gets an error from a
+# call that has touched nothing.
+#
 # One case per process for that same reason. Nothing here is
 # destructive: every case is an audio system that either comes up or
 # does not, and the board is left as it was found.
@@ -56,8 +62,8 @@ ALL_CASES="$ALL_CASES period-14 period-15 period-16 period-3-no-analog"
 ALL_CASES="$ALL_CASES period-1-no-analog period-3-analog-2"
 ALL_CASES="$ALL_CASES analog-flag-2 uniform-5 pru-number-5 board-mismatch"
 ALL_CASES="$ALL_CASES board-unknown stop-pin-9999 disabled-digitals-all"
-ALL_CASES="$ALL_CASES pru-file-missing codec-mode-garbage mux-1 mux-8"
-ALL_CASES="$ALL_CASES mux-no-analog expander-inputs"
+ALL_CASES="$ALL_CASES pru-file-missing codec-mode-garbage mux-1 mux-3 mux-8"
+ALL_CASES="$ALL_CASES mux-no-analog mux-analog-4 mux-pru-0 expander-inputs"
 
 # The arguments each case passes, kept next to the names so that the
 # summary and the command are never out of step.
@@ -123,8 +129,11 @@ case_arguments() {
   # The Capelet settings, whose hardware cannot be attached to a Gem at
   # all (see "The Multiplexer Capelet" in docs/board-facts.md).
   mux-1) echo "-X 1" ;;
+  mux-3) echo "-X 3" ;;
   mux-8) echo "-X 8" ;;
   mux-no-analog) echo "-X 8 -N 0" ;;
+  mux-analog-4) echo "-X 8 -C 4" ;;
+  mux-pru-0) echo "--pru-number 0 -X 8" ;;
   expander-inputs) echo "-Y 0,1" ;;
   *) return 1 ;;
   esac
@@ -250,6 +259,11 @@ for name in $CASES; do
   # application was already live when the board gave up.
   if grep -q '^Error: an argument is not one of' "$log"; then
     where="parse"
+  # The crate's own refusals, from the resolved settings and before
+  # `Bela_initAudio`. Matched on their messages, which are this repo's
+  # to keep in step: `bela/src/error.rs`.
+  elif grep -qE '^Error: (the audio sample rate is 0|the audio code runs on PRU|.* is not a number of multiplexer channels|the multiplexer)' "$log"; then
+    where="refused by the crate"
   elif grep -q 'Bela_initAudio failed' "$log"; then
     where="initAudio"
   elif grep -q 'Bela_startAudio failed' "$log"; then

@@ -3,6 +3,8 @@ use core::num::NonZeroU32;
 
 use bela_sys::BelaInitSettings;
 
+use crate::error::Error;
+
 /// Overrides applied on top of Bela's default initialisation settings.
 ///
 /// Unset fields keep the values produced by `Bela_defaultSettings()` on
@@ -345,6 +347,76 @@ fn to_c_int(value: u32) -> c_int {
     c_int::try_from(value).unwrap_or(c_int::MAX)
 }
 
+/// How many analog input channels the Multiplexer Capelet needs, which
+/// is all of them: `Error: multiplexer capelet can only be used with 8
+/// analog channels`.
+const MULTIPLEXER_ANALOG_CHANNELS: c_int = 8;
+
+/// Checks resolved settings for the combinations libbela accepts here
+/// and refuses — or cannot survive — later.
+///
+/// "Resolved" is the whole point of where this is called from: Bela's
+/// defaults, [`Settings`] and the command line have all had their say,
+/// so a program that asks for one half of a bad combination in its
+/// [`Settings`] and the other half on the command line is refused the
+/// same way as one that asks for both in either place.
+///
+/// Each check replaces a failure that has already been measured on the
+/// board and costs the caller more than an error (see "The Multiplexer
+/// Capelet" and "Command-line options" in `docs/board-facts.md`):
+///
+/// - five of them fail inside `Bela_initAudio`: a sample rate of 0 and
+///   the two PRU rules in its own sanity checks, and the two
+///   multiplexer counts in the `BelaContextManager::setup` it calls.
+///   What that costs is not the attempt but the process, which can
+///   build no audio system afterwards — see
+///   [`Bela::new`](crate::Bela::new);
+/// - the sixth, the multiplexer with the analog inputs off, is checked
+///   nowhere: libbela's count rules sit behind an `if` that analog
+///   being off skips, so the settings reach the PRU firmware, which
+///   gives up and ends the process from inside libbela with nothing
+///   returned to the caller at all.
+///
+/// Nothing valid is refused here. Multiplexer channel counts of 2, 4
+/// and 8 come up and run on a Gem, and stay accepted although the
+/// buffer they fill has no accessor in this crate; PRU 0 is a valid
+/// setting of its own, and only the multiplexer requires PRU 1.
+#[cfg_attr(
+    not(bela_device),
+    allow(
+        dead_code,
+        reason = "only the device-gated audio system initialises; still unit-tested on the host"
+    )
+)]
+pub(crate) const fn check_resolved(raw: &BelaInitSettings) -> Result<(), Error> {
+    if raw.audioSampleRate == 0.0 {
+        return Err(Error::SampleRate);
+    }
+    if raw.pruNumber < 0 || raw.pruNumber > 1 {
+        return Err(Error::PruNumber(raw.pruNumber));
+    }
+    // Everything below is about a multiplexer that was asked for. Off
+    // is the default and says nothing about the rest of the settings:
+    // with no multiplexer, PRU 0 and the analog inputs disabled are
+    // both ordinary configurations.
+    if raw.numMuxChannels == 0 {
+        return Ok(());
+    }
+    if !matches!(raw.numMuxChannels, 2 | 4 | 8) {
+        return Err(Error::MultiplexerChannels(raw.numMuxChannels));
+    }
+    if raw.pruNumber != 1 {
+        return Err(Error::MultiplexerPru(raw.pruNumber));
+    }
+    if raw.useAnalog == 0 {
+        return Err(Error::MultiplexerWithoutAnalog);
+    }
+    if raw.numAnalogInChannels != MULTIPLEXER_ANALOG_CHANNELS {
+        return Err(Error::MultiplexerAnalogChannels(raw.numAnalogInChannels));
+    }
+    Ok(())
+}
+
 /// How many threads `render` will be called on, once the settings are
 /// resolved against Bela's defaults.
 ///
@@ -372,14 +444,31 @@ mod tests {
     use super::*;
 
     // Stands in for the output of `Bela_defaultSettings()`, which needs
-    // libbela and therefore the board.
+    // libbela and therefore the board. The fields are the ones
+    // `Bela_defaultSettings` sets, so what is built on top of this is
+    // what the checks below would see on a board — a zeroed structure
+    // would fail them for a sample rate and a PRU number nobody asked
+    // for.
     fn fake_defaults() -> BelaInitSettings {
         let mut raw: BelaInitSettings = unsafe { mem::zeroed() };
+        raw.audioSampleRate = 44100.0;
         raw.periodSize = 16;
         raw.useAnalog = 1;
+        raw.numAnalogInChannels = 8;
+        raw.numAnalogOutChannels = 8;
+        raw.numMuxChannels = 0;
+        raw.pruNumber = 1;
         raw.uniformSampleRate = 1;
         raw.stopButtonPin = 115;
         raw.verbose = 0;
+        raw
+    }
+
+    // A resolved configuration with the multiplexer on, which is the
+    // one every rule about it applies to.
+    fn with_multiplexer(channels: c_int) -> BelaInitSettings {
+        let mut raw = fake_defaults();
+        raw.numMuxChannels = channels;
         raw
     }
 
@@ -503,5 +592,139 @@ mod tests {
         raw.threadCount = 4;
 
         assert_eq!(render_threads(&raw), 4);
+    }
+
+    #[test]
+    fn belas_own_defaults_are_accepted() {
+        assert_eq!(check_resolved(&fake_defaults()), Ok(()));
+    }
+
+    #[test]
+    fn a_sample_rate_of_zero_is_refused() {
+        // What `-r abc` resolves to, `atof` giving 0, and what `-r -5`
+        // is clamped to. libbela fails initialisation for it with a
+        // message about a cape.
+        let mut raw = fake_defaults();
+        raw.audioSampleRate = 0.0;
+
+        assert_eq!(check_resolved(&raw), Err(Error::SampleRate));
+    }
+
+    #[test]
+    fn both_prus_are_accepted() {
+        // libbela runs the audio code on either; only the multiplexer
+        // needs PRU 1, which is a rule of its own.
+        for number in [0, 1] {
+            let mut raw = fake_defaults();
+            raw.pruNumber = number;
+
+            assert_eq!(check_resolved(&raw), Ok(()), "PRU {number}");
+        }
+    }
+
+    #[test]
+    fn a_pru_the_board_does_not_have_is_refused() {
+        for number in [-1, 2, 5] {
+            let mut raw = fake_defaults();
+            raw.pruNumber = number;
+
+            assert_eq!(
+                check_resolved(&raw),
+                Err(Error::PruNumber(number)),
+                "PRU {number}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_multiplexer_channel_counts_libbela_takes_are_accepted() {
+        // 0 is off; the rest come up and run on a Gem, and stay
+        // accepted although this crate has no accessor for the buffer
+        // they fill.
+        for channels in [0, 2, 4, 8] {
+            assert_eq!(
+                check_resolved(&with_multiplexer(channels)),
+                Ok(()),
+                "{channels} multiplexer channels"
+            );
+        }
+    }
+
+    #[test]
+    fn any_other_multiplexer_channel_count_is_refused() {
+        for channels in [-1, 1, 3, 16] {
+            assert_eq!(
+                check_resolved(&with_multiplexer(channels)),
+                Err(Error::MultiplexerChannels(channels)),
+                "{channels} multiplexer channels"
+            );
+        }
+    }
+
+    #[test]
+    fn the_multiplexer_is_refused_on_the_wrong_pru() {
+        let mut raw = with_multiplexer(8);
+        raw.pruNumber = 0;
+
+        assert_eq!(check_resolved(&raw), Err(Error::MultiplexerPru(0)));
+    }
+
+    #[test]
+    fn the_multiplexer_is_refused_without_the_analog_inputs() {
+        // The combination nothing on the ARM side objects to: without
+        // this check the PRU firmware ends the process.
+        let mut raw = with_multiplexer(8);
+        raw.useAnalog = 0;
+
+        assert_eq!(check_resolved(&raw), Err(Error::MultiplexerWithoutAnalog));
+    }
+
+    #[test]
+    fn the_multiplexer_is_refused_with_any_other_number_of_analog_inputs() {
+        // 2 and 4 are what `-C 2` and `-C 4` resolve to; `-C 100` snaps
+        // to 8 and is accepted, so this is the resolved count rather
+        // than what was written on the command line. 16 is not
+        // reachable from the command line at all and is from
+        // `Settings`, which is passed on as it stands — the rule is
+        // "other than 8", not "fewer than 8".
+        for channels in [2, 4, 16] {
+            let mut raw = with_multiplexer(8);
+            raw.numAnalogInChannels = channels;
+
+            assert_eq!(
+                check_resolved(&raw),
+                Err(Error::MultiplexerAnalogChannels(channels)),
+                "{channels} analog input channels"
+            );
+        }
+    }
+
+    #[test]
+    fn the_multiplexer_rules_only_apply_when_it_is_on() {
+        // PRU 0 and no analog inputs are an ordinary configuration
+        // until a multiplexer is asked for.
+        let mut raw = fake_defaults();
+        raw.pruNumber = 0;
+        raw.useAnalog = 0;
+        raw.numAnalogInChannels = 2;
+
+        assert_eq!(check_resolved(&raw), Ok(()));
+    }
+
+    #[test]
+    fn a_settings_and_a_command_line_half_make_the_same_refusal() {
+        // The reason this is checked on the resolved settings: the
+        // multiplexer from one place and four analog inputs from the
+        // other is the same mistake as both from either.
+        let mut from_settings = fake_defaults();
+        Settings::new()
+            .num_analog_in_channels(4)
+            .apply_to(&mut from_settings);
+        from_settings.numMuxChannels = 8;
+
+        assert_eq!(
+            check_resolved(&from_settings),
+            Err(Error::MultiplexerAnalogChannels(4))
+        );
     }
 }

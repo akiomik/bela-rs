@@ -173,6 +173,32 @@ and this project adheres to
   analog and digital accessor on the context types against hardware,
   which nothing had done before.
 
+- Six checks on the settings a `Bela` is about to be built from, made
+  after Bela's defaults, `Settings` and the command line have all been
+  applied and before `Bela_initAudio` is called, with an error each:
+  `Error::SampleRate` for a sample rate of 0, `Error::PruNumber` for a
+  PRU other than 0 or 1, and, for the multiplexer,
+  `Error::MultiplexerChannels` for a channel count that is not 0, 2, 4
+  or 8, `Error::MultiplexerPru` for one asked for on a PRU other than
+  1, `Error::MultiplexerWithoutAnalog` for one asked for with the
+  analog inputs off, and `Error::MultiplexerAnalogChannels` for one
+  asked for with a number of analog input channels other than eight —
+  16 as much as 4, since `Settings` is passed on as it stands where
+  `--analog-channels` snaps to 8, 4 or 2. They apply to `Bela::new` as
+  much as to `Bela::new_with_args`, because the board's own `CL=` line
+  in `~/.bela/belaconfig` reaches the settings through Bela's parser
+  either way.
+  What each replaces is a failure that leaves nothing to report with.
+  Five of the six fail inside `Bela_initAudio`, which costs the process
+  every later audio system and not just the attempt. The sixth, the
+  multiplexer with the analog inputs off, is checked nowhere: libbela's
+  count rules sit behind an `if` that analog being off skips, so the
+  settings reach the PRU firmware, which gives up and ends the process
+  from inside the library. Nothing that runs today is refused:
+  `--mux-channels 2`, `4` and `8` still bring the multiplexer up,
+  although this crate has no accessor for the buffer they fill, and PRU
+  0 is still a setting of its own.
+
 ### Changed
 
 - Breaking: a device build links `libbelaextra` as well as `libbela`,
@@ -212,6 +238,17 @@ and this project adheres to
   Settings::new().period_size(64);` now compiles. `Settings::default`
   is the same value, and is written in terms of `new` rather than
   derived so that there is one place saying what empty means.
+- `Bela::new_with_args` and `Bela::run_with_args` say what happens to
+  each of Bela's standard options: which combinations are checked
+  before the audio system is built, that `--mux-channels` is accepted
+  and takes effect while the buffer it fills has no accessor here, that
+  `--analog-channels` snaps to 8, 4 or 2 and `--digital-channels`
+  clamps to 16 rather than either being refused, that a period of 1 or
+  3 frames is one a Gem cannot keep up with and has no floor a check
+  could hold, and that a malformed `--json-string` ends the process on
+  `SIGABRT` inside libbela's parser — which refusing the option would
+  not prevent, since the board's `CL=` line goes through the same
+  parser before this crate sees an argument. Documentation only.
 
 ### Fixed
 
