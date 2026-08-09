@@ -25,17 +25,73 @@ this document and the release workflow, not an ad-hoc one.
 Version meanings while pre-1.0:
 
 - `0.x.y` — the current phase, from `0.1.0` (the first
-  hardware-validated release) onwards. A release that breaks the API
-  bumps the minor, one that does not bumps the patch, which is what
-  caret semantics already mean on `0.x`. The API is not settled, so
-  minor bumps are expected rather than exceptional.
+  hardware-validated release) onwards. A release that is not a drop-in
+  replacement for the one before it bumps the minor, one that is bumps
+  the patch, which is what caret semantics already mean on `0.x`. The
+  API is not settled, so minor bumps are expected rather than
+  exceptional.
 - `0.0.x` — the pre-hardware releases, a phase now over. Under caret
   semantics every `0.0.x` was incompatible with every other, which was
   accurate then: nothing had run on a board.
 
+## Minor or patch: the drop-in test
+
+The question a version number answers is a counterfactual, because a
+caret requirement on `0.x` does not cross into the next minor: were
+this release to go out as a patch, `cargo update` would hand it to
+somebody who has `bela = "0.x"` in their `Cargo.toml` and reads
+nothing. If that would leave them worse off than the version they
+already had, it goes out as a minor instead.
+
+The Rust API is only part of what can leave them worse off. This crate
+wraps a C library, a board image and a cross toolchain, and a release
+can break a build without a single signature changing. What counts:
+
+- **The API.** An item removed, renamed or given a different
+  signature; a trait gaining a required method or associated type; a
+  variant added to an enum that is not `#[non_exhaustive]`. Additions
+  usually are not this — a new type, a new variant on `Error`, which
+  is `#[non_exhaustive]` so matching on it already has a wildcard arm,
+  a method made `const` — but additive is not a synonym for safe. A
+  new `impl` of a standard trait can leave an existing `.into()`
+  without a type to infer, and a new inherent method can shadow the
+  one an extension trait was providing; the Cargo book files both
+  under [possibly-breaking](https://doc.rust-lang.org/cargo/reference/semver.html)
+  rather than never-breaking. What decides it is whether a plausible
+  caller stops compiling, not whether anything was taken away.
+- **What a device build links or needs.** A library added to the link
+  line, a compiler the toolchain did not have to include, an
+  environment variable a build now depends on. `0.4.0` is the worked
+  example, and the reason this section exists: nothing in its API was
+  removed or changed shape, and it is a minor release because
+  `bela_midi_*` is a C++ shim over Bela's `Midi` class, which put
+  `libbelaextra` on the link line and a C++ cross compiler among the
+  things a device build needs.
+- **The minimum Rust version.** Raising `rust-version` bumps the
+  minor. On an older toolchain the update either fails to build or,
+  with an MSRV-aware resolver, is quietly never offered — a patch
+  should do neither.
+- **What the board has to be.** Vendored headers moved to a newer
+  Bela, or anything else that stops a board image the last release
+  worked on from working. The headers are pinned and
+  `cargo xtask check-vendor --board` says which image they match.
+- **Behaviour.** The same call doing something different — a
+  configuration that used to be accepted now refused, a default
+  changed, a callback arriving somewhere else.
+
+What does not count, however large it looks in the changelog:
+documentation corrected to say what the code always did. `0.4.0`
+carries several — a Gem Stereo turning out to have no analog outputs
+at all, an analog full scale of 4.096 V rather than an unnamed one —
+and each of them is a patch-level change wearing a lot of prose: the
+value a program reads is the same value it read before, and only what
+this crate claims about it changed. A program built on the wrong claim
+was already wrong, and no version number can put that right.
+
 ## Cutting a release
 
-1. **Bump the version** in two places (they must match):
+1. **Bump the version** — minor or patch by the drop-in test above —
+   in two places (they must match):
    - `workspace.package.version` in the root `Cargo.toml`
    - the `bela-sys` dependency `version` in `bela/Cargo.toml`
      (needed on every minor bump while pre-1.0: a caret requirement

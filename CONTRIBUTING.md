@@ -59,9 +59,29 @@ have to say which crate it means, and it says so in its own sentence
 rather than in a marker.
 
 Keep a Changelog has no category for breaking changes, so mark one by
-opening its entry with `Breaking:`. Which heading it goes under is a
-separate question: `Removed` when a feature is gone, `Changed` when
-something that still exists behaves incompatibly.
+opening its entry with `Breaking:`. What earns the marker is the
+drop-in test in [docs/release.md](docs/release.md): an entry opens with
+`Breaking:` when it is a reason the release could not have gone out as
+a patch. That is a property of the change rather than of who was in a
+position to receive it, and it is wider than the API: what a device
+build links and needs, the MSRV and the board image all count.
+
+Which heading it goes under is a separate question: `Removed` when a
+feature is gone, `Changed` when something that still exists behaves
+incompatibly. When the break is the consequence of an addition, the
+addition stays a plain `Added` entry and the consequence becomes its
+own `Breaking:` entry under `Changed` — the MIDI API of 0.4.0 is
+additive Rust, and what it did to a device build's link line and
+toolchain is not. Somebody scanning for what an update will cost them
+reads the entries, not the reasons behind them.
+
+The marker and the version then agree by construction: a section with
+no `Breaking:` entry is a patch release, and one with any is a minor.
+That holds for every release after the first, released sections
+included, and with no carve-out for the early ones — `0.1.0` carries
+the marker on the regenerated bindings, which moved the headers to a
+newer Bela and gave `BelaContext` and `BelaInitSettings` fields they
+had not had, neither struct being `#[non_exhaustive]`.
 
 ## Releases
 

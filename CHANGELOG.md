@@ -152,13 +152,12 @@ and this project adheres to
   ALSA failure passed through as `-errno`.
   Ports are listed with `bela_midi_list_ports`, which exists because
   Bela's port names are not the ones `amidi -l` prints: `hw:0,0,0`
-  against `hw:0,0`, and only the first opens anything. Device builds
-  therefore link `libbelaextra` as well as `libbela`, and cross builds
-  need a C++ compiler from the same toolchain as the linker's — named
-  by `BELA_CXX`, or derived from `BELA_CC`. The safe API over it is
-  `MidiInput` and the types around it, above; `docs/midi.md` records
-  what the class does on the audio thread and what that API is shaped
-  by.
+  against `hw:0,0`, and only the first opens anything. What linking
+  that shim costs a device build is under `Changed`, since it is what
+  an existing build feels rather than something gained. The safe API
+  over it is `MidiInput` and the types around it, above; `docs/midi.md`
+  records what the class does on the audio thread and what that API is
+  shaped by.
 
 - `examples/io_analog` and `examples/io_digital`, the two hardware
   probes that put a voltage on a pin. `io_analog` reports the mean,
@@ -176,6 +175,14 @@ and this project adheres to
 
 ### Changed
 
+- Breaking: a device build links `libbelaextra` as well as `libbela`,
+  and a cross build needs a C++ compiler from the same toolchain as
+  the linker's — named by `BELA_CXX`, or derived from `BELA_CC`.
+  Nothing in the Rust API changed shape: `bela_midi_*` is a C++ shim
+  over Bela's `Midi` class, which is C++ in `libbelaextra`, so what
+  the MIDI API added to the crate it added to the link line and to the
+  toolchain as well. A cross toolchain with no C++ compiler for the
+  target builds every earlier release and not this one.
 - `BlockContext::analog_read` and `RenderContext::analog_read` say what
   their 0.0 to 1.0 means in volts: full scale is the ADC's 4.096 V
   internal reference, so an input tied to the 3.3 V rail reads about
@@ -584,10 +591,11 @@ and this project adheres to
 
 ### Changed
 
-- The bindings are regenerated from the headers shipped on a Bela Gem
-  (Bela 1.18.0), which is newer than any published upstream branch.
-  `BelaContext` and `BelaInitSettings` gained fields, and the bindings
-  now cover `Bela_initRtBackend`, `Bela_clock_gettime` and friends
+- Breaking: the bindings are regenerated from the headers shipped on a
+  Bela Gem (Bela 1.18.0), which is newer than any published upstream
+  branch. `BelaContext` and `BelaInitSettings` gained fields, and the
+  bindings now cover `Bela_initRtBackend`, `Bela_clock_gettime` and
+  friends
 
 ## [0.0.1] - 2026-07-27
 
