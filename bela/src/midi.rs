@@ -23,7 +23,7 @@ use std::thread::{self, ThreadId};
 
 use crate::context::{CallbackContext, SetupContext};
 use crate::error::Error;
-use crate::task::AuxiliaryTask;
+use crate::task::{AuxiliaryTask, Priority};
 
 /// Every MIDI port ALSA reports, by the name that opens it.
 ///
@@ -1197,7 +1197,7 @@ static NEXT_DRAIN: AtomicUsize = AtomicUsize::new(0);
 /// gives the non-real-time thread this hands over to. A drain is a
 /// memcpy and one out-of-band write, so what the number buys is how
 /// soon a block's messages leave rather than how long they take.
-const DRAIN_PRIORITY: i32 = 50;
+const DRAIN_PRIORITY: Priority = Priority::new(50).expect("50 is within Bela's priority range");
 
 /// One render thread's end of the output queue.
 ///

@@ -211,10 +211,12 @@ macro_rules! cpu_usage {
                 /// all.
                 ///
                 /// ```compile_fail,E0277
-                /// use bela::{AuxiliaryTask, BlockContext};
+                /// use bela::{AuxiliaryTask, BlockContext, Priority};
                 ///
                 /// fn report_from_a_task(context: &BlockContext) {
-                ///     let _ = AuxiliaryTask::new("report", 50, move || {
+                ///     let priority =
+                ///         Priority::new(50).expect("50 is within Bela's priority range");
+                ///     let _ = AuxiliaryTask::new("report", priority, move || {
                 ///         // The task runs on its own thread, where reading the
                 ///         // counters would race the audio thread writing them.
                 ///         let _ = context.cpu_usage();

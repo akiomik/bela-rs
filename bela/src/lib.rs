@@ -177,7 +177,7 @@ pub use print::{MESSAGE_CAPACITY, print_args, println_args};
 pub use settings::Settings;
 #[cfg(bela_device)]
 pub use system::Bela;
-pub use task::{AUDIO_PRIORITY, AuxiliaryTask};
+pub use task::{AuxiliaryTask, Priority};
 pub use util::{constrain, map};
 
 pub use bela_sys;
