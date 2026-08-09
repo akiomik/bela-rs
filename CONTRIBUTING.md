@@ -61,11 +61,10 @@ rather than in a marker.
 Keep a Changelog has no category for breaking changes, so mark one by
 opening its entry with `Breaking:`. What earns the marker is the
 drop-in test in [docs/release.md](docs/release.md): an entry opens with
-`Breaking:` when it is a reason the release could not go out as a patch
-— a reason somebody handed it by `cargo update`, having read nothing,
-would be worse off than on the version they already had. That is wider
-than the API: what a device build links and needs, the MSRV and the
-board image all count.
+`Breaking:` when it is a reason the release could not have gone out as
+a patch. That is a property of the change rather than of who was in a
+position to receive it, and it is wider than the API: what a device
+build links and needs, the MSRV and the board image all count.
 
 Which heading it goes under is a separate question: `Removed` when a
 feature is gone, `Changed` when something that still exists behaves
