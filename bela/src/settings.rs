@@ -32,7 +32,7 @@ pub struct Settings {
     verbose: Option<bool>,
     high_performance_mode: Option<bool>,
     uniform_sample_rate: Option<bool>,
-    stop_button_pin: Option<i32>,
+    stop_button_pin: Option<StopButtonPin>,
     thread_count: Option<u32>,
     cpu_monitoring: Option<NonZeroU32>,
     begin_muted: Option<bool>,
@@ -182,11 +182,16 @@ impl Settings {
         self
     }
 
-    /// GPIO pin monitored for stopping the program; pass `-1` to
-    /// disable monitoring.
+    /// GPIO pin monitored for stopping the program.
+    ///
+    /// Pass `None` to disable monitoring. An unset setting leaves the
+    /// board's default alone.
     #[must_use]
-    pub const fn stop_button_pin(mut self, pin: i32) -> Self {
-        self.stop_button_pin = Some(pin);
+    pub const fn stop_button_pin(mut self, pin: Option<u32>) -> Self {
+        self.stop_button_pin = Some(match pin {
+            Some(pin) => StopButtonPin::Gpio(pin),
+            None => StopButtonPin::Disabled,
+        });
         self
     }
 
@@ -329,8 +334,11 @@ impl Settings {
         if let Some(v) = self.uniform_sample_rate {
             raw.uniformSampleRate = c_int::from(v);
         }
-        if let Some(v) = self.stop_button_pin {
-            raw.stopButtonPin = v;
+        if let Some(stop_button_pin) = self.stop_button_pin {
+            raw.stopButtonPin = match stop_button_pin {
+                StopButtonPin::Gpio(pin) => to_c_int(pin),
+                StopButtonPin::Disabled => -1,
+            };
         }
         if let Some(v) = self.thread_count {
             raw.threadCount = v;
@@ -339,6 +347,12 @@ impl Settings {
             raw.beginMuted = c_int::from(v);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum StopButtonPin {
+    Gpio(u32),
+    Disabled,
 }
 
 // Settings values far exceed c_int::MAX in no realistic configuration;
@@ -510,7 +524,7 @@ mod tests {
             .period_size(64)
             .use_analog(false)
             .verbose(true)
-            .stop_button_pin(-1)
+            .stop_button_pin(None)
             .thread_count(4)
             .apply_to(&mut raw);
 
@@ -521,6 +535,19 @@ mod tests {
         assert_eq!(raw.threadCount, 4);
         // Untouched by the overrides above.
         assert_eq!(raw.uniformSampleRate, 1);
+    }
+
+    #[test]
+    fn a_stop_button_pin_is_an_unsigned_gpio_number() {
+        let mut raw = fake_defaults();
+        Settings::new().stop_button_pin(Some(27)).apply_to(&mut raw);
+
+        assert_eq!(raw.stopButtonPin, 27);
+
+        Settings::new()
+            .stop_button_pin(Some(u32::MAX))
+            .apply_to(&mut raw);
+        assert_eq!(raw.stopButtonPin, c_int::MAX);
     }
 
     #[test]

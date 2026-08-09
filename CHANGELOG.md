@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking: `Settings::stop_button_pin` now takes `Option<u32>`.
+  `None` disables the stop button, and `Some(pin)` selects its GPIO
+  pin; negative values can no longer reach libbela as invalid pins.
+
 ### Removed
 
 - Breaking: `Bela::request_stop` and `Bela::stop_requested` are now the
