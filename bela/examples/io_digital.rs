@@ -81,6 +81,34 @@
 //! blinking is not the one wired to the third digital pin, the index is
 //! not the silkscreen's.
 //!
+//! # The split mode
+//!
+//! `--split` moves the writing from `render_pre` to `render`, where
+//! every render thread runs at once and each one owns a contiguous
+//! share of the block. Each thread then holds *its own share* at its
+//! own level — even threads low, odd threads high — so with two threads
+//! the block is low over the first half and high over the second.
+//!
+//! That makes the edge position the measurement. `RenderContext`'s
+//! `digital_write` is documented as stopping at the end of this
+//! thread's range rather than at the end of the block, which is where
+//! it departs from the C helper it wraps; if it ran to the end of the
+//! block instead, the last thread to finish would take the tail and the
+//! edge would wander from block to block. A fixed edge, one frame past
+//! the boundary between the shares, is that documentation confirmed on
+//! hardware.
+//!
+//! ```text
+//! digital: split threads:2 boundary:64 edges:682 per-block:2.00 edge-frames:1..65
+//! ```
+//!
+//! With one render thread the whole block is one share at one level, so
+//! `edges:0` is the expected — and confirming — result there.
+//!
+//! ```sh
+//! ./io_digital --split --thread-count 2 --period 128
+//! ```
+//!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
@@ -95,7 +123,6 @@
     )
 )]
 
-#[cfg(not(bela_device))]
 use std::process::ExitCode;
 
 use bela::{
@@ -131,6 +158,11 @@ const REPORT_SECONDS: f32 = 1.0;
     reason = "each one is an independent one-bit fact about the loopback, and grouping them into a state enum would only hide which are true together"
 )]
 struct Loopback {
+    /// Whether the output is driven from `render`, one value per render
+    /// thread, rather than toggled from `render_pre`. See
+    /// [`Split`](self#the-split-mode) above.
+    split: bool,
+
     /// Whether the pin directions have been set. Done from the first
     /// block rather than from `setup` so that the word can be reported
     /// as it arrives, untouched.
@@ -164,13 +196,20 @@ struct Loopback {
     /// write.
     out_readback: bool,
 
+    /// Where in the block the edges landed, in the split mode. The
+    /// whole point of that mode: the frame an edge appears at is what
+    /// says where one thread's share of the block ended.
+    min_edge_frame: usize,
+    max_edge_frame: usize,
+
     /// The state of the LED channel, changed once per report.
     led: bool,
 }
 
 impl Loopback {
-    const fn new() -> Self {
+    const fn new(split: bool) -> Self {
         Self {
+            split,
             configured: false,
             frame_clock: 0,
             write_at: 0,
@@ -186,6 +225,8 @@ impl Loopback {
             min_latency: u64::MAX,
             max_latency: 0,
             out_readback: false,
+            min_edge_frame: usize::MAX,
+            max_edge_frame: 0,
             led: false,
         }
     }
@@ -199,10 +240,17 @@ impl Loopback {
         self.unexpected = 0;
         self.min_latency = u64::MAX;
         self.max_latency = 0;
+        self.min_edge_frame = usize::MAX;
+        self.max_edge_frame = 0;
     }
 
     /// One window's findings, then the LED changes state.
     fn report(&mut self, context: &mut BlockContext) {
+        if self.split {
+            self.report_split(context);
+            self.reset();
+            return;
+        }
         // A window with no edge in it has no latency to report, and
         // saying so beats printing the sentinel as if it were a
         // measurement.
@@ -231,10 +279,61 @@ impl Loopback {
 
         // Slow enough to see, and tied to the report so that what the
         // eye sees and what the log says cannot drift apart.
-        self.led = !self.led;
-        context.digital_write(0, LED_CHANNEL, self.led);
+        self.blink(context);
 
         self.reset();
+    }
+
+    /// One window's findings in the split mode.
+    ///
+    /// The numbers to read together are `per-block` and `edge-frames`.
+    /// Two threads writing opposite levels over their own shares make
+    /// the output low for the first share and high for the second, so
+    /// the block carries exactly two edges — one at the boundary
+    /// between the shares and one at the wrap into the next block — and
+    /// they sit at fixed frames. `boundary` is where the second
+    /// thread's share begins, and the rising edge should be one frame
+    /// past it, for the same reason the loopback latency has a `+1` in
+    /// it.
+    fn report_split(&mut self, context: &mut BlockContext) {
+        let threads = context.thread_count();
+        // Where the second thread's share starts, by the same division
+        // `RenderContext::digital_frame_range` makes.
+        let boundary = context.digital_frames() / threads;
+        // Edges per block to two decimals, without a float: the whole
+        // claim is that this is exactly 2, and a rounded 2.0 would hide
+        // a block that occasionally carried three.
+        let per_block = if self.blocks == 0 {
+            0
+        } else {
+            u64::from(self.edges) * 100 / u64::from(self.blocks)
+        };
+        if self.edges == 0 {
+            rt_println!(
+                "digital: split threads:{} boundary:{} edges:0 per-block:0.00 edge-frames:none",
+                threads,
+                boundary
+            );
+        } else {
+            rt_println!(
+                "digital: split threads:{} boundary:{} edges:{} per-block:{}.{:02} edge-frames:{}..{}",
+                threads,
+                boundary,
+                self.edges,
+                per_block / 100,
+                per_block % 100,
+                self.min_edge_frame,
+                self.max_edge_frame
+            );
+        }
+        self.blink(context);
+    }
+
+    /// Changes the LED channel, from `render_pre` and so over the whole
+    /// block whatever the thread count.
+    fn blink(&mut self, context: &mut BlockContext) {
+        self.led = !self.led;
+        context.digital_write(0, LED_CHANNEL, self.led);
     }
 }
 
@@ -308,7 +407,13 @@ impl BelaApplication for Loopback {
                 continue;
             }
             self.last_seen = value;
-            if self.awaiting {
+            if self.split {
+                // Where the edge is, not how long it took: the frame it
+                // lands on is what says where a thread's share ended.
+                self.min_edge_frame = self.min_edge_frame.min(frame);
+                self.max_edge_frame = self.max_edge_frame.max(frame);
+                self.edges += 1;
+            } else if self.awaiting {
                 let latency = self.frame_clock + frame as u64 - self.write_at;
                 self.min_latency = self.min_latency.min(latency);
                 self.max_latency = self.max_latency.max(latency);
@@ -322,7 +427,9 @@ impl BelaApplication for Loopback {
         }
 
         self.blocks_since_write += 1;
-        if self.blocks_since_write >= WRITE_PERIOD_BLOCKS {
+        // In the split mode the output belongs to `render`, and a write
+        // from here would be writing over every thread's share of it.
+        if !self.split && self.blocks_since_write >= WRITE_PERIOD_BLOCKS {
             if self.awaiting {
                 // The previous write never arrived. Counted and dropped,
                 // so that its edge cannot later be attributed to this
@@ -347,15 +454,76 @@ impl BelaApplication for Loopback {
         }
     }
 
-    // Everything here is the whole block's, so `render_pre` does it all.
-    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+    fn render(&self, _state: &mut (), context: &mut RenderContext) {
+        // Outside the split mode everything is the whole block's, and
+        // `render_pre` has already done it.
+        if !self.split {
+            return;
+        }
+        // Each thread holds its own share at its own level, so the
+        // block comes out low over the first share and high over the
+        // second. If `digital_write` ran to the end of the *block* the
+        // way the C helper does, the last thread to run would take the
+        // tail and the edge would move from block to block; that it
+        // does not is the thing being measured.
+        let range = context.digital_frame_range();
+        if range.is_empty() {
+            // More threads than frames. Nothing of this block is this
+            // thread's, and writing anything would be writing into
+            // another thread's share.
+            return;
+        }
+        let level = context.this_thread() % 2 == 1;
+        context.digital_write(range.start, OUT_CHANNEL, level);
+    }
 }
 
 #[cfg(bela_device)]
-fn main() -> Result<(), bela::Error> {
+fn main() -> ExitCode {
     use std::env::args_os;
+    use std::ffi::OsString;
 
-    bela::Bela::run_with_args(Loopback::new(), &bela::Settings::new(), args_os())
+    // `--split` and `--threads` are this probe's own, and Bela's option
+    // parser treats anything it does not know as an error, so they are
+    // taken out before the rest of the arguments go on.
+    // `examples/command_line` is the worked example of the pattern.
+    //
+    // The thread count has to be one of ours: libbela's option list has
+    // no spelling for it, so the only way in is `Settings`.
+    let mut split = false;
+    let mut threads = None;
+    let mut want_threads = false;
+    let mut args: Vec<OsString> = Vec::new();
+    for argument in args_os() {
+        if want_threads {
+            want_threads = false;
+            threads = argument.to_str().and_then(|value| value.parse().ok());
+            if threads.is_none() {
+                eprintln!("--threads wants a number");
+                return ExitCode::FAILURE;
+            }
+            continue;
+        }
+        match argument.to_str() {
+            Some("--split") => split = true,
+            Some("--threads") => want_threads = true,
+            _ => args.push(argument),
+        }
+    }
+
+    let mut settings = bela::Settings::new();
+    if let Some(threads) = threads {
+        settings = settings.thread_count(threads);
+    }
+    match bela::Bela::run_with_args(Loopback::new(split), &settings, args) {
+        Ok(()) => ExitCode::SUCCESS,
+        // The `Display` form says what went wrong; returning the error
+        // from `main` would print its `Debug` one.
+        Err(error) => {
+            eprintln!("Error: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(not(bela_device))]

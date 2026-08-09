@@ -567,6 +567,12 @@ impl BlockContext {
 
     /// Analog input sample at `frame` for `channel` (`analogRead`).
     ///
+    /// The value runs from 0.0 to 1.0 for an input of 0 V to 4.096 V —
+    /// the ADC's internal reference, not the 3.3 V rail, so a pin tied
+    /// to that rail reads about 0.806 rather than 1.0. Measured on a
+    /// Gem Stereo; see "What an analog input reads" in
+    /// `docs/board-facts.md`.
+    ///
     /// # Panics
     /// If `frame` or `channel` is out of range.
     #[must_use]
@@ -830,6 +836,9 @@ impl RenderContext {
     /// `frame` is a block frame, and may be outside this thread's
     /// range: the analog inputs are a buffer of their own that nobody
     /// writes.
+    ///
+    /// The value runs from 0.0 to 1.0 for an input of 0 V to 4.096 V,
+    /// as for [`BlockContext::analog_read`].
     ///
     /// # Panics
     /// If `frame` or `channel` is out of range.

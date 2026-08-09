@@ -524,6 +524,31 @@ in digital frames rather than in blocks.
   is the initialisation opening all sixteen pins as inputs again. So a
   pin left high outlives its process, but only until something else
   brings the audio system up.
+- **A digital write from `render` stops at the end of the writing
+  thread's share of the block, not at the end of the block.** This is
+  where `RenderContext`'s accessors depart from the C helpers they
+  wrap, and it holds on the device. `io_digital --split` has every
+  render thread hold its own share at its own level, which makes the
+  block a square wave whose edges sit at the boundaries between the
+  shares; the edges were then counted and located through the
+  loopback:
+
+  | threads | period | edges per block | edge frames | share boundaries |
+  |---|---|---|---|---|
+  | 1 | 128 | 0 | none | — |
+  | 2 | 16 | 2.00 | 1, 9 | 8 |
+  | 2 | 128 | 2.00 | 1, 65 | 64 |
+  | 2 | 160 | 2.00 | 1, 81 | 80 |
+  | 4 | 128 | 4.00 | 1, 33, 65, 97 | 32, 64, 96 |
+
+  Every edge landed exactly one frame past a boundary — the same `+1`
+  the loopback latency carries — and the count per block was exact
+  after the first window, not an average of a wandering number. Had
+  the write run to the end of the block, the last thread to finish
+  would have taken the tail and the edge would have moved from block
+  to block. The one-thread row is the same statement from the other
+  end: one share covering the whole block leaves nothing to toggle
+  against, and no edge appeared.
 
 ## The Multiplexer Capelet
 
