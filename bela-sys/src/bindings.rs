@@ -24,39 +24,39 @@ unsafe extern "C" {
     pub fn Bela_printf(format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
 }
 #[doc = "< No hardware"]
-pub const BelaHw_BelaHw_NoHw: BelaHw = -1;
+pub const BelaHw_NoHw: BelaHw = -1;
 #[doc = "< Bela"]
-pub const BelaHw_BelaHw_Bela: BelaHw = 0;
+pub const BelaHw_Bela: BelaHw = 0;
 #[doc = "< Bela Mini"]
-pub const BelaHw_BelaHw_BelaMini: BelaHw = 1;
+pub const BelaHw_BelaMini: BelaHw = 1;
 #[doc = "< Gem Stereo"]
-pub const BelaHw_BelaHw_GemStereo: BelaHw = 2;
+pub const BelaHw_GemStereo: BelaHw = 2;
 #[doc = "< Gem Multi"]
-pub const BelaHw_BelaHw_GemMulti: BelaHw = 3;
+pub const BelaHw_GemMulti: BelaHw = 3;
 #[doc = "< Salt"]
-pub const BelaHw_BelaHw_Salt: BelaHw = 4;
+pub const BelaHw_Salt: BelaHw = 4;
 #[doc = "< Ctag Face"]
-pub const BelaHw_BelaHw_CtagFace: BelaHw = 5;
+pub const BelaHw_CtagFace: BelaHw = 5;
 #[doc = "< Ctag Beast"]
-pub const BelaHw_BelaHw_CtagBeast: BelaHw = 6;
+pub const BelaHw_CtagBeast: BelaHw = 6;
 #[doc = "< Ctag Face and Bela cape"]
-pub const BelaHw_BelaHw_CtagFaceBela: BelaHw = 7;
+pub const BelaHw_CtagFaceBela: BelaHw = 7;
 #[doc = "< Ctag Beast and Bela cape"]
-pub const BelaHw_BelaHw_CtagBeastBela: BelaHw = 8;
+pub const BelaHw_CtagBeastBela: BelaHw = 8;
 #[doc = "< Bela Mini with extra codecs"]
-pub const BelaHw_BelaHw_BelaMiniMultiAudio: BelaHw = 9;
+pub const BelaHw_BelaMiniMultiAudio: BelaHw = 9;
 #[doc = "< Bela Mini with extra codecs and/or tdm devices"]
-pub const BelaHw_BelaHw_BelaMiniMultiTdm: BelaHw = 10;
+pub const BelaHw_BelaMiniMultiTdm: BelaHw = 10;
 #[doc = "< Bela with extra codecs and/or tdm devices"]
-pub const BelaHw_BelaHw_BelaMultiTdm: BelaHw = 11;
+pub const BelaHw_BelaMultiTdm: BelaHw = 11;
 #[doc = "< Bela Mini with extra rx and tx I2S data lines."]
-pub const BelaHw_BelaHw_BelaMiniMultiI2s: BelaHw = 12;
+pub const BelaHw_BelaMiniMultiI2s: BelaHw = 12;
 #[doc = "< A Bela cape with Es9080 EVB on top, all as audio"]
-pub const BelaHw_BelaHw_BelaEs9080: BelaHw = 13;
+pub const BelaHw_BelaEs9080: BelaHw = 13;
 #[doc = "< A Bela cape rev C: Es9080 is used for analog outs"]
-pub const BelaHw_BelaHw_BelaRevC: BelaHw = 14;
+pub const BelaHw_BelaRevC: BelaHw = 14;
 #[doc = "< Dummy offline"]
-pub const BelaHw_BelaHw_Batch: BelaHw = 15;
+pub const BelaHw_Batch: BelaHw = 15;
 #[doc = " A type of Bela hardware."]
 pub type BelaHw = ::core::ffi::c_int;
 #[repr(C)]
@@ -96,15 +96,15 @@ unsafe extern "C" {
     pub fn Bela_HwConfig_delete(cfg: *mut BelaHwConfig);
 }
 #[doc = "< perform an automatic detection by scanning the peripherals and busses available, and cache value in `/run/bela/belaconfig`"]
-pub const BelaHwDetectMode_BelaHwDetectMode_Scan: BelaHwDetectMode = 0;
+pub const BelaHwDetectMode_Scan: BelaHwDetectMode = 0;
 #[doc = "< read cached value from `/run/bela/belaconfig` first. If it does not exist, fall back to #BelaHwDetectMode_Scan"]
-pub const BelaHwDetectMode_BelaHwDetectMode_Cache: BelaHwDetectMode = 1;
+pub const BelaHwDetectMode_Cache: BelaHwDetectMode = 1;
 #[doc = "<read cached value from `/run/bela/belaconfig`. If it does not exist, return #BelaHw_NoHw"]
-pub const BelaHwDetectMode_BelaHwDetectMode_CacheOnly: BelaHwDetectMode = 2;
+pub const BelaHwDetectMode_CacheOnly: BelaHwDetectMode = 2;
 #[doc = "<read user-specified value from `~/.bela/belaconfig`. If it does not exist, fall back to #BelaHwDetectMode_Cache"]
-pub const BelaHwDetectMode_BelaHwDetectMode_User: BelaHwDetectMode = 3;
+pub const BelaHwDetectMode_User: BelaHwDetectMode = 3;
 #[doc = "<read user-specified value from `~/.bela/belaconfig`. If it does not exist, return #BelaHw_NoHw"]
-pub const BelaHwDetectMode_BelaHwDetectMode_UserOnly: BelaHwDetectMode = 4;
+pub const BelaHwDetectMode_UserOnly: BelaHwDetectMode = 4;
 #[doc = " Arguments to be passed to Bela_detectHw()"]
 pub type BelaHwDetectMode = ::core::ffi::c_uint;
 #[repr(C)]
@@ -701,7 +701,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn Bela_deleteAllAuxiliaryTasks();
 }
-pub const BelaDigitalDirection_INPUT: BelaDigitalDirection = 0;
-pub const BelaDigitalDirection_OUTPUT: BelaDigitalDirection = 1;
+pub const INPUT: BelaDigitalDirection = 0;
+pub const OUTPUT: BelaDigitalDirection = 1;
 #[doc = " \\defgroup iofunctions I/O functions and constants\n\n These functions and macros are used for audio, analog and digital I/O. All the\n I/O functions require the BelaContext data structure from render() to be passed\n in. This means that these functions are, by design, \\b only usable from within\n the rendering thread.\n\n The naming conventions are loosely derived from the Arduino environment, and the\n syntax is similar. Unlike Arduino, the I/O functions require the frame number at which\n the read or write should take place, since all I/O happens synchronously with the\n audio clock.\n\n @{"]
 pub type BelaDigitalDirection = ::core::ffi::c_uint;

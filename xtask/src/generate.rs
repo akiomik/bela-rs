@@ -46,6 +46,7 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
         .allowlist_function("rt_.*")
         .allowlist_var("BELA_.*")
         .allowlist_var("DEFAULT_.*")
+        .prepend_enum_name(false)
         // The FILE* / va_list printf variants would drag glibc internals
         // into the bindings and are not usable from Rust anyway.
         .blocklist_function("(rt|Bela)_v?fprintf")

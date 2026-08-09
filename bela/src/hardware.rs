@@ -62,16 +62,12 @@ use core::ffi::{c_int, c_uint};
 use core::fmt;
 
 use bela_sys::{
-    BELA_BUGFIX_VERSION, BELA_MAJOR_VERSION, BELA_MINOR_VERSION, BelaHw, BelaHw_BelaHw_Batch,
-    BelaHw_BelaHw_Bela, BelaHw_BelaHw_BelaEs9080, BelaHw_BelaHw_BelaMini,
-    BelaHw_BelaHw_BelaMiniMultiAudio, BelaHw_BelaHw_BelaMiniMultiI2s,
-    BelaHw_BelaHw_BelaMiniMultiTdm, BelaHw_BelaHw_BelaMultiTdm, BelaHw_BelaHw_BelaRevC,
-    BelaHw_BelaHw_CtagBeast, BelaHw_BelaHw_CtagBeastBela, BelaHw_BelaHw_CtagFace,
-    BelaHw_BelaHw_CtagFaceBela, BelaHw_BelaHw_GemMulti, BelaHw_BelaHw_GemStereo,
-    BelaHw_BelaHw_NoHw, BelaHw_BelaHw_Salt, BelaHwDetectMode,
-    BelaHwDetectMode_BelaHwDetectMode_Cache, BelaHwDetectMode_BelaHwDetectMode_CacheOnly,
-    BelaHwDetectMode_BelaHwDetectMode_Scan, BelaHwDetectMode_BelaHwDetectMode_User,
-    BelaHwDetectMode_BelaHwDetectMode_UserOnly,
+    BELA_BUGFIX_VERSION, BELA_MAJOR_VERSION, BELA_MINOR_VERSION, BelaHw, BelaHw_Batch, BelaHw_Bela,
+    BelaHw_BelaEs9080, BelaHw_BelaMini, BelaHw_BelaMiniMultiAudio, BelaHw_BelaMiniMultiI2s,
+    BelaHw_BelaMiniMultiTdm, BelaHw_BelaMultiTdm, BelaHw_BelaRevC, BelaHw_CtagBeast,
+    BelaHw_CtagBeastBela, BelaHw_CtagFace, BelaHw_CtagFaceBela, BelaHw_GemMulti, BelaHw_GemStereo,
+    BelaHw_NoHw, BelaHw_Salt, BelaHwDetectMode, BelaHwDetectMode_Cache, BelaHwDetectMode_CacheOnly,
+    BelaHwDetectMode_Scan, BelaHwDetectMode_User, BelaHwDetectMode_UserOnly,
 };
 
 /// A board, as libbela's `BelaHw` names it.
@@ -201,39 +197,39 @@ impl Board {
         // A chain rather than a `match`: the generated constants are
         // spelled in C's case, and a pattern made of them warns on
         // every arm.
-        if raw == BelaHw_BelaHw_NoHw {
+        if raw == BelaHw_NoHw {
             Self::NoHardware
-        } else if raw == BelaHw_BelaHw_Bela {
+        } else if raw == BelaHw_Bela {
             Self::Bela
-        } else if raw == BelaHw_BelaHw_BelaMini {
+        } else if raw == BelaHw_BelaMini {
             Self::BelaMini
-        } else if raw == BelaHw_BelaHw_GemStereo {
+        } else if raw == BelaHw_GemStereo {
             Self::GemStereo
-        } else if raw == BelaHw_BelaHw_GemMulti {
+        } else if raw == BelaHw_GemMulti {
             Self::GemMulti
-        } else if raw == BelaHw_BelaHw_Salt {
+        } else if raw == BelaHw_Salt {
             Self::Salt
-        } else if raw == BelaHw_BelaHw_CtagFace {
+        } else if raw == BelaHw_CtagFace {
             Self::CtagFace
-        } else if raw == BelaHw_BelaHw_CtagBeast {
+        } else if raw == BelaHw_CtagBeast {
             Self::CtagBeast
-        } else if raw == BelaHw_BelaHw_CtagFaceBela {
+        } else if raw == BelaHw_CtagFaceBela {
             Self::CtagFaceBela
-        } else if raw == BelaHw_BelaHw_CtagBeastBela {
+        } else if raw == BelaHw_CtagBeastBela {
             Self::CtagBeastBela
-        } else if raw == BelaHw_BelaHw_BelaMiniMultiAudio {
+        } else if raw == BelaHw_BelaMiniMultiAudio {
             Self::BelaMiniMultiAudio
-        } else if raw == BelaHw_BelaHw_BelaMiniMultiTdm {
+        } else if raw == BelaHw_BelaMiniMultiTdm {
             Self::BelaMiniMultiTdm
-        } else if raw == BelaHw_BelaHw_BelaMultiTdm {
+        } else if raw == BelaHw_BelaMultiTdm {
             Self::BelaMultiTdm
-        } else if raw == BelaHw_BelaHw_BelaMiniMultiI2s {
+        } else if raw == BelaHw_BelaMiniMultiI2s {
             Self::BelaMiniMultiI2s
-        } else if raw == BelaHw_BelaHw_BelaEs9080 {
+        } else if raw == BelaHw_BelaEs9080 {
             Self::BelaEs9080
-        } else if raw == BelaHw_BelaHw_BelaRevC {
+        } else if raw == BelaHw_BelaRevC {
             Self::BelaRevC
-        } else if raw == BelaHw_BelaHw_Batch {
+        } else if raw == BelaHw_Batch {
             Self::Batch
         } else {
             Self::Unrecognised { raw }
@@ -251,23 +247,23 @@ impl Board {
     #[must_use]
     pub const fn to_sys(self) -> BelaHw {
         match self {
-            Self::NoHardware => BelaHw_BelaHw_NoHw,
-            Self::Bela => BelaHw_BelaHw_Bela,
-            Self::BelaMini => BelaHw_BelaHw_BelaMini,
-            Self::GemStereo => BelaHw_BelaHw_GemStereo,
-            Self::GemMulti => BelaHw_BelaHw_GemMulti,
-            Self::Salt => BelaHw_BelaHw_Salt,
-            Self::CtagFace => BelaHw_BelaHw_CtagFace,
-            Self::CtagBeast => BelaHw_BelaHw_CtagBeast,
-            Self::CtagFaceBela => BelaHw_BelaHw_CtagFaceBela,
-            Self::CtagBeastBela => BelaHw_BelaHw_CtagBeastBela,
-            Self::BelaMiniMultiAudio => BelaHw_BelaHw_BelaMiniMultiAudio,
-            Self::BelaMiniMultiTdm => BelaHw_BelaHw_BelaMiniMultiTdm,
-            Self::BelaMultiTdm => BelaHw_BelaHw_BelaMultiTdm,
-            Self::BelaMiniMultiI2s => BelaHw_BelaHw_BelaMiniMultiI2s,
-            Self::BelaEs9080 => BelaHw_BelaHw_BelaEs9080,
-            Self::BelaRevC => BelaHw_BelaHw_BelaRevC,
-            Self::Batch => BelaHw_BelaHw_Batch,
+            Self::NoHardware => BelaHw_NoHw,
+            Self::Bela => BelaHw_Bela,
+            Self::BelaMini => BelaHw_BelaMini,
+            Self::GemStereo => BelaHw_GemStereo,
+            Self::GemMulti => BelaHw_GemMulti,
+            Self::Salt => BelaHw_Salt,
+            Self::CtagFace => BelaHw_CtagFace,
+            Self::CtagBeast => BelaHw_CtagBeast,
+            Self::CtagFaceBela => BelaHw_CtagFaceBela,
+            Self::CtagBeastBela => BelaHw_CtagBeastBela,
+            Self::BelaMiniMultiAudio => BelaHw_BelaMiniMultiAudio,
+            Self::BelaMiniMultiTdm => BelaHw_BelaMiniMultiTdm,
+            Self::BelaMultiTdm => BelaHw_BelaMultiTdm,
+            Self::BelaMiniMultiI2s => BelaHw_BelaMiniMultiI2s,
+            Self::BelaEs9080 => BelaHw_BelaEs9080,
+            Self::BelaRevC => BelaHw_BelaRevC,
+            Self::Batch => BelaHw_Batch,
             Self::Unrecognised { raw } => raw,
         }
     }
@@ -372,11 +368,11 @@ impl DetectMode {
     #[must_use]
     pub const fn to_sys(self) -> BelaHwDetectMode {
         match self {
-            Self::Scan => BelaHwDetectMode_BelaHwDetectMode_Scan,
-            Self::Cache => BelaHwDetectMode_BelaHwDetectMode_Cache,
-            Self::CacheOnly => BelaHwDetectMode_BelaHwDetectMode_CacheOnly,
-            Self::User => BelaHwDetectMode_BelaHwDetectMode_User,
-            Self::UserOnly => BelaHwDetectMode_BelaHwDetectMode_UserOnly,
+            Self::Scan => BelaHwDetectMode_Scan,
+            Self::Cache => BelaHwDetectMode_Cache,
+            Self::CacheOnly => BelaHwDetectMode_CacheOnly,
+            Self::User => BelaHwDetectMode_User,
+            Self::UserOnly => BelaHwDetectMode_UserOnly,
         }
     }
 
@@ -543,23 +539,23 @@ mod tests {
 
     /// Every board the vendored headers name, with the constant it is.
     const NAMED: [(Board, BelaHw); 17] = [
-        (Board::NoHardware, BelaHw_BelaHw_NoHw),
-        (Board::Bela, BelaHw_BelaHw_Bela),
-        (Board::BelaMini, BelaHw_BelaHw_BelaMini),
-        (Board::GemStereo, BelaHw_BelaHw_GemStereo),
-        (Board::GemMulti, BelaHw_BelaHw_GemMulti),
-        (Board::Salt, BelaHw_BelaHw_Salt),
-        (Board::CtagFace, BelaHw_BelaHw_CtagFace),
-        (Board::CtagBeast, BelaHw_BelaHw_CtagBeast),
-        (Board::CtagFaceBela, BelaHw_BelaHw_CtagFaceBela),
-        (Board::CtagBeastBela, BelaHw_BelaHw_CtagBeastBela),
-        (Board::BelaMiniMultiAudio, BelaHw_BelaHw_BelaMiniMultiAudio),
-        (Board::BelaMiniMultiTdm, BelaHw_BelaHw_BelaMiniMultiTdm),
-        (Board::BelaMultiTdm, BelaHw_BelaHw_BelaMultiTdm),
-        (Board::BelaMiniMultiI2s, BelaHw_BelaHw_BelaMiniMultiI2s),
-        (Board::BelaEs9080, BelaHw_BelaHw_BelaEs9080),
-        (Board::BelaRevC, BelaHw_BelaHw_BelaRevC),
-        (Board::Batch, BelaHw_BelaHw_Batch),
+        (Board::NoHardware, BelaHw_NoHw),
+        (Board::Bela, BelaHw_Bela),
+        (Board::BelaMini, BelaHw_BelaMini),
+        (Board::GemStereo, BelaHw_GemStereo),
+        (Board::GemMulti, BelaHw_GemMulti),
+        (Board::Salt, BelaHw_Salt),
+        (Board::CtagFace, BelaHw_CtagFace),
+        (Board::CtagBeast, BelaHw_CtagBeast),
+        (Board::CtagFaceBela, BelaHw_CtagFaceBela),
+        (Board::CtagBeastBela, BelaHw_CtagBeastBela),
+        (Board::BelaMiniMultiAudio, BelaHw_BelaMiniMultiAudio),
+        (Board::BelaMiniMultiTdm, BelaHw_BelaMiniMultiTdm),
+        (Board::BelaMultiTdm, BelaHw_BelaMultiTdm),
+        (Board::BelaMiniMultiI2s, BelaHw_BelaMiniMultiI2s),
+        (Board::BelaEs9080, BelaHw_BelaEs9080),
+        (Board::BelaRevC, BelaHw_BelaRevC),
+        (Board::Batch, BelaHw_Batch),
     ];
 
     #[test]
@@ -576,7 +572,7 @@ mod tests {
         // list, and something far beyond it. Neither may be read as a
         // board this crate does know — that is the case that turns a
         // new image into a program acting on the wrong hardware.
-        for raw in [BelaHw_BelaHw_Batch + 1, 99, c_int::MAX, c_int::MIN] {
+        for raw in [BelaHw_Batch + 1, 99, c_int::MAX, c_int::MIN] {
             let board = Board::from_sys(raw);
             assert_eq!(board, Board::Unrecognised { raw });
             assert_eq!(
@@ -627,17 +623,11 @@ mod tests {
     #[test]
     fn every_detect_mode_is_the_constant_it_names() {
         let pairs = [
-            (DetectMode::Scan, BelaHwDetectMode_BelaHwDetectMode_Scan),
-            (DetectMode::Cache, BelaHwDetectMode_BelaHwDetectMode_Cache),
-            (
-                DetectMode::CacheOnly,
-                BelaHwDetectMode_BelaHwDetectMode_CacheOnly,
-            ),
-            (DetectMode::User, BelaHwDetectMode_BelaHwDetectMode_User),
-            (
-                DetectMode::UserOnly,
-                BelaHwDetectMode_BelaHwDetectMode_UserOnly,
-            ),
+            (DetectMode::Scan, BelaHwDetectMode_Scan),
+            (DetectMode::Cache, BelaHwDetectMode_Cache),
+            (DetectMode::CacheOnly, BelaHwDetectMode_CacheOnly),
+            (DetectMode::User, BelaHwDetectMode_User),
+            (DetectMode::UserOnly, BelaHwDetectMode_UserOnly),
         ];
         for (mode, raw) in pairs {
             assert_eq!(mode.to_sys(), raw, "{mode}");
