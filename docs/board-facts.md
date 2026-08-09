@@ -469,6 +469,62 @@ measurement rather than an estimate.
   Nothing measured on the analog pins before then means anything —
   including the `REF` pin on P1, which reads 0 V with the board idle.
 
+## What a digital pin does
+
+Collected 2026-08-09 with `bela/examples/io_digital`, wired as a
+loopback — `D0` driving `D1` through 1 kΩ — with an LED on `D2` for the
+things a printed number cannot settle. The probe toggles the output
+every eight blocks at a frame in the middle of the block and scans every
+frame of the input for the edge, so the write-to-read distance comes out
+in digital frames rather than in blocks.
+
+- **Every channel starts as an input.** The digital word of the first
+  block, before this crate has said anything to it, is `0x0000ffff`:
+  all sixteen direction bits set, no value bits. That is
+  `PinMode::default()` and the "1 means input" reading of the layout,
+  both confirmed on the device. `PRU.cpp` agrees from the other side —
+  it opens all sixteen pins with `Gpio::INPUT` during initialisation.
+- **`pin_mode` moves the bit the accessors think it moves.** After
+  making `D0` and `D2` outputs and leaving `D1` an input the word is
+  `0x0000fffa` — bits 0 and 2 cleared, bit 1 untouched, nothing else
+  changed.
+- **The loopback works, and the index is the number on the
+  silkscreen.** Every write produced exactly one edge on the input:
+  344 or 345 edges a second against the same number of writes, with no
+  misses. The LED wired to `D2` blinks when channel 2 is written.
+- **Reading an output channel gives back what was written, not the
+  pin.** `digital_read` on the channel just written echoes the value
+  every time, which is what sharing bit *n*+16 with `digital_write`
+  implies.
+- **Outputs persist between blocks, as `Bela.h` says.** The probe
+  writes once every eight blocks and counts unasked-for edges
+  separately; that count stayed at 0. A pin that reverted when nobody
+  wrote it would have shown up there.
+- **The loopback latency is exactly two blocks plus one frame, with no
+  jitter.** Measured at every period size that works — 16, 64, 128,
+  129, 160, 192, 255 — the write-to-read distance was a single value,
+  never a range, and always `2 * period + 1` digital frames. A value
+  written at frame *f* of block *n* is readable at frame *f*+1 of block
+  *n*+2. The 128-frame boundary where libbela moves `render` behind a
+  context FIFO does not appear in it.
+- **Digital I/O stops working entirely at a period of 256 frames or
+  more, and nothing says so.** At 256 and at 320 not one edge arrived,
+  and the LED on `D2` did not blink either, so it is the whole
+  transfer and not one direction of it. `Bela_initAudio` succeeds, the
+  audio runs, and no warning is printed. The reason is in `PRU.cpp`,
+  where the PRU's shared-memory digital buffer is declared as
+  `PRU_MEM_DIGITAL_BUFFER1_OFFSET 0x400` — "256 words … 256 is the
+  maximum number of frames allowed" — and nothing checks `digitalFrames`
+  against it. The comment's 256 is optimistic by one: 255 is the
+  largest period at which digital I/O was seen to work.
+- **A program leaves its digital outputs driving after it exits, and
+  the next program to start clears them.** The LED stayed lit after a
+  run that ended with `D2` high — teardown does not return the pin to
+  an input — and went out the moment the following run started, which
+  is the initialisation opening all sixteen pins as inputs again. So a
+  pin left high outlives its process, but only until something else
+  brings the audio system up.
+
 ## The Multiplexer Capelet
 
 Collected 2026-08-07: partly on the board with a throwaway C++ project
