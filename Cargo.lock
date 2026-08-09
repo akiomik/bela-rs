@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "bela"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bela-sys",
  "libc",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "bela-sys"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cc",
 ]
