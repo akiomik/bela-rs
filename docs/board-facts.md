@@ -411,6 +411,64 @@ measurement and is not recorded here yet.
   both of which run on the main audio thread; what a secondary render
   thread reports is measured by `examples/parallel` instead.
 
+## What an analog input reads
+
+Collected 2026-08-09 with `bela/examples/io_analog`, which reports the
+mean, the range and the widest within-block spread of every analog input
+once a second. This is the half of the section above that needed a
+voltage on a pin: those numbers were the shape of the block, these are
+what the accessor returns from it.
+
+The wiring was a potentiometer between the 3.3 V rail on P2 and GND with
+its wiper on `A0`, a direct tie from the same rail to `A1`, and `A2`
+through `A7` left floating. A rail is a voltage known without an
+instrument, which is what makes the full-scale answer below a
+measurement rather than an estimate.
+
+- **`analog_read` returns 1.0 for 4.096 V, as `Bela.h` says it does.**
+  3.3 V on `A1` reads **0.8064**, against the 0.80566 that 3.3/4.096
+  predicts — 0.1% out. The same rail through the potentiometer at its
+  top end read 0.8065 on `A0` in a separate run. A 3.3 V full scale
+  would have given 1.0, which is 24% away and outside anything a rail
+  tolerance covers. So the internal reference is in use and the
+  header's claim holds on a Gem Stereo.
+- **The channel index is the number on the silkscreen.** Between two
+  runs the only changes were the voltage on `A0` and the tie on `A1`,
+  and the only channels whose readings moved were `ch0` and `ch1`;
+  `ch2`–`ch7` held their floating values to the fourth decimal. Turning
+  the potentiometer moves `ch0` alone.
+- **The full range is covered and monotonic.** Swept end to end, `ch0`
+  ran 0.0000 to 0.8074 continuously, reaching the same top as the
+  directly tied `A1`. `ch1` stayed within 0.8064–0.8065 across all
+  twenty report windows while `ch0` swept, so a moving channel does not
+  disturb a held one.
+- **The bottom clips to exactly 0.** At the potentiometer's earthed end
+  `ch0` reads 0.0000 with a min, max and spread of 0.0000 — no noise at
+  all, where the same channel at the top of its range wobbles by about
+  0.0018. The reading does not go negative and does not dither around
+  zero.
+- **The frames within a block are in time order.** The widest
+  within-block spread sits at 0.0015 with the input still and rises to
+  0.0050–0.0059 only in the windows where the potentiometer was being
+  turned quickly. A block whose frames were not consecutive in time
+  would not track the speed of the hand turning the knob.
+- **The interleaved index survives a different frame count.** With
+  `--uniform-sample-rate 0` the analog block becomes 8 frames at
+  22050 Hz against 16 audio frames (as the section above records), and
+  every channel reports the same value and the same spread as at 16
+  frames. `frame * channels + channel` is the layout on the device.
+- **A floating input is not a zero, and it is an aerial.** Unconnected
+  channels sat at steady but unequal values — 0.147, 0.015, 0.119,
+  0.031, 0.019 and 0.043 on `A2` through `A7` — and in the windows
+  where a hand was near the board they swung much wider, `A7` ranging
+  0.0136 to 0.1053. `ch0` and `ch1` were unmoved throughout, so this is
+  pickup on the open pins rather than anything in the reading path.
+- **The ADC is held in reset until a program using analog inputs
+  starts.** `PRU.cpp` releases `gemAdcPin` (GPIO0_53, `P2_18`) inside
+  the PRU initialisation, and only when `analogInChannels` is non-zero.
+  Nothing measured on the analog pins before then means anything —
+  including the `REF` pin on P1, which reads 0 V with the board idle.
+
 ## The Multiplexer Capelet
 
 Collected 2026-08-07: partly on the board with a throwaway C++ project
