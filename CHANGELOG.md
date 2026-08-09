@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Changed
 
+- Breaking: `Settings::thread_count` now takes `NonZeroU32`, so a Rust
+  settings override can no longer use 0 as a second spelling of one
+  render thread.
 - Breaking: `Settings::stop_button_pin` now takes `Option<u32>`.
   `None` disables the stop button, and `Some(pin)` selects its GPIO
   pin; negative values can no longer reach libbela as invalid pins.

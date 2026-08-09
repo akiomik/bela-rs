@@ -33,7 +33,7 @@ pub struct Settings {
     high_performance_mode: Option<bool>,
     uniform_sample_rate: Option<bool>,
     stop_button_pin: Option<StopButtonPin>,
-    thread_count: Option<u32>,
+    thread_count: Option<NonZeroU32>,
     cpu_monitoring: Option<NonZeroU32>,
     begin_muted: Option<bool>,
 }
@@ -210,6 +210,10 @@ impl Settings {
     /// the same block and every one of them has to finish before it
     /// can be handed over. A Bela Gem has four.
     ///
+    /// The count cannot be zero: libbela treats 0 and 1 as two
+    /// spellings of the same single render thread, while this API keeps
+    /// one spelling for one configuration.
+    ///
     /// # It has to be the number libbela then renders on
     ///
     /// The render states are built from this value, resolved against
@@ -230,7 +234,7 @@ impl Settings {
     /// unchanged, so the disagreement has not been seen; the check is
     /// there because a future one might not.
     #[must_use]
-    pub const fn thread_count(mut self, threads: u32) -> Self {
+    pub const fn thread_count(mut self, threads: NonZeroU32) -> Self {
         self.thread_count = Some(threads);
         self
     }
@@ -341,7 +345,7 @@ impl Settings {
             };
         }
         if let Some(v) = self.thread_count {
-            raw.threadCount = v;
+            raw.threadCount = v.get();
         }
         if let Some(v) = self.begin_muted {
             raw.beginMuted = c_int::from(v);
@@ -458,6 +462,8 @@ mod tests {
 
     use super::*;
 
+    const FOUR_THREADS: NonZeroU32 = NonZeroU32::new(4).expect("the test thread count is non-zero");
+
     // Stands in for the output of `Bela_defaultSettings()`, which needs
     // libbela and therefore the board. The fields are the ones
     // `Bela_defaultSettings` sets, so what is built on top of this is
@@ -492,7 +498,7 @@ mod tests {
         // The point of `new` being const: this is evaluated at compile
         // time, so a builder method that stopped being one would fail
         // to compile here rather than fail an assertion.
-        const SETTINGS: Settings = Settings::new().period_size(64).thread_count(4);
+        const SETTINGS: Settings = Settings::new().period_size(64).thread_count(FOUR_THREADS);
 
         let mut raw = fake_defaults();
         SETTINGS.apply_to(&mut raw);
@@ -525,7 +531,7 @@ mod tests {
             .use_analog(false)
             .verbose(true)
             .stop_button_pin(None)
-            .thread_count(4)
+            .thread_count(FOUR_THREADS)
             .apply_to(&mut raw);
 
         assert_eq!(raw.periodSize, 64);

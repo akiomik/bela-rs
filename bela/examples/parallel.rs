@@ -97,7 +97,8 @@ const BASE_FREQUENCY: f32 = 55.0;
 const AMPLITUDE: f32 = 0.2;
 
 /// Render threads to use when the command line does not say.
-const DEFAULT_THREADS: u32 = 4;
+const DEFAULT_THREADS: NonZeroU32 =
+    NonZeroU32::new(4).expect("the default thread count is non-zero");
 
 const MEASUREMENTS_PER_CYCLE: u32 = 2000;
 
@@ -338,7 +339,7 @@ impl BelaApplication for Parallel {
 }
 
 /// The render thread count from this program's own first argument.
-fn requested_threads() -> u32 {
+fn requested_threads() -> NonZeroU32 {
     use std::env;
 
     env::args()

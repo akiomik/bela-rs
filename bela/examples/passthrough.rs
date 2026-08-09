@@ -2,8 +2,8 @@
 //!
 //! Frame-independent work, so it divides across render threads without
 //! anything having to be carried between them: run it with
-//! `Settings::thread_count(4)` and each thread copies a quarter of the
-//! block.
+//! `Settings::thread_count(NonZeroU32::new(4).expect("4 is not zero"))`
+//! and each thread copies a quarter of the block.
 //!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!

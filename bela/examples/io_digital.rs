@@ -131,6 +131,8 @@
 )]
 
 use core::fmt::{self, Write as _};
+#[cfg(bela_device)]
+use core::num::NonZeroU32;
 use core::str;
 use std::process::ExitCode;
 
@@ -647,7 +649,7 @@ fn main() -> ExitCode {
     // The thread count has to be one of ours: libbela's option list has
     // no spelling for it, so the only way in is `Settings`.
     let mut split = false;
-    let mut threads = None;
+    let mut threads: Option<NonZeroU32> = None;
     let mut want_threads = false;
     let mut args: Vec<OsString> = Vec::new();
     for argument in args_os() {
@@ -655,7 +657,7 @@ fn main() -> ExitCode {
             want_threads = false;
             threads = argument.to_str().and_then(|value| value.parse().ok());
             if threads.is_none() {
-                eprintln!("--threads wants a number");
+                eprintln!("--threads wants a non-zero number");
                 return ExitCode::FAILURE;
             }
             continue;
@@ -672,7 +674,7 @@ fn main() -> ExitCode {
         // statement about a thread count, so a run that quietly used a
         // different one would produce numbers that look right and mean
         // something else.
-        eprintln!("--threads wants a number");
+        eprintln!("--threads wants a non-zero number");
         return ExitCode::FAILURE;
     }
 
