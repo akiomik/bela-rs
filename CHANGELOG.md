@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Removed
+
+- Breaking: `Bela::request_stop` and `Bela::stop_requested` are now the
+  crate-root functions [`request_stop`](https://docs.rs/bela/latest/bela/fn.request_stop.html)
+  and [`stop_requested`](https://docs.rs/bela/latest/bela/fn.stop_requested.html).
+  They do not use the `Bela` handle or its application type, so an
+  auxiliary thread or signal handler can call them without naming one.
+
 ## [0.4.0] - 2026-08-09
 
 ### Added

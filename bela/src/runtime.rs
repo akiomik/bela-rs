@@ -69,7 +69,7 @@ const EXCLUSIVE: u64 = 1 << 63;
 /// Off-device there is no audio system to ask; the fault counter is
 /// what the tests read instead.
 #[cfg(bela_device)]
-fn request_stop() {
+pub(crate) fn request_stop() {
     // Safety: Bela_requestStop only sets a flag, and is documented as
     // callable from anywhere, including a signal handler.
     unsafe { bela_sys::Bela_requestStop() }
@@ -92,7 +92,7 @@ const fn request_stop() {}
 /// [`Guard::enter_exclusive`] for the one place that needed arranging
 /// rather than observing.
 #[cfg(bela_device)]
-fn stop_requested() -> bool {
+pub(crate) fn stop_requested() -> bool {
     // Safety: Bela_stopRequested only reads a flag.
     unsafe { bela_sys::Bela_stopRequested() != 0 }
 }

@@ -423,19 +423,6 @@ impl<T: BelaApplication> Bela<T> {
         unsafe { &*self.runtime }.faults_while_stopping()
     }
 
-    /// Whether a stop has been requested (stop button, IDE, or
-    /// [`Bela::request_stop`]).
-    #[must_use]
-    pub fn stop_requested() -> bool {
-        unsafe { bela_sys::Bela_stopRequested() != 0 }
-    }
-
-    /// Requests the audio system to stop, e.g. from a signal handler
-    /// or auxiliary thread.
-    pub fn request_stop() {
-        unsafe { bela_sys::Bela_requestStop() }
-    }
-
     /// Initialises and starts the audio system, blocks until a stop is
     /// requested, then shuts down.
     ///
@@ -526,7 +513,7 @@ impl<T: BelaApplication> Bela<T> {
             unsafe { libc::signal(signal, handler as libc::sighandler_t) };
         }
         self.start()?;
-        while !Self::stop_requested() {
+        while !crate::stop_requested() {
             thread::sleep(Duration::from_millis(10));
         }
         self.stop();
@@ -582,7 +569,7 @@ impl<T: BelaApplication> fmt::Debug for Bela<T> {
 
 // Async-signal-safe: Bela_requestStop only sets a flag.
 extern "C" fn request_stop_on_signal(_signal: c_int) {
-    unsafe { bela_sys::Bela_requestStop() }
+    crate::request_stop();
 }
 
 impl<T: BelaApplication> Drop for Bela<T> {
