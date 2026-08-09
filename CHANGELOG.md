@@ -185,9 +185,10 @@ and this project adheres to
   that on a channel set to `PinMode::Output` they report the value last
   written rather than the state of the pin — the two share a bit.
   Documentation only.
-- `BlockContext::digital_write` and `RenderContext::digital_write` say
-  that the value outlives the program: stopping the audio system does
-  not return the pin to an input, and a pin left high stays high until
+- `digital_write` and `pin_mode`, on both `BlockContext` and
+  `RenderContext`, say that what they set outlives the program:
+  stopping the audio system returns no pin to an input, so a channel
+  left an output goes on driving and a pin left high stays high until
   the next audio system starts. Ending a program is not a way of
   reaching a safe state on whatever the pin drives. Measured on a Gem
   Stereo; documentation only.

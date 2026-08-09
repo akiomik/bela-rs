@@ -977,6 +977,9 @@ impl RenderContext {
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of **this thread's range** (`pinMode`).
     ///
+    /// The direction outlives the block and the program alike, as for
+    /// [`BlockContext::pin_mode`].
+    ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
     /// [`digital_frame_range`](RenderContext::digital_frame_range).
