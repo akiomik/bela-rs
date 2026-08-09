@@ -181,3 +181,19 @@ pub use task::{AUDIO_PRIORITY, AuxiliaryTask};
 pub use util::{constrain, map};
 
 pub use bela_sys;
+
+/// Requests that the audio system stop.
+///
+/// This is safe to call from a signal handler or an auxiliary thread.
+#[cfg(bela_device)]
+pub fn request_stop() {
+    runtime::request_stop();
+}
+
+/// Whether a stop has been requested by the stop button, IDE, or
+/// [`request_stop`].
+#[cfg(bela_device)]
+#[must_use]
+pub fn stop_requested() -> bool {
+    runtime::stop_requested()
+}
