@@ -164,10 +164,13 @@ const REPORT_SECONDS: f32 = 1.0;
 
 /// How many distinct edge positions one window can record.
 ///
-/// Two per render thread is already more than the split mode can
-/// produce — one edge per share boundary plus the wrap into the next
-/// block — so a window that fills this has found something the model
-/// does not explain, which is worth reporting as such.
+/// The split mode produces one position per render thread — one edge
+/// per share boundary, plus the wrap into the next block — so this
+/// covers up to sixteen threads, which is four times what a Gem has
+/// cores for. Past that, or if the pin carries edges the model does
+/// not predict, the positions that did not fit are dropped and the
+/// report says so with a trailing `…` rather than presenting what fit
+/// as the whole of it.
 const MAX_EDGE_FRAMES: usize = 16;
 
 #[allow(
@@ -221,9 +224,9 @@ struct Loopback {
     /// what is written down is what was seen.
     ///
     /// Fixed capacity, because this is filled from the audio thread. A
-    /// window that finds more positions than fit says so with
-    /// `edge-frames-overflow` rather than dropping them quietly: more
-    /// positions than boundaries is itself the finding.
+    /// window that finds more positions than fit ends its list with a
+    /// `…` rather than dropping them quietly: more positions than
+    /// boundaries is itself the finding.
     edge_frames: [usize; MAX_EDGE_FRAMES],
     edge_frame_count: usize,
     edge_frames_overflowed: bool,
@@ -260,20 +263,28 @@ impl List {
     }
 
     /// Appends one number, with a separator if it is not the first.
+    ///
+    /// All of it or none of it: if the number will not fit, the
+    /// separator that was about to introduce it is rolled back, because
+    /// a trailing comma reads as an entry that is not there.
     fn push(&mut self, value: usize) {
+        let mark = self.len;
         if self.len > 0 && write!(self, ",").is_err() {
             return;
         }
-        let _ = write!(self, "{value}");
+        if write!(self, "{value}").is_err() {
+            self.len = mark;
+        }
     }
 
     /// Marks the list as incomplete for a reason of the caller's.
-    const fn truncated(&mut self) {
+    const fn mark_truncated(&mut self) {
         self.truncated = true;
     }
 
-    /// The list so far — `none` when empty, with a `,…` when something
-    /// was dropped.
+    /// The list so far, and nothing about what it lost — `none` when
+    /// nothing was ever added, `…` when entries existed and none of
+    /// them fit.
     fn as_str(&self) -> &str {
         if self.len == 0 {
             return if self.truncated { "…" } else { "none" };
@@ -282,6 +293,21 @@ impl List {
         // the buffer is always valid UTF-8; the fallback is there to
         // keep this total rather than because it can happen.
         str::from_utf8(&self.bytes[..self.len]).unwrap_or("?")
+    }
+
+    /// What to print after [`as_str`](List::as_str) so that a list
+    /// which lost entries cannot be read as a complete one.
+    ///
+    /// Separate from `as_str` because that hands out a borrow of the
+    /// buffer and so cannot append to itself. Empty unless something
+    /// was dropped, and empty as well when nothing fit at all, because
+    /// `as_str` has already said so.
+    const fn suffix(&self) -> &'static str {
+        if self.truncated && self.len > 0 {
+            ",…"
+        } else {
+            ""
+        }
     }
 }
 
@@ -427,7 +453,7 @@ impl Loopback {
             positions.push(self.edge_frames[index]);
         }
         if self.edge_frames_overflowed {
-            positions.truncated();
+            positions.mark_truncated();
         }
 
         // Edges per block to two decimals, without a float: the whole
@@ -439,17 +465,19 @@ impl Loopback {
             u64::from(self.edges) * 100 / u64::from(self.blocks)
         };
         rt_println!(
-            "digital: split threads:{} frames:{} boundaries:{}",
+            "digital: split threads:{} frames:{} boundaries:{}{}",
             threads,
             frames,
-            boundaries.as_str()
+            boundaries.as_str(),
+            boundaries.suffix()
         );
         rt_println!(
-            "digital: split edges:{} per-block:{}.{:02} edge-frames:{}",
+            "digital: split edges:{} per-block:{}.{:02} edge-frames:{}{}",
             self.edges,
             per_block / 100,
             per_block % 100,
-            positions.as_str()
+            positions.as_str(),
+            positions.suffix()
         );
         self.blink(context);
     }

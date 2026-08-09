@@ -671,6 +671,11 @@ impl BlockContext {
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of the block (`pinMode`).
     ///
+    /// The direction outlives the program the way the value does — see
+    /// [`digital_write`](BlockContext::digital_write) — so a channel
+    /// left an output goes on driving after the audio system stops.
+    /// Every channel is an input again once the next one starts.
+    ///
     /// # Panics
     /// If `channel` is out of range.
     pub fn pin_mode(&mut self, frame: usize, channel: usize, mode: PinMode) {
