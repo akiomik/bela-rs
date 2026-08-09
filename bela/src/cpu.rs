@@ -348,7 +348,7 @@ fn disable_monitoring() -> Result<(), Error> {
 /// Measured on a Bela Gem Stereo (image 2026-03-25, Bela 1.18.0):
 /// `gFifoFactor` is 1 at period sizes 16, 32, 64 and 128, and 2 at 256.
 /// See `docs/board-facts.md`.
-pub const MAX_MONITORED_PERIOD_SIZE: c_int = 128;
+pub const MAX_MONITORED_PERIOD_SIZE: u32 = 128;
 
 /// Checks that `render` will run on the thread that updates the
 /// counters, given the period size that settings resolved to.
@@ -364,7 +364,7 @@ pub const MAX_MONITORED_PERIOD_SIZE: c_int = 128;
         reason = "only the device-gated audio system applies settings; still unit-tested on the host"
     )
 )]
-pub(crate) const fn check_period_size(period_size: c_int) -> Result<(), Error> {
+pub(crate) const fn check_period_size(period_size: u32) -> Result<(), Error> {
     if period_size <= MAX_MONITORED_PERIOD_SIZE {
         Ok(())
     } else {
@@ -734,6 +734,11 @@ mod tests {
         assert_eq!(
             check_period_size(256),
             Err(Error::CpuMonitoringPeriodSize(256))
+        );
+        assert_eq!(
+            check_period_size(u32::MAX),
+            Err(Error::CpuMonitoringPeriodSize(u32::MAX)),
+            "a C period size that cannot be converted to u32 is represented as out of range"
         );
     }
 

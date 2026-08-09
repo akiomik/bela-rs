@@ -50,13 +50,12 @@ pub enum Error {
     /// The requested CPU monitoring acquisition cycle does not fit in a
     /// C `int`, which is how libbela takes it.
     CpuMonitoringCycle(u32),
-    /// CPU monitoring was requested with a period size big enough that
-    /// libbela runs `render` on a different thread from the one it
-    /// measures.
+    /// CPU monitoring was requested with a period size outside the
+    /// range where libbela runs `render` on the thread it measures.
     ///
     /// See
     /// [`MAX_MONITORED_PERIOD_SIZE`](crate::MAX_MONITORED_PERIOD_SIZE).
-    CpuMonitoringPeriodSize(i32),
+    CpuMonitoringPeriodSize(u32),
     /// Another [`Bela`](crate::Bela) audio system already exists in
     /// this process.
     ///

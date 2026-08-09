@@ -273,7 +273,7 @@ impl BelaApplication for Load {
 fn report_fifo_guard() {
     let settings = bela::Settings::new()
         .cpu_monitoring(cycle())
-        .period_size(bela::MAX_MONITORED_PERIOD_SIZE.unsigned_abs() * 2);
+        .period_size(bela::MAX_MONITORED_PERIOD_SIZE * 2);
     let outcome = match bela::Bela::new(Load::new(), &settings) {
         Err(bela::Error::CpuMonitoringPeriodSize(frames)) => format!("refused at {frames} frames"),
         Err(error) => format!("other-error {error}"),
