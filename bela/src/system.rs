@@ -328,8 +328,12 @@ impl<T: BelaApplication> Bela<T> {
         settings::check_resolved(raw)?;
         if monitoring.is_some() {
             // Needs the resolved period size: unset in `Settings` means
-            // Bela's default, not "no period size".
-            cpu::check_period_size(raw.periodSize)?;
+            // Bela's default, not "no period size". The raw value is
+            // signed even though Settings only accepts u32; map a
+            // negative resolved value to an impossible upper bound so
+            // the unsigned range check refuses it.
+            let period_size = u32::try_from(raw.periodSize).unwrap_or(u32::MAX);
+            cpu::check_period_size(period_size)?;
         }
         Ok(())
     }
