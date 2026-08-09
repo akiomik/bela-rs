@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Changed
 
+- Breaking: `bela-sys` enum constants now use the names from Bela's C
+  headers, such as `BelaHw_GemStereo`, instead of repeating the enum
+  name as in `BelaHw_BelaHw_GemStereo`.
 - Breaking: `AuxiliaryTask::new` now takes `Priority` instead of an
   `i32`, so values outside Bela's 0-to-99 range cannot reach
   `Bela_createAuxiliaryTask`. `Priority::AUDIO` replaces
