@@ -86,6 +86,64 @@ pub enum Error {
     /// A command-line argument contained a NUL byte, which a C string
     /// cannot carry.
     CommandLineNul,
+    /// The settings resolved to an audio sample rate of zero, which
+    /// libbela reports as a codec that is not enabled.
+    ///
+    /// Zero is the only rate refused here, which is why this carries
+    /// nothing: `--sample-rate` reads its value with `atof`, so
+    /// anything that is not a number arrives as 0, and a negative rate
+    /// is clamped to the same 0 by the parser. The message libbela
+    /// prints for it — `Error: audio sampling rate is 0. Is the codec
+    /// enabled?`, followed by one about a cape — describes hardware for
+    /// a number the command line supplied.
+    ///
+    /// One of the checks [`Bela::new_with_args`](crate::Bela::new_with_args)
+    /// makes before `Bela_initAudio`, where this would otherwise be an
+    /// [`Init`](Self::Init) that costs the process every later audio
+    /// system.
+    SampleRate,
+    /// The settings named a PRU other than 0 or 1, which are the two
+    /// libbela can run the audio code on.
+    ///
+    /// Checked before `Bela_initAudio`, which refuses the same values
+    /// and leaves the process unable to build another audio system.
+    PruNumber(i32),
+    /// The settings asked for a number of multiplexer channels libbela
+    /// does not take: it accepts 0, which is off, and 2, 4 or 8.
+    ///
+    /// Checked before `Bela_initAudio`; see
+    /// [`Bela::new_with_args`](crate::Bela::new_with_args) for what the
+    /// crate does and does not check about `--mux-channels`.
+    MultiplexerChannels(i32),
+    /// The multiplexer was asked for while the audio code was pointed
+    /// at a PRU other than 1, carried here.
+    ///
+    /// PRU 0 is a valid setting on its own; only the multiplexer needs
+    /// PRU 1, which is why the two are separate errors.
+    MultiplexerPru(i32),
+    /// The multiplexer was asked for with the analog inputs disabled.
+    ///
+    /// This is the combination that gets past every check libbela makes
+    /// on the ARM side and dies in the PRU firmware instead — `Invalid
+    /// PRU configuration settings`, `PRU timeout`, `McASP error,
+    /// abort`, with the process ending from inside libbela and nothing
+    /// returned to the caller. Refusing it beforehand is the only place
+    /// it can be reported at all.
+    MultiplexerWithoutAnalog,
+    /// The multiplexer was asked for with a number of analog input
+    /// channels other than the 8 it needs, carried here.
+    ///
+    /// `--analog-channels` snaps what it is given to 8, 4 or 2, so this
+    /// reports the number the settings resolved to rather than the one
+    /// that was written on the command line. It is not only about
+    /// asking for too few:
+    /// [`Settings::num_analog_in_channels`](crate::Settings::num_analog_in_channels)
+    /// is passed on as it stands, and 16 is as much a refusal as 4.
+    ///
+    /// Checked before `Bela_initAudio`, which refuses the same thing in
+    /// `PRU::initialise` and leaves the process unable to build another
+    /// audio system.
+    MultiplexerAnalogChannels(i32),
     /// `Bela_setLineOutLevel` failed with the contained return code,
     /// e.g. for a channel the codec does not have.
     LineOutLevel(i32),
@@ -164,6 +222,11 @@ pub enum Error {
 }
 
 impl fmt::Display for Error {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per variant, which is what makes a new variant fail to compile until \
+                  it has a message; splitting the match would need a catch-all and lose that"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Init(code) => write!(f, "Bela_initAudio failed with code {code}"),
@@ -211,6 +274,31 @@ impl fmt::Display for Error {
             Self::CommandLineNul => {
                 write!(f, "a command-line argument contains a NUL byte")
             }
+            Self::SampleRate => write!(
+                f,
+                "the audio sample rate is 0, which libbela reports as a codec that is not enabled"
+            ),
+            Self::PruNumber(number) => {
+                write!(f, "the audio code runs on PRU 0 or PRU 1, not PRU {number}")
+            }
+            Self::MultiplexerChannels(channels) => write!(
+                f,
+                "{channels} is not a number of multiplexer channels; \
+                 the options are 0 for off, 2, 4 and 8"
+            ),
+            Self::MultiplexerPru(number) => write!(
+                f,
+                "the multiplexer runs on PRU 1, and the audio code was pointed at PRU {number}"
+            ),
+            Self::MultiplexerWithoutAnalog => write!(
+                f,
+                "the multiplexer needs the analog inputs, which are disabled; \
+                 libbela checks neither and the PRU firmware ends the process"
+            ),
+            Self::MultiplexerAnalogChannels(channels) => write!(
+                f,
+                "the multiplexer needs 8 analog input channels, not {channels}"
+            ),
             Self::LineOutLevel(code) => {
                 write!(f, "Bela_setLineOutLevel failed with code {code}")
             }

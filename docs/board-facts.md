@@ -755,6 +755,26 @@ caller different things.
   accessory. `--stop-button-pin 9999` prints
   `Gpio::getBankAddress(): requested module 62 out of range` and runs
   on without a working stop button.
+- **The table above says where *libbela* catches a case, not where a
+  program built on this crate does.** Re-run on 2026-08-09 with the six
+  pre-init checks in place, and each of the eight cases they cover now
+  ends as an error returned from `run_with_args` before
+  `Bela_initAudio` is called. Seven of them come out of that call —
+  `-r abc`, `-r -5`, `--pru-number 5`, `-X 1`, `-X 3`, `-X 8 -C 4` and
+  `--pru-number 0 -X 8`, whose failure there costs the process every
+  later audio system rather than only the attempt — and one, `-X 8 -N
+  0`, comes out of the column that has no error in it at all, since
+  libbela's multiplexer rules sit behind an `if` that analog being off
+  skips and the PRU firmware is what gives up. `-X 3`, `-X 8 -C 4` and
+  `--pru-number 0 -X 8` are new cases in the probe, added along with
+  the checks; where libbela catches them is what #84 recorded from the
+  Capelet measurements above.
+
+  Nothing else moved, which is the other half of the answer: `-X 8` on
+  its own still comes up and runs, `-C 0` still gives two analog
+  inputs, `--nonsense` is still caught by the parse, and `-p 3` still
+  reaches `setup` and then dies in the PRU, because there is no check
+  anyone can write for it.
 
 ## Operations
 

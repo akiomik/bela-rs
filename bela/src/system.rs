@@ -61,6 +61,16 @@ impl<T: BelaApplication> Bela<T> {
     /// when [`Settings::cpu_monitoring`] asks for something that cannot
     /// be served.
     ///
+    /// Before any of that it returns [`Error::SampleRate`],
+    /// [`Error::PruNumber`] or one of the four
+    /// `Error::Multiplexer…` variants for a resolved configuration
+    /// libbela would refuse inside `Bela_initAudio`, or not refuse at
+    /// all and leave to the PRU firmware. These are as reachable from
+    /// here as from [`new_with_args`](Bela::new_with_args), because the
+    /// board's own `CL=` line in `~/.bela/belaconfig` goes through
+    /// Bela's parser inside `Bela_defaultSettings`; the checks are
+    /// listed there.
+    ///
     /// # A failed initialisation is fatal to the process
     ///
     /// [`Error::Init`] means `Bela_initAudio` failed partway through,
@@ -121,6 +131,96 @@ impl<T: BelaApplication> Bela<T> {
     /// standard options, is missing its value or is otherwise rejected,
     /// and [`Error::CommandLineNul`] when an argument contains a NUL
     /// byte.
+    ///
+    /// # What is checked before the audio system is built
+    ///
+    /// Six combinations are refused once the defaults, `settings` and
+    /// the command line have all been applied, and before
+    /// `Bela_initAudio` is called:
+    ///
+    /// | resolved settings | error |
+    /// |---|---|
+    /// | a sample rate of 0, which is what `--sample-rate` gives for anything `atof` cannot read and what a negative rate is clamped to | [`Error::SampleRate`] |
+    /// | `--pru-number` other than 0 or 1 | [`Error::PruNumber`] |
+    /// | `--mux-channels` other than 0, 2, 4 or 8 | [`Error::MultiplexerChannels`] |
+    /// | `--mux-channels` with `--pru-number 0` | [`Error::MultiplexerPru`] |
+    /// | `--mux-channels` with `--use-analog 0` | [`Error::MultiplexerWithoutAnalog`] |
+    /// | `--mux-channels` with a number of analog input channels other than 8 | [`Error::MultiplexerAnalogChannels`] |
+    ///
+    /// None of them is a working configuration that has been taken
+    /// away. Each was measured on a Gem Stereo failing in a place that
+    /// costs the caller more than an error does.
+    ///
+    /// Five of the six fail inside `Bela_initAudio` — the sample rate
+    /// in `Bela_getHwConfigPrivate`, the two PRU rules in `RTAudio.cpp`'s
+    /// initial sanity checks, and the multiplexer channel and analog
+    /// input counts in `PRU::initialise` — and what that costs is not
+    /// the attempt but the process: no audio system can be built after
+    /// it, as [`new`](Bela::new) describes.
+    ///
+    /// The sixth, the multiplexer with the analog inputs off, is the
+    /// one libbela does not check at all: its count rules sit behind an
+    /// `if` that analog being off skips, so the settings reach the PRU
+    /// firmware, which gives up — `Invalid PRU configuration settings`,
+    /// `PRU timeout`, `McASP error, abort` — and ends the process from
+    /// inside libbela with nothing returned to anyone.
+    ///
+    /// # What is passed through
+    ///
+    /// Everything else the C runtime accepts, including the options
+    /// this crate has no other way of asking for.
+    ///
+    /// `--mux-channels 2`, `4` and `8` are among them: a Gem brings the
+    /// multiplexer up and the PRU fills the demultiplexed buffer, and
+    /// no accessor here reaches it — `multiplexerAnalogRead` and
+    /// `multiplexerChannelForFrame` are left out on purpose, because
+    /// the Capelet cannot be attached to the board this crate is
+    /// measured against. So the option takes effect and its readings
+    /// stay out of reach. That is a gap in what this crate offers
+    /// rather than a reason to refuse the flag.
+    ///
+    /// libbela also reshapes several values rather than refusing them,
+    /// and this crate does not copy those rules — a copy would drift
+    /// from the library it describes:
+    ///
+    /// - `--analog-channels` snaps to 8, 4 or 2. `-C 0` and `-C 3` both
+    ///   give **2** analog inputs, not none and not three; `--use-analog 0`
+    ///   is how to have none.
+    /// - `--digital-channels` clamps to 16, and 0 turns the digital
+    ///   channels off altogether.
+    /// - `--board` naming hardware that is not there is ignored, an
+    ///   unrecognised name included.
+    /// - `--stop-button-pin` out of range runs on without a working
+    ///   stop button, and `--codec-mode`, `--disabled-digital-channels`
+    ///   and the audio expander options are accepted and do nothing
+    ///   visible on a Gem.
+    ///
+    /// Two period sizes have no check either, in neither direction: a
+    /// Gem Stereo with its eight analog inputs cannot keep up with
+    /// `--period 1` or `--period 3` and dies in the PRU as above, while
+    /// 2 and everything from 4 up run — and both failures move as soon
+    /// as the analog configuration does, so there is no floor a check
+    /// could hold. At the other end, a period of 256 frames or more
+    /// leaves the digital pins dead while everything reports success;
+    /// see [`Settings::period_size`].
+    ///
+    /// # A malformed `--json-string` ends the process
+    ///
+    /// `--json-string {` throws an uncaught `nlohmann::json` exception
+    /// and the process ends on `SIGABRT`. It happens inside the parse —
+    /// `Bela_getopt_long`, which this method calls — and so before
+    /// `Bela_initAudio` and before the checks above. There is nothing
+    /// to return and nothing to catch: the call this crate made does
+    /// not come back.
+    ///
+    /// Refusing the option here would not close that path and would
+    /// take away valid JSON, which works: `Bela_defaultSettings` runs
+    /// the board's own `CL=` line from `~/.bela/belaconfig` through the
+    /// same parser, so the same abort is reachable from
+    /// [`new`](Bela::new), which looks at no arguments at all.
+    /// The neighbouring option is better behaved — `--json-file`
+    /// naming a missing file warns and carries on with the settings it
+    /// already had.
     ///
     /// [example]: https://github.com/akiomik/bela-rs/blob/main/bela/examples/command_line.rs
     pub fn new_with_args<I, S>(application: T, settings: &Settings, args: I) -> Result<Self, Error>
@@ -221,6 +321,11 @@ impl<T: BelaApplication> Bela<T> {
 
     /// Checks the resolved settings against what this crate can serve.
     fn check_supported(raw: &BelaInitSettings, monitoring: Option<c_int>) -> Result<(), Error> {
+        // First, because these are the settings that cost the process
+        // rather than the attempt: they fail inside `Bela_initAudio`,
+        // or after it in the PRU firmware, and neither leaves anything
+        // to report with.
+        settings::check_resolved(raw)?;
         if monitoring.is_some() {
             // Needs the resolved period size: unset in `Settings` means
             // Bela's default, not "no period size".
@@ -356,8 +461,10 @@ impl<T: BelaApplication> Bela<T> {
     /// Runs like [`run`](Bela::run), with Bela's standard command-line
     /// options applied on top of `settings`.
     ///
-    /// See [`new_with_args`](Bela::new_with_args) for what they are and
-    /// where they sit.
+    /// See [`new_with_args`](Bela::new_with_args) for what they are,
+    /// where they sit, which of them are checked before the audio
+    /// system is built and which are passed on to libbela as they
+    /// stand.
     ///
     /// # Errors
     /// The errors of [`new_with_args`](Bela::new_with_args), plus the
