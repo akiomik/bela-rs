@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/akiomik/bela-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/akiomik/bela-rs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/akiomik/bela-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/akiomik/bela-rs)
-![Crates.io Version](https://img.shields.io/crates/v/bela-sys?label=bela-sys)
-![Crates.io Version](https://img.shields.io/crates/v/bela?label=bela)
+[![Crates.io Version](https://img.shields.io/crates/v/bela-sys?label=bela-sys)](https://crates.io/crates/bela-sys)
+[![Crates.io Version](https://img.shields.io/crates/v/bela?label=bela)
+](https://crates.io/crates/bela)
 
 Rust bindings for the [Bela](https://bela.io) core API, targeting
 **Bela Gem** on PocketBeagle 2 (`aarch64-unknown-linux-gnu`).
