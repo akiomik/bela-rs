@@ -188,6 +188,7 @@ Captured from a verbose on-board build:
   | 64            | 1             | 64                 | 64                 |
   | 128           | 1             | 128                | 128                |
   | 256           | 2             | 128                | 256                |
+  | 320           | 2             | 160                | 320                |
 
   So the split starts above 128 frames on this board, i.e. the divisor
   is 128 — the same one upstream `fb362a5` uses for `BelaHw_Bela`,
@@ -471,12 +472,13 @@ measurement rather than an estimate.
 
 ## What a digital pin does
 
-Collected 2026-08-09 with `bela/examples/io_digital`, wired as a
-loopback — `D0` driving `D1` through 1 kΩ — with an LED on `D2` for the
-things a printed number cannot settle. The probe toggles the output
-every eight blocks at a frame in the middle of the block and scans every
-frame of the input for the edge, so the write-to-read distance comes out
-in digital frames rather than in blocks.
+Collected 2026-08-09 and rechecked 2026-08-11 with
+`bela/examples/io_digital`, wired as a loopback — `D0` driving `D1`
+through 1 kΩ — with an LED on `D2` for the things a printed number
+cannot settle. The probe toggles the output every eight blocks at a
+frame in the middle of the block and scans every frame of the input for
+the edge, so the write-to-read distance comes out in digital frames
+rather than in blocks.
 
 - **Every channel starts as an input.** The digital word of the first
   block, before this crate has said anything to it, is `0x0000ffff`:
@@ -507,16 +509,33 @@ in digital frames rather than in blocks.
   written at frame *f* of block *n* is readable at frame *f*+1 of block
   *n*+2. The 128-frame boundary where libbela moves `render` behind a
   context FIFO does not appear in it.
-- **Digital I/O stops working entirely at a period of 256 frames or
-  more, and nothing says so.** At 256 and at 320 not one edge arrived,
-  and the LED on `D2` did not blink either, so it is the whole
-  transfer and not one direction of it. `Bela_initAudio` succeeds, the
-  audio runs, and no warning is printed. The reason is in `PRU.cpp`,
-  where the PRU's shared-memory digital buffer is declared as
-  `PRU_MEM_DIGITAL_BUFFER1_OFFSET 0x400` — "256 words … 256 is the
-  maximum number of frames allowed" — and nothing checks `digitalFrames`
-  against it. The comment's 256 is optimistic by one: 255 is the
-  largest period at which digital I/O was seen to work.
+- **The context FIFO loses one-time digital-output persistence.** At
+  256 and 320 frames, the ordinary probe — which configures directions
+  once and writes only every eighth application block — produced no
+  loopback edges and did not blink the LED, while `Bela_initAudio` and
+  audio still ran without a warning. At 255 it continued to produce one
+  edge per write. The loopback does not separately establish that input
+  sampling failed: its input is driven by the output that already did.
+- **Re-applying directions and current values in every application
+  block restores that output path.** `io_digital --repeat` calls
+  `pin_mode` for all three probe pins and writes both current output
+  values from frame 0 on every application block; a scheduled toggle
+  remains at frame 4. It preserves the 255-frame result and restores
+  one loopback edge per scheduled write at the FIFO periods:
+
+  | period | ordinary probe | `--repeat` | `--repeat` latency |
+  |---:|---|---|---:|
+  | 255 | one edge per write | one edge per write | 511 frames |
+  | 256 | no edges | one edge per write | 641 frames |
+  | 320 | no edges | one edge per write | 801 frames |
+
+  Every run in the table had zero misses and zero unexpected edges.
+  The FIFO rows add one core block to the ordinary `2 * period + 1`
+  latency — 128 frames at period 256 and 160 at 320. This identifies
+  where output persistence is applied as the cause of the observed
+  failure, not the PRU's 256-word digital buffer. It does not rule out
+  the splitter's separate `uint32_t`-through-`float*` representation
+  concern; that needs a bit-exact FIFO test.
 - **A program leaves its digital outputs driving after it exits, and
   the next program to start clears them.** The LED stayed lit after a
   run that ended with `D2` high — teardown does not return the pin to

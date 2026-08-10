@@ -116,6 +116,22 @@
 //! ./io_digital --split --threads 2 --period 128
 //! ```
 //!
+//! # The FIFO persistence workaround
+//!
+//! `--repeat` re-applies all three directions and both output values in
+//! every application block. It is the workaround proposed for
+//! BelaPlatform/Bela#604, and is deliberately a probe mode rather than
+//! the normal way this example runs: without a context FIFO, setting a
+//! direction once and writing only when the value changes is documented
+//! to work. Compare it with the default mode at periods 255, 256, and
+//! 320. If it restores the large-period runs, the failure is the FIFO
+//! persistence placement; it does not establish anything about the
+//! FIFO's representation of digital words.
+//!
+//! ```sh
+//! ./io_digital --repeat --period 256
+//! ```
+//!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
@@ -184,6 +200,10 @@ struct Loopback {
     /// thread, rather than toggled from `render_pre`. See
     /// [the split mode](self#the-split-mode) above.
     split: bool,
+
+    /// Re-apply the directions and current outputs in every application
+    /// block. See [the FIFO persistence workaround](self#the-fifo-persistence-workaround).
+    repeat: bool,
 
     /// Whether the pin directions have been set. Done from the first
     /// block rather than from `setup` so that the word can be reported
@@ -329,9 +349,10 @@ impl fmt::Write for List {
 }
 
 impl Loopback {
-    const fn new(split: bool) -> Self {
+    const fn new(split: bool, repeat: bool) -> Self {
         Self {
             split,
+            repeat,
             configured: false,
             frame_clock: 0,
             write_at: 0,
@@ -490,6 +511,14 @@ impl Loopback {
         self.led = !self.led;
         context.digital_write(0, LED_CHANNEL, self.led);
     }
+
+    /// Makes the probe's three channels have their intended directions
+    /// for the whole application block.
+    fn configure(context: &mut BlockContext) {
+        context.pin_mode(0, OUT_CHANNEL, PinMode::Output);
+        context.pin_mode(0, IN_CHANNEL, PinMode::Input);
+        context.pin_mode(0, LED_CHANNEL, PinMode::Output);
+    }
 }
 
 impl BelaApplication for Loopback {
@@ -543,12 +572,12 @@ impl BelaApplication for Loopback {
             // where "every pin starts as an input" is either true or
             // not.
             rt_println!("digital: initial-word=0x{:08x}", context.digital()[0]);
-            context.pin_mode(0, OUT_CHANNEL, PinMode::Output);
-            context.pin_mode(0, IN_CHANNEL, PinMode::Input);
-            context.pin_mode(0, LED_CHANNEL, PinMode::Output);
+            Self::configure(context);
             rt_println!("digital: after-pin-mode=0x{:08x}", context.digital()[0]);
             self.last_seen = context.digital_read(0, IN_CHANNEL);
             self.configured = true;
+        } else if self.repeat {
+            Self::configure(context);
         }
 
         // Read before writing. The input frames in this block were
@@ -581,6 +610,15 @@ impl BelaApplication for Loopback {
         }
 
         self.blocks_since_write += 1;
+        if !self.split && self.repeat {
+            // The workaround has to establish the current value from
+            // the first frame of every application block. Re-applying
+            // it from `write_frame` would leave the first few frames
+            // holding whatever the FIFO returned last time, which is
+            // itself an extra edge in this loopback probe.
+            context.digital_write(0, OUT_CHANNEL, self.level);
+            context.digital_write(0, LED_CHANNEL, self.led);
+        }
         // In the split mode the output belongs to `render`, and a write
         // from here would be writing over every thread's share of it.
         if !self.split && self.blocks_since_write >= WRITE_PERIOD_BLOCKS {
@@ -595,14 +633,18 @@ impl BelaApplication for Loopback {
                 self.misses += 1;
             }
             self.level = !self.level;
+            self.write_at = self.frame_clock + write_frame as u64;
+            self.awaiting = true;
+            self.blocks_since_write = 0;
+            // In workaround mode the first frame was already set to the
+            // old level above. This keeps the timed transition at
+            // `write_frame`; without the workaround this is the only
+            // output write of the block.
             context.digital_write(write_frame, OUT_CHANNEL, self.level);
             // Read back the channel just written. `digital_write` sets
             // the value bit and `digital_read` reads it, so this says
             // what the buffer holds rather than what the pin is doing.
             self.out_readback = context.digital_read(write_frame, OUT_CHANNEL);
-            self.write_at = self.frame_clock + write_frame as u64;
-            self.awaiting = true;
-            self.blocks_since_write = 0;
         }
 
         self.frame_clock += frames as u64;
@@ -641,7 +683,7 @@ fn main() -> ExitCode {
     use std::env::args_os;
     use std::ffi::OsString;
 
-    // `--split` and `--threads` are this probe's own, and Bela's option
+    // `--split`, `--repeat`, and `--threads` are this probe's own, and Bela's option
     // parser treats anything it does not know as an error, so they are
     // taken out before the rest of the arguments go on.
     // `examples/command_line` is the worked example of the pattern.
@@ -649,6 +691,7 @@ fn main() -> ExitCode {
     // The thread count has to be one of ours: libbela's option list has
     // no spelling for it, so the only way in is `Settings`.
     let mut split = false;
+    let mut repeat = false;
     let mut threads: Option<NonZeroU32> = None;
     let mut want_threads = false;
     let mut args: Vec<OsString> = Vec::new();
@@ -664,6 +707,7 @@ fn main() -> ExitCode {
         }
         match argument.to_str() {
             Some("--split") => split = true,
+            Some("--repeat") => repeat = true,
             Some("--threads") => want_threads = true,
             _ => args.push(argument),
         }
@@ -677,12 +721,16 @@ fn main() -> ExitCode {
         eprintln!("--threads wants a non-zero number");
         return ExitCode::FAILURE;
     }
+    if split && repeat {
+        eprintln!("--repeat cannot be combined with --split");
+        return ExitCode::FAILURE;
+    }
 
     let mut settings = bela::Settings::new();
     if let Some(threads) = threads {
         settings = settings.thread_count(threads);
     }
-    match bela::Bela::run_with_args(Loopback::new(split), &settings, args) {
+    match bela::Bela::run_with_args(Loopback::new(split, repeat), &settings, args) {
         Ok(()) => ExitCode::SUCCESS,
         // The `Display` form says what went wrong; returning the error
         // from `main` would print its `Debug` one.
