@@ -41,7 +41,7 @@ jobs:
       # can reach. Measuring it would report the coverage of the library
       # as lower without saying anything about the library.
       - run: cargo llvm-cov --workspace --exclude xtask --lcov --output-path lcov.info
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
