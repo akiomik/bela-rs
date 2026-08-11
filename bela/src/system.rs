@@ -201,7 +201,10 @@ impl<T: BelaApplication> Bela<T> {
     /// 2 and everything from 4 up run — and both failures move as soon
     /// as the analog configuration does, so there is no floor a check
     /// could hold. At the other end, a period of 256 frames or more
-    /// leaves the digital pins dead while everything reports success;
+    /// moves the callback behind libbela's context FIFO: a digital
+    /// direction and value set only once then fail to persist at the
+    /// physical pin while everything reports success. Re-applying both
+    /// in every application block restores the measured output loopback;
     /// see [`Settings::period_size`].
     ///
     /// # A malformed `--json-string` ends the process

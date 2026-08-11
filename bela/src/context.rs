@@ -327,12 +327,14 @@ pub struct CleanupContext(BelaContext);
 /// [`digital_write`](BlockContext::digital_write) (writing from `frame`
 /// to the end of the block) is unchanged.
 ///
-/// The digital pins do not work at all at a period of 256 frames or
-/// more, whether the period came from
-/// [`period_size`](crate::Settings::period_size) or from the command
-/// line: nothing written reaches a pin and nothing driven into one is
-/// read, with no error anywhere. See
-/// [#89](https://github.com/akiomik/bela-rs/issues/89).
+/// On a Bela Gem Stereo, a period of 256 frames or more moves the
+/// application callback behind libbela's context FIFO. A digital output
+/// configured once and written only when its value changes then stops
+/// reaching the pin, whether the period came from
+/// [`period_size`](crate::Settings::period_size) or the command line.
+/// Re-applying its direction and current value in every application
+/// block restores the output loopback, but input sampling has not been
+/// tested independently. See [#89](https://github.com/akiomik/bela-rs/issues/89).
 ///
 /// Measured on the board; see `docs/board-facts.md`.
 ///
@@ -639,14 +641,20 @@ impl BlockContext {
     /// Sets the digital output `channel` from `frame` to the end of
     /// the block (`digitalWrite`).
     ///
-    /// The value persists into later blocks until something writes the
-    /// channel again — and past the end of the program: stopping the
-    /// audio system does not return the pin to an input, so a pin left
-    /// high stays high until the next audio system starts and opens
-    /// every channel as an input again. Ending a program is therefore
-    /// not a way of reaching a safe state on whatever the pin drives.
-    /// Measured on a Gem Stereo; see "What a digital pin does" in
-    /// `docs/board-facts.md`.
+    /// On a Gem Stereo outside its context-FIFO condition, the value
+    /// persists into later blocks until something writes the channel
+    /// again — and past the end of the program: stopping the audio
+    /// system does not return the pin to an input, so a pin left high
+    /// stays high until the next audio system starts and opens every
+    /// channel as an input again. Ending a program is therefore not a
+    /// way of reaching a safe state on whatever the pin drives.
+    ///
+    /// At periods of 256 frames or more, the FIFO lets a direction and
+    /// value set only once fail to reach the physical pin in a later
+    /// application block. Re-apply both `pin_mode` and `digital_write`
+    /// in every application block for an output that must remain driven.
+    /// The output-loopback workaround, not independent input sampling,
+    /// is what has been measured; see [#89](https://github.com/akiomik/bela-rs/issues/89).
     ///
     /// # Panics
     /// If `channel` is out of range.
@@ -671,10 +679,14 @@ impl BlockContext {
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of the block (`pinMode`).
     ///
-    /// The direction outlives the program the way the value does — see
+    /// Outside the Gem Stereo context-FIFO condition, the direction
+    /// outlives the program the way the value does — see
     /// [`digital_write`](BlockContext::digital_write) — so a channel
     /// left an output goes on driving after the audio system stops.
-    /// Every channel is an input again once the next one starts.
+    /// Every channel is an input again once the next one starts. At
+    /// periods of 256 frames or more, set the direction again in every
+    /// application block alongside [`digital_write`](BlockContext::digital_write)
+    /// for an output that must remain driven; see [#89](https://github.com/akiomik/bela-rs/issues/89).
     ///
     /// # Panics
     /// If `channel` is out of range.
@@ -945,8 +957,12 @@ impl RenderContext {
     /// Stops at the end of the range for the same reason
     /// [`analog_write`](RenderContext::analog_write) does.
     ///
-    /// The value outlives the block and the program alike, as for
-    /// [`BlockContext::digital_write`].
+    /// Outside the Gem Stereo context-FIFO condition, the value
+    /// outlives the block and the program alike, as for
+    /// [`BlockContext::digital_write`]. At periods of 256 frames or
+    /// more, one-time direction and value writes do not establish
+    /// persistence at the physical pin; see that method for the
+    /// required per-application-block writes and [#89](https://github.com/akiomik/bela-rs/issues/89).
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside
@@ -977,8 +993,12 @@ impl RenderContext {
     /// Sets the direction of digital `channel` from `frame` to the end
     /// of **this thread's range** (`pinMode`).
     ///
-    /// The direction outlives the block and the program alike, as for
-    /// [`BlockContext::pin_mode`].
+    /// Outside the Gem Stereo context-FIFO condition, the direction
+    /// outlives the block and the program alike, as for
+    /// [`BlockContext::pin_mode`]. At periods of 256 frames or more,
+    /// one-time direction and value writes do not establish persistence
+    /// at the physical pin; see that method and
+    /// [`BlockContext::digital_write`].
     ///
     /// # Panics
     /// If `channel` is out of range, or `frame` is outside

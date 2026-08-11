@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `examples/io_digital --repeat`, a diagnostic mode for the libbela
+  context-FIFO persistence problem. It reapplies the input/output
+  directions and the current output values in every application block,
+  so a board run can distinguish the upstream workaround from the
+  normal documented persistence behaviour.
+
 ## [0.5.0] - 2026-08-10
 
 ### Changed
