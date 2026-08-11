@@ -516,6 +516,33 @@ rather than in blocks.
   audio still ran without a warning. At 255 it continued to produce one
   edge per write. The loopback does not separately establish that input
   sampling failed: its input is driven by the output that already did.
+- **An independently driven input still reaches `D1` at the FIFO
+  periods.** With the `D0`--`D1` loopback removed, Gem Stereo `P2.4`
+  (`GPIO0_46`, the red `RUN` indicator output) drove `D1` through 1 kΩ
+  once a second from Linux's `gpiod` line 46. `io_digital --input-only`
+  leaves `D0` alone, keeps `D1` as an input and reports each observed
+  input edge. At periods 255, 256 and 320, each of thirteen consecutive
+  one-second windows contained exactly one edge, and the sampled level
+  alternated high and low. The edge frames varied across the block, as
+  expected from an unsynchronised Linux source. This rules out complete
+  loss of the measured `D1` input path at 256 and 320; it does not
+  generalise to every pin or establish bit-exact FIFO transport. The
+  run prints `gpio/direction: No such file or directory` only while
+  `gpiod` owns `P2.4`; the same input-only run without that owner does
+  not. It is the deliberate ownership conflict on the `RUN` indicator
+  source, not a `D1` read failure, so this pin is a test source rather
+  than one for concurrent normal operation.
+- **The deployed FIFO preserved the tested 32-bit digital words exactly.**
+  A standalone harness linked directly to the board's `libbela.so` and
+  drove `BelaContextFifo` short-to-long-to-short. It compared the
+  returned `digital` buffers with `memcmp`, rather than the upstream
+  self-test's `assert`s, which the production `-DNDEBUG` build removes.
+  Every context contained zero, all ones, separate low and high halves,
+  signed zero, infinities, quiet and signalling NaNs, and arbitrary
+  words including `0xdeadbeef`; it passed at 16, 255, 256 and 320
+  digital frames under the board's `-O3 -ffast-math` build. This is
+  evidence for this deployed compiler and library, not a language-level
+  justification for the splitter's `uint32_t`-through-`float*` cast.
 - **Re-applying directions and current values in every application
   block restores that output path.** `io_digital --repeat` calls
   `pin_mode` for all three probe pins and writes both current output

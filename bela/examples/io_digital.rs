@@ -132,6 +132,20 @@
 //! ./io_digital --repeat --period 256
 //! ```
 //!
+//! # The external-input mode
+//!
+//! `--input-only` leaves `D0` untouched and watches `D1` for changes.
+//! It is for separating the input path from the output persistence
+//! experiment: on a Gem Stereo, remove the `D0`--`D1` loopback and
+//! connect a separately controlled 3.3 V source to `D1` through 1 kΩ.
+//! The report counts every input edge and lists the distinct frames
+//! where one landed; because the source is not synchronised with audio,
+//! the frame positions are observations rather than a latency measurement.
+//!
+//! ```sh
+//! ./io_digital --input-only --period 256
+//! ```
+//!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
@@ -196,6 +210,10 @@ const MAX_EDGE_FRAMES: usize = 16;
     reason = "each one is an independent one-bit fact about the loopback, and grouping them into a state enum would only hide which are true together"
 )]
 struct Loopback {
+    /// Watch the input without configuring or writing the loopback
+    /// output. See [the external-input mode](self#the-external-input-mode).
+    input_only: bool,
+
     /// Whether the output is driven from `render`, one value per render
     /// thread, rather than toggled from `render_pre`. See
     /// [the split mode](self#the-split-mode) above.
@@ -238,12 +256,11 @@ struct Loopback {
     /// write.
     out_readback: bool,
 
-    /// Every distinct frame an edge landed on, in the split mode. The
-    /// whole point of that mode: the frame an edge appears at is what
-    /// says where one thread's share of the block ended, and with more
-    /// than two threads there is a position per boundary rather than
-    /// one. Kept as the set of positions and not as a range, so that
-    /// what is written down is what was seen.
+    /// Every distinct frame an edge landed on, in the split and
+    /// input-only modes. The former uses it to show where one thread's
+    /// share of the block ended; the latter records an unsynchronised
+    /// input observation. Kept as the set of positions and not as a
+    /// range, so that what is written down is what was seen.
     ///
     /// Fixed capacity, because this is filled from the audio thread. A
     /// window that finds more positions than fit ends its list with a
@@ -349,8 +366,9 @@ impl fmt::Write for List {
 }
 
 impl Loopback {
-    const fn new(split: bool, repeat: bool) -> Self {
+    const fn new(input_only: bool, split: bool, repeat: bool) -> Self {
         Self {
+            input_only,
             split,
             repeat,
             configured: false,
@@ -408,6 +426,25 @@ impl Loopback {
 
     /// One window's findings, then the LED changes state.
     fn report(&mut self, context: &mut BlockContext) {
+        if self.input_only {
+            let mut positions = List::new();
+            for index in 0..self.edge_frame_count {
+                positions.push(self.edge_frames[index]);
+            }
+            if self.edge_frames_overflowed {
+                positions.mark_truncated();
+            }
+            rt_println!(
+                "digital: input edges:{} in-now:{} edge-frames:{}{}",
+                self.edges,
+                self.last_seen,
+                positions.as_str(),
+                positions.suffix()
+            );
+            self.blink(context);
+            self.reset();
+            return;
+        }
         if self.split {
             self.report_split(context);
             self.reset();
@@ -512,10 +549,12 @@ impl Loopback {
         context.digital_write(0, LED_CHANNEL, self.led);
     }
 
-    /// Makes the probe's three channels have their intended directions
-    /// for the whole application block.
-    fn configure(context: &mut BlockContext) {
-        context.pin_mode(0, OUT_CHANNEL, PinMode::Output);
+    /// Makes the channels used by this mode have their intended
+    /// directions for the whole application block.
+    fn configure(context: &mut BlockContext, input_only: bool) {
+        if !input_only {
+            context.pin_mode(0, OUT_CHANNEL, PinMode::Output);
+        }
         context.pin_mode(0, IN_CHANNEL, PinMode::Input);
         context.pin_mode(0, LED_CHANNEL, PinMode::Output);
     }
@@ -572,12 +611,12 @@ impl BelaApplication for Loopback {
             // where "every pin starts as an input" is either true or
             // not.
             rt_println!("digital: initial-word=0x{:08x}", context.digital()[0]);
-            Self::configure(context);
+            Self::configure(context, self.input_only);
             rt_println!("digital: after-pin-mode=0x{:08x}", context.digital()[0]);
             self.last_seen = context.digital_read(0, IN_CHANNEL);
             self.configured = true;
         } else if self.repeat {
-            Self::configure(context);
+            Self::configure(context, self.input_only);
         }
 
         // Read before writing. The input frames in this block were
@@ -591,7 +630,7 @@ impl BelaApplication for Loopback {
                 continue;
             }
             self.last_seen = value;
-            if self.split {
+            if self.input_only || self.split {
                 // Where the edge is, not how long it took: the frame it
                 // lands on is what says where a thread's share ended.
                 self.record_edge_frame(frame);
@@ -609,8 +648,10 @@ impl BelaApplication for Loopback {
             }
         }
 
-        self.blocks_since_write += 1;
-        if !self.split && self.repeat {
+        if !self.input_only {
+            self.blocks_since_write += 1;
+        }
+        if !self.input_only && !self.split && self.repeat {
             // The workaround has to establish the current value from
             // the first frame of every application block. Re-applying
             // it from `write_frame` would leave the first few frames
@@ -621,7 +662,7 @@ impl BelaApplication for Loopback {
         }
         // In the split mode the output belongs to `render`, and a write
         // from here would be writing over every thread's share of it.
-        if !self.split && self.blocks_since_write >= WRITE_PERIOD_BLOCKS {
+        if !self.input_only && !self.split && self.blocks_since_write >= WRITE_PERIOD_BLOCKS {
             if self.awaiting {
                 // The previous write produced no edge in the whole
                 // period it had. Counted, and then forgotten: if its
@@ -683,13 +724,14 @@ fn main() -> ExitCode {
     use std::env::args_os;
     use std::ffi::OsString;
 
-    // `--split`, `--repeat`, and `--threads` are this probe's own, and Bela's option
+    // `--input-only`, `--split`, `--repeat`, and `--threads` are this probe's own, and Bela's option
     // parser treats anything it does not know as an error, so they are
     // taken out before the rest of the arguments go on.
     // `examples/command_line` is the worked example of the pattern.
     //
     // The thread count has to be one of ours: libbela's option list has
     // no spelling for it, so the only way in is `Settings`.
+    let mut input_only = false;
     let mut split = false;
     let mut repeat = false;
     let mut threads: Option<NonZeroU32> = None;
@@ -706,6 +748,7 @@ fn main() -> ExitCode {
             continue;
         }
         match argument.to_str() {
+            Some("--input-only") => input_only = true,
             Some("--split") => split = true,
             Some("--repeat") => repeat = true,
             Some("--threads") => want_threads = true,
@@ -725,12 +768,16 @@ fn main() -> ExitCode {
         eprintln!("--repeat cannot be combined with --split");
         return ExitCode::FAILURE;
     }
+    if input_only && (split || repeat) {
+        eprintln!("--input-only cannot be combined with --split or --repeat");
+        return ExitCode::FAILURE;
+    }
 
     let mut settings = bela::Settings::new();
     if let Some(threads) = threads {
         settings = settings.thread_count(threads);
     }
-    match bela::Bela::run_with_args(Loopback::new(split, repeat), &settings, args) {
+    match bela::Bela::run_with_args(Loopback::new(input_only, split, repeat), &settings, args) {
         Ok(()) => ExitCode::SUCCESS,
         // The `Display` form says what went wrong; returning the error
         // from `main` would print its `Debug` one.
