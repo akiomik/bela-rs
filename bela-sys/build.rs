@@ -8,6 +8,7 @@ use std::{env, fs};
 // `cargo test` builds, so the string work lives in a file both can
 // include. See shim_compiler.rs.
 include!("shim_compiler.rs");
+include!("link_args.rs");
 
 // Library locations captured on the board; see docs/board-facts.md.
 const LIB_DIRS: &[&str] = &[
@@ -83,6 +84,11 @@ fn main() {
     // so relink whatever links it, instead of leaving a binary built by
     // the previous one in place.
     println!("cargo::rerun-if-env-changed=BELA_CC");
+    // Read in build_shim to derive the shim's own compiler from the
+    // linker Cargo resolved, so a `.cargo/config.toml` linker change
+    // rebuilds the shim rather than leaving it built by a mismatched
+    // toolchain.
+    println!("cargo::rerun-if-env-changed=RUSTC_LINKER");
 
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -106,6 +112,38 @@ fn main() {
     build_shim(&sysroot);
     for lib in LIBS {
         println!("cargo::rustc-link-lib=dylib={lib}");
+    }
+    propagate_link_args(&sysroot);
+}
+
+// Publishes the sysroot-specific arguments a device link needs —
+// the same three `scripts/aarch64-bela-linker.sh` adds — as `links`
+// metadata, so a dependent's build script can turn them into
+// `cargo::rustc-link-arg` for its own targets without going through
+// that wrapper. See docs/cross-compile.md.
+//
+// `links` metadata reaches only immediate dependents (`bela`, here),
+// which is why `bela` in turn republishes what it reads under its own
+// `links` name for its dependents to reach; see bela/build.rs.
+fn propagate_link_args(sysroot: &str) {
+    if sysroot.is_empty() {
+        // Native build on the board itself: nothing sysroot-specific
+        // to add, so nothing is published and a dependent applies no
+        // extra link arguments either.
+        return;
+    }
+    let rpath_link = LIB_DIRS
+        .iter()
+        .map(|dir| format!("{sysroot}{dir}"))
+        .collect::<Vec<_>>()
+        .join(":");
+    let args = vec![
+        format!("--sysroot={sysroot}"),
+        format!("-B{sysroot}/usr/lib/aarch64-linux-gnu"),
+        format!("-Wl,-rpath-link={rpath_link}"),
+    ];
+    for (key, value) in encode_link_args(&args) {
+        println!("cargo::metadata={key}={value}");
     }
 }
 
@@ -145,6 +183,7 @@ fn build_shim(sysroot: &str) {
 
     let compiler = match shim_compiler_from(
         &env::var("BELA_CXX").unwrap_or_default(),
+        &env::var("RUSTC_LINKER").unwrap_or_default(),
         &env::var("BELA_CC").unwrap_or_default(),
     ) {
         Ok(compiler) => compiler,

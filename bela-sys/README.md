@@ -109,3 +109,22 @@ library needing it.
 
 On non-device targets it emits nothing, so host builds and `cargo
 check`/`clippy` for the target work without a sysroot.
+
+### Sysroot-specific compiler-driver arguments
+
+A device link also needs `--sysroot`, `-B` and `-Wl,-rpath-link`
+arguments derived from `BELA_SYSROOT` — see
+[docs/cross-compile.md](../docs/cross-compile.md) for what each is for.
+`build.rs` publishes them as `links` metadata (`links = "bela"`) rather
+than adding them to its own link line, because they belong to the
+*final* link — the application's — not to this crate's. `bela`
+(`links = "bela_relay"`) relays them to its own dependents, since
+[`links` metadata reaches only an immediate dependent](https://doc.rust-lang.org/cargo/reference/build-scripts.html#the-links-manifest-key)
+and an application is not one of `bela-sys`'s.
+
+An application does not read this crate's metadata directly — see the
+[`bela` README](../bela/README.md#downstream-setup) for the
+`DEP_BELA_RELAY_LINK_ARGS_*` an application's own `build.rs` reads, and
+[docs/cross-compile.md](../docs/cross-compile.md) for the direct
+`linker =` setting that replaces `scripts/aarch64-bela-linker.sh` for
+anyone depending on the published crates.

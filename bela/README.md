@@ -105,4 +105,42 @@ See [`examples/`](examples) for runnable versions and the
 [repository README](../README.md) for project status and
 cross-compilation instructions.
 
+## Downstream setup
+
+Building a device binary needs three compiler-driver arguments derived
+from the Bela sysroot (`--sysroot`, `-B`, `-Wl,-rpath-link`; see
+[docs/cross-compile.md](../docs/cross-compile.md) for what each is
+for). `bela-sys` publishes them and this crate relays them, because
+[`links` metadata reaches only an immediate dependent](https://doc.rust-lang.org/cargo/reference/build-scripts.html#the-links-manifest-key)
+— an application depending on `bela` is not one of `bela-sys`'s. An
+application therefore needs its own small `build.rs` to turn what
+`bela` relayed into link arguments for its own binary:
+
+```rust,ignore
+// build.rs
+fn main() {
+    let Ok(count) = std::env::var("DEP_BELA_RELAY_LINK_ARGS_COUNT") else {
+        return; // host build, or a native build with BELA_SYSROOT unset
+    };
+    let count: usize = count.parse().expect("DEP_BELA_RELAY_LINK_ARGS_COUNT is not a number");
+    for index in 0..count {
+        let key = format!("DEP_BELA_RELAY_LINK_ARGS_{index}");
+        let arg = std::env::var(&key).unwrap_or_else(|_| panic!("{key} is missing"));
+        println!("cargo::rustc-link-arg={arg}");
+    }
+}
+```
+
+and `.cargo/config.toml` names the compiler driver directly:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-unknown-linux-gnu-gcc"   # or aarch64-linux-gnu-gcc, gcc, ...
+```
+
+No file to copy from this repository, and no executable bit to
+preserve. See [docs/cross-compile.md](../docs/cross-compile.md) for
+compiler installation and the toolchain rules `bela-sys` uses to build
+its MIDI shim with a compiler matching this linker.
+
 [Bela Gem]: https://bela.io

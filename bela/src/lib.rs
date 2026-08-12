@@ -209,3 +209,103 @@ pub fn request_stop() {
 pub fn stop_requested() -> bool {
     runtime::stop_requested()
 }
+
+// The relay build.rs performs, tested where a build script cannot be:
+// `cargo test` builds this crate, not `build.rs`. See ../link_args.rs
+// and bela-sys/src/lib.rs's own `link_args` module, which this mirrors
+// for the decoding half.
+#[cfg(test)]
+mod link_args {
+    include!("../link_args.rs");
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+
+    #[test]
+    fn nothing_published_decodes_to_no_arguments() {
+        // A host build, or bela-sys on a native build with
+        // BELA_SYSROOT unset: no DEP_BELA_LINK_ARGS_COUNT at all.
+        assert_eq!(decode_link_args(env(&[]), "DEP_BELA"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_published_count_of_zero_also_decodes_to_none() {
+        assert_eq!(
+            decode_link_args(env(&[("DEP_BELA_LINK_ARGS_COUNT", "0")]), "DEP_BELA"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn arguments_are_read_back_in_order() {
+        assert_eq!(
+            decode_link_args(
+                env(&[
+                    ("DEP_BELA_LINK_ARGS_COUNT", "2"),
+                    ("DEP_BELA_LINK_ARGS_0", "--sysroot=/opt/bela"),
+                    ("DEP_BELA_LINK_ARGS_1", "-Bfoo"),
+                ]),
+                "DEP_BELA",
+            ),
+            vec!["--sysroot=/opt/bela".to_owned(), "-Bfoo".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_prefix_selects_which_dependency_is_read() {
+        // bela reads DEP_BELA_*, from bela-sys; an application reads
+        // DEP_BELA_RELAY_*, from bela. A stray DEP_BELA_* is not
+        // mistaken for the other.
+        let pairs = [
+            ("DEP_BELA_LINK_ARGS_COUNT", "1"),
+            ("DEP_BELA_LINK_ARGS_0", "-Wl,-rpath-link=/opt/bela/lib"),
+            ("DEP_BELA_RELAY_LINK_ARGS_COUNT", "1"),
+            ("DEP_BELA_RELAY_LINK_ARGS_0", "--sysroot=/opt/bela"),
+        ];
+        assert_eq!(
+            decode_link_args(env(&pairs), "DEP_BELA"),
+            vec!["-Wl,-rpath-link=/opt/bela/lib".to_owned()]
+        );
+        assert_eq!(
+            decode_link_args(env(&pairs), "DEP_BELA_RELAY"),
+            vec!["--sysroot=/opt/bela".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_missing_indexed_value_decodes_to_no_arguments_rather_than_a_partial_set() {
+        // The count promised two; only the first is there. Applying
+        // just it would drop `-B` or `-rpath-link` silently and fail
+        // at link with a confusing error far from the cause, so this
+        // reads as "nothing published" instead.
+        assert_eq!(
+            decode_link_args(
+                env(&[
+                    ("DEP_BELA_LINK_ARGS_COUNT", "2"),
+                    ("DEP_BELA_LINK_ARGS_0", "--sysroot=/opt/bela"),
+                ]),
+                "DEP_BELA",
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn encoding_what_was_decoded_reproduces_the_input() {
+        let args = vec!["--sysroot=/opt/bela".to_owned(), "-Bfoo".to_owned()];
+        assert_eq!(
+            encode_link_args(&args),
+            vec![
+                ("LINK_ARGS_COUNT".to_owned(), "2".to_owned()),
+                ("LINK_ARGS_0".to_owned(), "--sysroot=/opt/bela".to_owned()),
+                ("LINK_ARGS_1".to_owned(), "-Bfoo".to_owned()),
+            ]
+        );
+    }
+}
