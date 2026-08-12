@@ -66,12 +66,29 @@ ALL_CASES="$ALL_CASES pru-file-missing codec-mode-garbage mux-1 mux-3 mux-8"
 ALL_CASES="$ALL_CASES mux-no-analog mux-analog-4 mux-pru-0 expander-inputs"
 # The ladder that asks which audio sample rates this hardware takes.
 # Bela's own documentation only ever names 44100, while the Gem is sold
-# on a 96 kHz codec, so every rate a codec of that family is likely to
-# have a divider for is asked separately — an accepted rate that the
-# board then ignores is told from a real one by the block count, not by
-# what `setup` prints.
-ALL_CASES="$ALL_CASES rate-22050 rate-32000 rate-44100 rate-48000"
-ALL_CASES="$ALL_CASES rate-88200 rate-96000 rate-192000"
+# on a 96 kHz codec, so the standard rates are asked one per process —
+# an accepted rate that the board then ignores is told from a real one
+# by the block count, not by what `setup` prints. 44101 and 50000 are in
+# here because a codec that only has dividers for the standard rates
+# would have to do something visible with a number off the list.
+ALL_CASES="$ALL_CASES rate-8000 rate-16000 rate-22050 rate-32000"
+ALL_CASES="$ALL_CASES rate-44100 rate-44101 rate-48000 rate-50000"
+ALL_CASES="$ALL_CASES rate-64000 rate-88200 rate-96000"
+# Where the ceiling is. 96000 is what the specifications advertise and
+# not where the board gives up, so this walks up until it does rather
+# than assuming the advertised number is the boundary. Every step is
+# named for the same reason the period ladder names every integer: the
+# rates that fail are only evidence of a boundary if the ones just
+# below them are known to run.
+ALL_CASES="$ALL_CASES rate-100000 rate-104000 rate-106000 rate-108000"
+ALL_CASES="$ALL_CASES rate-112000 rate-128000 rate-144000 rate-160000"
+ALL_CASES="$ALL_CASES rate-176400 rate-192000"
+# The failure names the frame size, so the boundary is asked again at
+# both ends of the period range — above it, and at the highest rate
+# that runs.
+ALL_CASES="$ALL_CASES rate-112000-period-16 rate-112000-period-128"
+ALL_CASES="$ALL_CASES rate-192000-period-16 rate-192000-period-128"
+ALL_CASES="$ALL_CASES rate-96000-period-128"
 
 # The arguments each case passes, kept next to the names so that the
 # summary and the command are never out of step.
@@ -125,14 +142,39 @@ case_arguments() {
   rate-negative) echo "-r -5" ;;
   # Rates the codec might divide down to, asked one per process. 44100
   # is the control: it is the default, so it says what the block count
-  # of a rate that is certainly real looks like in this run.
+  # of a rate that is certainly real looks like in this run. 44101 and
+  # 50000 are the two that are on no codec's list of standard rates.
+  rate-8000) echo "-r 8000" ;;
+  rate-16000) echo "-r 16000" ;;
   rate-22050) echo "-r 22050" ;;
   rate-32000) echo "-r 32000" ;;
   rate-44100) echo "-r 44100" ;;
+  rate-44101) echo "-r 44101" ;;
   rate-48000) echo "-r 48000" ;;
+  rate-50000) echo "-r 50000" ;;
+  rate-64000) echo "-r 64000" ;;
   rate-88200) echo "-r 88200" ;;
   rate-96000) echo "-r 96000" ;;
+  # Walking up to the ceiling. 176400 and 192000 are the standard rates
+  # above it; the rest are there to say where it actually is, since the
+  # first of these that fails means nothing without the last that runs.
+  rate-100000) echo "-r 100000" ;;
+  rate-104000) echo "-r 104000" ;;
+  rate-106000) echo "-r 106000" ;;
+  rate-108000) echo "-r 108000" ;;
+  rate-112000) echo "-r 112000" ;;
+  rate-128000) echo "-r 128000" ;;
+  rate-144000) echo "-r 144000" ;;
+  rate-160000) echo "-r 160000" ;;
+  rate-176400) echo "-r 176400" ;;
   rate-192000) echo "-r 192000" ;;
+  # The same rates against the ends of the period range, because the
+  # message the failures print names the frame size.
+  rate-112000-period-16) echo "-r 112000 -p 16" ;;
+  rate-112000-period-128) echo "-r 112000 -p 128" ;;
+  rate-192000-period-16) echo "-r 192000 -p 16" ;;
+  rate-192000-period-128) echo "-r 192000 -p 128" ;;
+  rate-96000-period-128) echo "-r 96000 -p 128" ;;
   # Options documented as booleans, given something else.
   analog-flag-2) echo "-N 2" ;;
   uniform-5) echo "-U 5" ;;

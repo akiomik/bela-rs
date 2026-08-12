@@ -733,35 +733,43 @@ caller different things.
   | `--codec-mode garbage` | nothing; it ran |
   | `-X 8` | nothing; it ran |
   | `-Y 0,1` | nothing; it ran |
-  | `-r 8000` … `-r 96000` | nothing; they ran |
-  | `-r 176400`, `-r 192000` | **`SIGABRT` inside `Bela_initAudio`** |
+  | `-r 8000` … `-r 106000` | nothing; they ran |
+  | `-r 108000` … `-r 192000` | **`SIGABRT` inside `Bela_initAudio`** |
 
 - **`-r` is real, and it moves the audio, analog and digital rates
   together.** Measured 2026-08-12 with the rate ladder in
   `scripts/probe-command-line.sh`, one process per rate, each run
-  bounded at 15 s and asking for 32-frame blocks. Every rate came up
-  and `setup` reported the number that was asked for — as the digital
-  rate too, against `Bela.h`'s "Digital sample rate in Hz (currently
-  always 44100.0)".
+  bounded at 15 s and asking for 32-frame blocks. Every rate below the
+  ceiling the next entry records came up, and `setup` reported the
+  number that was asked for — as the digital rate too, against
+  `Bela.h`'s "Digital sample rate in Hz (currently always 44100.0)".
 
   | `-r` | blocks rendered | frames elapsed | those frames at the reported rate |
   |---|---|---|---|
-  | 22050 | 9906 | 316992 | 14.38 s |
-  | 32000 | 14372 | 459904 | 14.37 s |
-  | 44100 (the default) | 19788 | 633216 | 14.36 s |
-  | 48000 | 21364 | 683648 | 14.24 s |
-  | 88200 | 39365 | 1259680 | 14.28 s |
-  | 96000 | 42921 | 1373472 | 14.31 s |
+  | 8000 | 3596 | 115072 | 14.38 s |
+  | 16000 | 7135 | 228320 | 14.27 s |
+  | 22050 | 9826 | 314432 | 14.26 s |
+  | 32000 | 14239 | 455648 | 14.24 s |
+  | 44100 (the default) | 19619 | 627808 | 14.24 s |
+  | 44101 | 19661 | 629152 | 14.27 s |
+  | 48000 | 21430 | 685760 | 14.29 s |
+  | 50000 | 22270 | 712640 | 14.25 s |
+  | 64000 | 28532 | 913024 | 14.27 s |
+  | 88200 | 39599 | 1267168 | 14.37 s |
+  | 96000 | 42742 | 1367744 | 14.25 s |
+  | 100000 | 44562 | 1425984 | 14.26 s |
+  | 104000 | 46726 | 1495232 | 14.38 s |
+  | 106000 | 47177 | 1509664 | 14.24 s |
 
   The last column is what settles it. A board that took the number,
   echoed it back through `setup` and went on clocking at 44100 would
-  have rendered the same ≈19800 blocks in every row; instead the block
+  have rendered the same ≈19600 blocks in every row; instead the block
   count follows the rate and the time those blocks account for stays
-  where it is, at about 14.3 s of the 15 s each run was given — the
-  remaining 0.7 s being the startup the run did not spend rendering,
-  which is the same figure `scripts/smoke-test.sh` sets its startup
-  allowance from. No row reported an underrun. So 48 kHz and 96 kHz
-  are rates this hardware runs at, not settings it accepts and
+  where it is, inside 14.24 s to 14.38 s of the 15 s each run was
+  given — the remaining 0.7 s being the startup the run did not spend
+  rendering, which is the same figure `scripts/smoke-test.sh` sets its
+  startup allowance from. No row reported an underrun. So 48 kHz and
+  96 kHz are rates this hardware runs at, not settings it accepts and
   ignores.
 
   The command line is also the only way to reach them from this crate:
@@ -771,20 +779,33 @@ caller different things.
 
   **What that does not establish is the codec's exact clock.** The
   block count resolves the rate to about a percent, which separates
-  48000 from 44100 and says nothing about 44101 from 44100. `-r 44101`
-  and `-r 50000` are accepted and render at their nominal rate to
-  within that same percent, which is either a divider that takes
-  arbitrary numbers or one that snaps to a neighbour it does not
-  report; a frequency counter on a pin would say which, and a block
-  count cannot.
-- **Above 96 kHz libbela takes the process down.** `-r 176400` and
-  `-r 192000` both end on `terminate called after throwing an instance
-  of 'std::runtime_error'`, `what(): I2c_Codec: invalid combination of
-  sample rate and frame size` and `SIGABRT` (exit 134), printing
-  nothing at all beforehand — not even with `-v`. The message names
-  the frame size, and the frame size does not change it: 192000 fails
-  identically at `-p 16`, `-p 64` and `-p 128`, while 96000 runs at
-  `-p 128` just as it does at 32.
+  48000 from 44100 and says nothing about 44101 from 44100. 44101 and
+  50000 are in the table for that reason: both are rates no codec has
+  on its list of standard ones, both are accepted, and both render at
+  their nominal rate to within that same percent — which is either a
+  divider that takes arbitrary numbers or one that snaps to a
+  neighbour it does not report. A frequency counter on a pin would say
+  which, and a block count cannot.
+- **The ceiling is between 106 and 108 kHz, and it is not the 96 kHz
+  the specifications advertise.** 106000 is the highest rate measured
+  that runs and 108000 the lowest that does not; the rates in between
+  were not tried, so the boundary is a bracket rather than a number.
+  Above it every rate asked — 108000, 112000, 128000, 144000, 160000,
+  176400 and 192000 — ends on `terminate called after throwing an
+  instance of 'std::runtime_error'`, `what(): I2c_Codec: invalid
+  combination of sample rate and frame size` and `SIGABRT` (exit 134),
+  printing nothing at all beforehand — and at 192000, where `-v` was
+  tried as well, verbose logging does not add a line either.
+
+  That 96000 is not the boundary is the part worth keeping: 100000,
+  104000 and 106000 run like every other row of the table above, block
+  count following the number asked for. A ceiling put at the
+  advertised rate would be a guess that the measurements contradict.
+
+  The message names the frame size, and the frame size does not move
+  the boundary: 112000 and 192000 fail identically at `-p 16`, `-p 32`
+  and `-p 128`, while 96000 runs at `-p 128` — 10720 blocks, 1372160
+  frames, the same 14.29 s — just as it does at 32.
 
   It is thrown after the parse, not during it. `-r 192000 --nonsense`
   fails with this crate's `Error::CommandLine` and no abort at all, in
