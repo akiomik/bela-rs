@@ -803,9 +803,22 @@ caller different things.
   advertised rate would be a guess that the measurements contradict.
 
   The message names the frame size, and the frame size does not move
-  the boundary: 112000 and 192000 fail identically at `-p 16`, `-p 32`
-  and `-p 128`, while 96000 runs at `-p 128` — 10720 blocks, 1372160
-  frames, the same 14.29 s — just as it does at 32.
+  the boundary — asked at the boundary itself rather than only well
+  away from it, since a frame size that shifted it would shift it
+  there first:
+
+  | `-r` | `-p 16` | `-p 32` | `-p 128` |
+  |---|---|---|---|
+  | 96000 | ran, 85520 blocks | ran, 42742 | ran, 10720 |
+  | 106000 | ran, 94524 blocks | ran, 47177 | ran, 11805 |
+  | 108000 | `SIGABRT` | `SIGABRT` | `SIGABRT` |
+  | 112000 | `SIGABRT` | `SIGABRT` | `SIGABRT` |
+  | 192000 | `SIGABRT` | `SIGABRT` | `SIGABRT` |
+
+  So the same 106000/108000 bracket holds at every frame size tried,
+  and each run that came up accounts for the same 14.24 s to 14.29 s
+  of rendering as the table above, whatever the block size it did it
+  in. Frame sizes between 32 and 128, and above 128, were not tried.
 
   It is thrown after the parse, not during it. `-r 192000 --nonsense`
   fails with this crate's `Error::CommandLine` and no abort at all, in

@@ -83,12 +83,17 @@ ALL_CASES="$ALL_CASES rate-64000 rate-88200 rate-96000"
 ALL_CASES="$ALL_CASES rate-100000 rate-104000 rate-106000 rate-108000"
 ALL_CASES="$ALL_CASES rate-112000 rate-128000 rate-144000 rate-160000"
 ALL_CASES="$ALL_CASES rate-176400 rate-192000"
-# The failure names the frame size, so the boundary is asked again at
-# both ends of the period range — above it, and at the highest rate
-# that runs.
+# The failure names the frame size, so the two rates the boundary is
+# made of are asked again at both ends of the period range. Rates well
+# clear of it on either side are asked too, but they are the weaker
+# half of the question: a boundary that moves with the frame size would
+# move between 106000 and 108000 first, and cases far from it would go
+# on agreeing while it did.
+ALL_CASES="$ALL_CASES rate-106000-period-16 rate-106000-period-128"
+ALL_CASES="$ALL_CASES rate-108000-period-16 rate-108000-period-128"
 ALL_CASES="$ALL_CASES rate-112000-period-16 rate-112000-period-128"
 ALL_CASES="$ALL_CASES rate-192000-period-16 rate-192000-period-128"
-ALL_CASES="$ALL_CASES rate-96000-period-128"
+ALL_CASES="$ALL_CASES rate-96000-period-16 rate-96000-period-128"
 
 # The arguments each case passes, kept next to the names so that the
 # summary and the command are never out of step.
@@ -169,11 +174,18 @@ case_arguments() {
   rate-176400) echo "-r 176400" ;;
   rate-192000) echo "-r 192000" ;;
   # The same rates against the ends of the period range, because the
-  # message the failures print names the frame size.
+  # message the failures print names the frame size. 106000 and 108000
+  # are the pair that matters: they are the boundary, so they are where
+  # a frame size that moved it would show first.
+  rate-106000-period-16) echo "-r 106000 -p 16" ;;
+  rate-106000-period-128) echo "-r 106000 -p 128" ;;
+  rate-108000-period-16) echo "-r 108000 -p 16" ;;
+  rate-108000-period-128) echo "-r 108000 -p 128" ;;
   rate-112000-period-16) echo "-r 112000 -p 16" ;;
   rate-112000-period-128) echo "-r 112000 -p 128" ;;
   rate-192000-period-16) echo "-r 192000 -p 16" ;;
   rate-192000-period-128) echo "-r 192000 -p 128" ;;
+  rate-96000-period-16) echo "-r 96000 -p 16" ;;
   rate-96000-period-128) echo "-r 96000 -p 128" ;;
   # Options documented as booleans, given something else.
   analog-flag-2) echo "-N 2" ;;
