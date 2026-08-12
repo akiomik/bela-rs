@@ -1,6 +1,7 @@
 use core::ops::Range;
 
 use crate::context::{BlockContext, CleanupContext, RenderContext, SetupContext, partition};
+use crate::settings::ResolvedSettings;
 
 /// Which render thread a [`RenderState`](BelaApplication::RenderState)
 /// is being made for.
@@ -93,6 +94,11 @@ impl ThreadInfo {
 /// The callbacks come in three groups, and the difference between them
 /// is what Bela's multithreaded rendering makes of `self`:
 ///
+/// - [`validate_settings`](BelaApplication::validate_settings) runs
+///   before there is an audio system at all, on the settings one is
+///   about to be built with. It is the only place an application can
+///   decline a configuration without costing the process the ability
+///   to build another one.
 /// - [`setup`](BelaApplication::setup),
 ///   [`create_render_state`](BelaApplication::create_render_state) and
 ///   [`cleanup`](BelaApplication::cleanup) run once, on their own,
@@ -184,6 +190,70 @@ pub trait BelaApplication: Send + Sync {
     /// `render_post` while no thread is rendering.
     type RenderState: Send;
 
+    /// Called once with the settings the audio system is about to be
+    /// built with, before anything has been done about them. Return
+    /// `Err` to refuse the configuration.
+    ///
+    /// This is where an application says what it needs of the
+    /// configuration it is given — two render threads, six analog
+    /// inputs, a sample rate it has coefficients for. It runs after
+    /// `Bela_defaultSettings()`, [`Settings`](crate::Settings) and the
+    /// command line have all been applied, and after this crate's own
+    /// checks on the result, but before the CPU monitoring counters are
+    /// touched, before any render state is allocated and before
+    /// `Bela_initAudio` is called. So a refusal here is an ordinary
+    /// error out of [`Bela::new`](crate::Bela::new) —
+    /// [`Error::SettingsRefused`](crate::Error::SettingsRefused),
+    /// carrying the reason given — and the process is left exactly as
+    /// it was: another audio system can be built straight away, with
+    /// settings the application does accept.
+    ///
+    /// That is the whole difference from refusing in
+    /// [`setup`](BelaApplication::setup), which runs inside
+    /// `Bela_initAudio` with the hardware already up and costs the
+    /// process every later audio system.
+    ///
+    /// The default accepts everything.
+    ///
+    /// ```
+    /// # use bela::{BelaApplication, RenderContext, ResolvedSettings, SetupContext, ThreadInfo};
+    /// # struct Stereo;
+    /// # impl BelaApplication for Stereo {
+    /// # type RenderState = ();
+    /// fn validate_settings(&self, settings: &ResolvedSettings) -> Result<(), &'static str> {
+    ///     if settings.thread_count() != 1 {
+    ///         return Err("this application renders on one thread");
+    ///     }
+    ///     if settings.num_analog_in_channels() < 6 {
+    ///         return Err("this application reads six analog inputs");
+    ///     }
+    ///     Ok(())
+    /// }
+    /// # fn create_render_state(&mut self, _t: ThreadInfo, _c: &SetupContext) {}
+    /// # fn render(&self, _s: &mut (), _c: &mut RenderContext) {}
+    /// # }
+    /// ```
+    ///
+    /// # It sees the request, not the hardware
+    ///
+    /// [`ResolvedSettings`] is what will be asked of libbela.
+    /// What the board makes of it is
+    /// [`SetupContext`](crate::SetupContext), which does not exist
+    /// until `Bela_initAudio` has run — so a check here cannot promise
+    /// what the codec will deliver, only that nobody asked for
+    /// something else. The type documents where the two part company.
+    ///
+    /// # Errors
+    /// Whatever the application will not run under, as a `&'static
+    /// str` that finishes the sentence "the application refused the
+    /// resolved settings: ". A static message keeps
+    /// [`Error`](crate::Error) allocation-free and `Copy`, which is
+    /// what lets it be returned from a real-time-adjacent API without
+    /// a heap behind it.
+    fn validate_settings(&self, _settings: &ResolvedSettings) -> Result<(), &'static str> {
+        Ok(())
+    }
+
     /// Called once before audio starts, before any render state is
     /// created. Return `false` to abort startup.
     ///
@@ -195,6 +265,16 @@ pub trait BelaApplication: Send + Sync {
     /// [`Error::AudioSystemPoisoned`](crate::Error::AudioSystemPoisoned).
     /// So abort to end the program, not to try again with different
     /// settings.
+    ///
+    /// A configuration the application will not run under is not a
+    /// reason to abort from here:
+    /// [`validate_settings`](BelaApplication::validate_settings) asks
+    /// the same question before the hardware is up, where the answer
+    /// costs an error rather than the process. What is left for this
+    /// callback is what only exists once libbela has answered —
+    /// the channel counts and frame counts the
+    /// [`SetupContext`] reports, a MIDI port that could not be opened
+    /// — and even there, aborting ends the program.
     fn setup(&mut self, _context: &SetupContext) -> bool {
         true
     }

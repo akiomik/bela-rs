@@ -101,6 +101,22 @@ pub enum Error {
     /// [`Init`](Self::Init) that costs the process every later audio
     /// system.
     SampleRate,
+    /// The application refused the resolved settings, with the reason
+    /// it gave.
+    ///
+    /// What
+    /// [`BelaApplication::validate_settings`](crate::BelaApplication::validate_settings)
+    /// returned `Err` with, carried as it stands. That hook is asked
+    /// once the settings are fully resolved and before anything has
+    /// been done about them, so this costs the attempt and nothing
+    /// else: the process can go on to build an audio system with
+    /// settings the application does accept.
+    ///
+    /// A `&'static str` rather than a message of the application's own
+    /// making, which keeps this type `Copy` and allocation-free — an
+    /// application that needs to carry more than a sentence out of a
+    /// refusal can put it somewhere of its own before returning.
+    SettingsRefused(&'static str),
     /// The settings named a PRU other than 0 or 1, which are the two
     /// libbela can run the audio code on.
     ///
@@ -277,6 +293,9 @@ impl fmt::Display for Error {
                 f,
                 "the audio sample rate is 0, which libbela reports as a codec that is not enabled"
             ),
+            Self::SettingsRefused(reason) => {
+                write!(f, "the application refused the resolved settings: {reason}")
+            }
             Self::PruNumber(number) => {
                 write!(f, "the audio code runs on PRU 0 or PRU 1, not PRU {number}")
             }

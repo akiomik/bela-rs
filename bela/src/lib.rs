@@ -115,6 +115,18 @@
 //! [`Settings`], so the application keeps its own defaults, and
 //! [`print_usage`] prints the list.
 //!
+//! Being reconfigurable from outside means being given configurations
+//! the program was not written for, so an application that needs
+//! particular ones says so in
+//! [`validate_settings`](BelaApplication::validate_settings). It is
+//! asked about the [`ResolvedSettings`] — everything applied, the
+//! command line included — before the audio system is built, and what
+//! it refuses comes back as [`Error::SettingsRefused`] with the
+//! process untouched. That is the only place an application can
+//! decline: [`setup`](BelaApplication::setup) runs inside
+//! `Bela_initAudio` with the hardware already up, and refusing from
+//! there leaves the process unable to build another audio system.
+//!
 //! One corner of the C core API has no safe accessors here on purpose:
 //! the Multiplexer Capelet, `multiplexerAnalogRead` and
 //! `multiplexerChannelForFrame`. The Capelet is an accessory for the
@@ -174,7 +186,7 @@ pub use midi::{
     PitchBend, Pressure, Program, Velocity, midi_ports,
 };
 pub use print::{MESSAGE_CAPACITY, print_args, println_args};
-pub use settings::Settings;
+pub use settings::{ResolvedSettings, Settings};
 #[cfg(bela_device)]
 pub use system::Bela;
 pub use task::{AuxiliaryTask, Priority};

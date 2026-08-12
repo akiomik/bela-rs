@@ -5,8 +5,6 @@ use core::time::Duration;
 use std::ffi::OsStr;
 use std::thread;
 
-use bela_sys::BelaInitSettings;
-
 use crate::application::BelaApplication;
 use crate::cmdline::{self, Arguments};
 use crate::cpu;
@@ -71,6 +69,16 @@ impl<T: BelaApplication> Bela<T> {
     /// Bela's parser inside `Bela_defaultSettings`; the checks are
     /// listed there.
     ///
+    /// Last of the checks made before the audio system is built, and
+    /// the only one that is the application's own:
+    /// [`Error::SettingsRefused`] when
+    /// [`BelaApplication::validate_settings`] declined the resolved
+    /// settings, carrying the reason it gave. Like the others it costs
+    /// the attempt and nothing else — the process can build an audio
+    /// system afterwards with settings the application does accept,
+    /// which is what separates it from a refusal in
+    /// [`setup`](BelaApplication::setup).
+    ///
     /// # A failed initialisation is fatal to the process
     ///
     /// [`Error::Init`] means `Bela_initAudio` failed partway through,
@@ -99,7 +107,11 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// The ordinary way to arrive here is a
     /// [`setup`](BelaApplication::setup) callback returning `false`,
-    /// which fails the initialisation after the hardware is up.
+    /// which fails the initialisation after the hardware is up. An
+    /// application that is refusing the *configuration* rather than
+    /// something it found on the board should say so from
+    /// [`validate_settings`](BelaApplication::validate_settings)
+    /// instead, which is asked before any of this happens.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         Self::init(application, settings, None)
     }
@@ -164,6 +176,16 @@ impl<T: BelaApplication> Bela<T> {
     /// firmware, which gives up — `Invalid PRU configuration settings`,
     /// `PRU timeout`, `McASP error, abort` — and ends the process from
     /// inside libbela with nothing returned to anyone.
+    ///
+    /// A seventh refusal is the application's own, and is about what it
+    /// can run under rather than what libbela can:
+    /// [`BelaApplication::validate_settings`] is asked about the same
+    /// resolved settings, after these six and before anything is done
+    /// about them, and what it declines becomes
+    /// [`Error::SettingsRefused`]. That is where "this program needs
+    /// two render threads" or "this program needs six analog inputs"
+    /// belongs, including — especially — when the command line is what
+    /// changed them.
     ///
     /// # What is passed through
     ///
@@ -265,9 +287,10 @@ impl<T: BelaApplication> Bela<T> {
             // around: being able to reconfigure a binary from outside
             // is the whole point of it.
             //
-            // Then refuse what the safe API cannot serve rather than
-            // initialising something unsound, and turn monitoring on —
-            // both once the settings are fully resolved, including
+            // Then refuse what the safe API cannot serve — and what the
+            // application says it cannot run under — rather than
+            // initialising something unsound, and turn monitoring on.
+            // All of it once the settings are fully resolved, including
             // whatever the command line just changed, but before
             // `Bela_initAudio`, since the `setup` callback runs inside
             // that call and should already see the answer
@@ -275,10 +298,15 @@ impl<T: BelaApplication> Bela<T> {
             // run. The priming tic it takes is what the audio thread's
             // first reading is measured from, so everything from here
             // to `start` is startup time that reading includes.
+            //
+            // Monitoring is applied after the checks and not before,
+            // because it is the first thing here that changes anything:
+            // an application that refuses the settings should leave the
+            // counters as it found them.
             let prepared = arguments
                 .as_mut()
                 .map_or(Ok(()), |arguments| cmdline::parse(arguments, &mut *raw))
-                .and_then(|()| Self::check_supported(&*raw, monitoring))
+                .and_then(|()| settings::check_supported(&*raw, monitoring.is_some(), &application))
                 .and_then(|()| cpu::apply_monitoring(monitoring));
             if let Err(error) = prepared {
                 bela_sys::Bela_InitSettings_free(raw);
@@ -320,25 +348,6 @@ impl<T: BelaApplication> Bela<T> {
             _claim: claim,
             _marker: PhantomData,
         })
-    }
-
-    /// Checks the resolved settings against what this crate can serve.
-    fn check_supported(raw: &BelaInitSettings, monitoring: Option<c_int>) -> Result<(), Error> {
-        // First, because these are the settings that cost the process
-        // rather than the attempt: they fail inside `Bela_initAudio`,
-        // or after it in the PRU firmware, and neither leaves anything
-        // to report with.
-        settings::check_resolved(raw)?;
-        if monitoring.is_some() {
-            // Needs the resolved period size: unset in `Settings` means
-            // Bela's default, not "no period size". The raw value is
-            // signed even though Settings only accepts u32; map a
-            // negative resolved value to an impossible upper bound so
-            // the unsigned range check refuses it.
-            let period_size = u32::try_from(raw.periodSize).unwrap_or(u32::MAX);
-            cpu::check_period_size(period_size)?;
-        }
-        Ok(())
     }
 
     /// Starts the real-time audio thread.
