@@ -220,24 +220,28 @@ impl Settings {
     /// spellings of the same single render thread, while this API keeps
     /// one spelling for one configuration.
     ///
-    /// # The command line has the last word on it
+    /// # An application can insist on the count it gets
     ///
-    /// `--thread-count` is applied after this, so an application that
-    /// only works on the number of threads it asked for has to say so
-    /// rather than assume it:
-    /// [`validate_settings`](crate::BelaApplication::validate_settings)
+    /// Unset, the count is whatever `Bela_defaultSettings()` produced,
+    /// which includes whatever a `Bela_userSettings()` hook the program
+    /// links did to it. So an application that only works on a
+    /// particular number of threads is better saying so than assuming
+    /// it: [`validate_settings`](crate::BelaApplication::validate_settings)
     /// is given the resolved count as
     /// [`ResolvedSettings::thread_count`], before any of it has been
     /// acted on, and refusing there is an ordinary
     /// [`Error::SettingsRefused`](crate::Error::SettingsRefused).
     ///
+    /// Bela's standard command-line options cannot change it: the
+    /// version this crate is pinned to has none for the thread count.
+    ///
     /// # It has to be the number libbela then renders on
     ///
-    /// The render states are built from this value, resolved against
-    /// Bela's defaults and the command line, before `Bela_initAudio` is
-    /// called — so a libbela that went on to render on a different
-    /// number of threads would leave some of them without a state, and
-    /// the frame ranges would no longer tile the block.
+    /// The render states are built from the resolved `threadCount`
+    /// before `Bela_initAudio` is called — so a libbela that went on to
+    /// render on a different number of threads would leave some of them
+    /// without a state, and the frame ranges would no longer tile the
+    /// block.
     ///
     /// This is a check on libbela rather than on the configuration,
     /// which is why it stays where it is: the count the settings
@@ -564,10 +568,15 @@ impl<'a> ResolvedSettings<'a> {
     /// At least 1, for the same reason
     /// [`RenderContext::thread_count`](crate::RenderContext::thread_count)
     /// is: libbela spells one render thread as either 0 or 1, and this
-    /// reports the number of threads that will render. So an
-    /// application that only works on one thread — or only on four —
-    /// can say so here, where the command line's `--thread-count` has
-    /// already been applied and refusing it costs nothing.
+    /// reports the number of threads that will render.
+    ///
+    /// The resolved value — Bela's defaults, whatever a
+    /// `Bela_userSettings()` hook made of them, then
+    /// [`Settings::thread_count`]. Bela's standard command-line options
+    /// cannot change it, unlike most of this view; what they can change
+    /// is whether the rest of the configuration still suits the number.
+    /// So an application that only works on one thread — or only on
+    /// four — can say so here, and refusing costs nothing.
     #[must_use]
     #[inline]
     pub const fn thread_count(&self) -> usize {
@@ -1209,10 +1218,12 @@ mod tests {
             .begin_muted(true)
             .stop_button_pin(Some(27))
             .apply_to(&mut raw);
-        // What the command line then had to say, which is where the
-        // audio system would have applied it.
-        raw.threadCount = 4;
+        // `--sample-rate 48000` on top, applied where the audio system
+        // applies the command line, and a thread count from a layer
+        // `Settings` cannot reach — Bela's defaults or a
+        // `Bela_userSettings()` hook.
         raw.audioSampleRate = 48000.0;
+        raw.threadCount = 4;
 
         let settings = ResolvedSettings::new(&raw, None);
 
@@ -1277,24 +1288,31 @@ mod tests {
     }
 
     #[test]
-    fn an_application_sees_what_the_command_line_made_of_its_own_settings() {
-        // The reason the hook is asked here rather than being a
-        // comparison against `Settings`: the application asked for one
-        // render thread and `--thread-count 4` overrode it, which is
-        // the case `Settings::thread_count` documents as otherwise
-        // costing the process.
+    fn an_application_can_refuse_a_resolved_thread_count() {
+        // The hook is asked about the resolved settings rather than
+        // about `Settings`, so a count the application never asked for
+        // — from Bela's defaults or a `Bela_userSettings()` hook, which
+        // both have their say before `Settings` is applied — is one it
+        // can still turn down rather than render wrong.
         let mut raw = fake_defaults();
-        Settings::new()
-            .thread_count(NonZeroU32::new(1).expect("1 is not zero"))
-            .apply_to(&mut raw);
-        assert_eq!(check_supported(&raw, None, &SingleThreaded), Ok(()));
-
         raw.threadCount = 4;
 
         assert_eq!(
             check_supported(&raw, None, &SingleThreaded),
             Err(Error::SettingsRefused(NEEDS_ONE_THREAD))
         );
+
+        // And the configuration it is built for is accepted, in both
+        // of libbela's spellings of one render thread.
+        for spelling in [0, 1] {
+            raw.threadCount = spelling;
+
+            assert_eq!(
+                check_supported(&raw, None, &SingleThreaded),
+                Ok(()),
+                "threadCount {spelling}"
+            );
+        }
     }
 
     #[test]

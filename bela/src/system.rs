@@ -234,9 +234,10 @@ impl<T: BelaApplication> Bela<T> {
     /// resolved settings, after these six and before anything is done
     /// about them, and what it declines becomes
     /// [`Error::SettingsRefused`]. That is where "this program needs
-    /// two render threads" or "this program needs six analog inputs"
-    /// belongs, including — especially — when the command line is what
-    /// changed them.
+    /// six analog inputs" or "this program needs the analog channels
+    /// resampled to the audio rate" belongs — especially here, where
+    /// the command line is what may have changed them out from under
+    /// the application's own [`Settings`].
     ///
     /// # What is passed through
     ///
@@ -367,8 +368,8 @@ impl<T: BelaApplication> Bela<T> {
             prepared?;
             // Built here rather than earlier, because how many render
             // states it needs is a resolved setting like any other:
-            // `--thread-count` on the command line has just had its
-            // say.
+            // this is the `threadCount` everything above has settled
+            // on, and the one libbela is about to be handed.
             let runtime = Box::into_raw(Box::new(Runtime::new(
                 application,
                 settings::render_threads(&*raw),
