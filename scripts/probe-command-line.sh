@@ -64,6 +64,36 @@ ALL_CASES="$ALL_CASES analog-flag-2 uniform-5 pru-number-5 board-mismatch"
 ALL_CASES="$ALL_CASES board-unknown stop-pin-9999 disabled-digitals-all"
 ALL_CASES="$ALL_CASES pru-file-missing codec-mode-garbage mux-1 mux-3 mux-8"
 ALL_CASES="$ALL_CASES mux-no-analog mux-analog-4 mux-pru-0 expander-inputs"
+# The ladder that asks which audio sample rates this hardware takes.
+# Bela's own documentation only ever names 44100, while the Gem is sold
+# on a 96 kHz codec, so the standard rates are asked one per process —
+# an accepted rate that the board then ignores is told from a real one
+# by the block count, not by what `setup` prints. 44101 and 50000 are in
+# here because a codec that only has dividers for the standard rates
+# would have to do something visible with a number off the list.
+ALL_CASES="$ALL_CASES rate-8000 rate-16000 rate-22050 rate-32000"
+ALL_CASES="$ALL_CASES rate-44100 rate-44101 rate-48000 rate-50000"
+ALL_CASES="$ALL_CASES rate-64000 rate-88200 rate-96000"
+# Where the ceiling is. 96000 is what the specifications advertise and
+# not where the board gives up, so this walks up until it does rather
+# than assuming the advertised number is the boundary. Every step is
+# named for the same reason the period ladder names every integer: the
+# rates that fail are only evidence of a boundary if the ones just
+# below them are known to run.
+ALL_CASES="$ALL_CASES rate-100000 rate-104000 rate-106000 rate-108000"
+ALL_CASES="$ALL_CASES rate-112000 rate-128000 rate-144000 rate-160000"
+ALL_CASES="$ALL_CASES rate-176400 rate-192000"
+# The failure names the frame size, so the two rates the boundary is
+# made of are asked again at both ends of the period range. Rates well
+# clear of it on either side are asked too, but they are the weaker
+# half of the question: a boundary that moves with the frame size would
+# move between 106000 and 108000 first, and cases far from it would go
+# on agreeing while it did.
+ALL_CASES="$ALL_CASES rate-106000-period-16 rate-106000-period-128"
+ALL_CASES="$ALL_CASES rate-108000-period-16 rate-108000-period-128"
+ALL_CASES="$ALL_CASES rate-112000-period-16 rate-112000-period-128"
+ALL_CASES="$ALL_CASES rate-192000-period-16 rate-192000-period-128"
+ALL_CASES="$ALL_CASES rate-96000-period-16 rate-96000-period-128"
 
 # The arguments each case passes, kept next to the names so that the
 # summary and the command are never out of step.
@@ -115,6 +145,48 @@ case_arguments() {
   # clamps a negative rate to the same 0.
   rate-text) echo "-r abc" ;;
   rate-negative) echo "-r -5" ;;
+  # Rates the codec might divide down to, asked one per process. 44100
+  # is the control: it is the default, so it says what the block count
+  # of a rate that is certainly real looks like in this run. 44101 and
+  # 50000 are the two that are on no codec's list of standard rates.
+  rate-8000) echo "-r 8000" ;;
+  rate-16000) echo "-r 16000" ;;
+  rate-22050) echo "-r 22050" ;;
+  rate-32000) echo "-r 32000" ;;
+  rate-44100) echo "-r 44100" ;;
+  rate-44101) echo "-r 44101" ;;
+  rate-48000) echo "-r 48000" ;;
+  rate-50000) echo "-r 50000" ;;
+  rate-64000) echo "-r 64000" ;;
+  rate-88200) echo "-r 88200" ;;
+  rate-96000) echo "-r 96000" ;;
+  # Walking up to the ceiling. 176400 and 192000 are the standard rates
+  # above it; the rest are there to say where it actually is, since the
+  # first of these that fails means nothing without the last that runs.
+  rate-100000) echo "-r 100000" ;;
+  rate-104000) echo "-r 104000" ;;
+  rate-106000) echo "-r 106000" ;;
+  rate-108000) echo "-r 108000" ;;
+  rate-112000) echo "-r 112000" ;;
+  rate-128000) echo "-r 128000" ;;
+  rate-144000) echo "-r 144000" ;;
+  rate-160000) echo "-r 160000" ;;
+  rate-176400) echo "-r 176400" ;;
+  rate-192000) echo "-r 192000" ;;
+  # The same rates against the ends of the period range, because the
+  # message the failures print names the frame size. 106000 and 108000
+  # are the pair that matters: they are the boundary, so they are where
+  # a frame size that moved it would show first.
+  rate-106000-period-16) echo "-r 106000 -p 16" ;;
+  rate-106000-period-128) echo "-r 106000 -p 128" ;;
+  rate-108000-period-16) echo "-r 108000 -p 16" ;;
+  rate-108000-period-128) echo "-r 108000 -p 128" ;;
+  rate-112000-period-16) echo "-r 112000 -p 16" ;;
+  rate-112000-period-128) echo "-r 112000 -p 128" ;;
+  rate-192000-period-16) echo "-r 192000 -p 16" ;;
+  rate-192000-period-128) echo "-r 192000 -p 128" ;;
+  rate-96000-period-16) echo "-r 96000 -p 16" ;;
+  rate-96000-period-128) echo "-r 96000 -p 128" ;;
   # Options documented as booleans, given something else.
   analog-flag-2) echo "-N 2" ;;
   uniform-5) echo "-U 5" ;;
@@ -271,15 +343,33 @@ for name in $CASES; do
   elif grep -q 'McASP error, abort' "$log"; then
     where="killed by libbela (setup had run)"
   elif [ "$exit_code" = 134 ]; then
-    # 128 + SIGABRT: a C++ exception nobody caught, thrown while
-    # parsing, so before any of the three calls above was reached.
-    where="aborted in the parse"
+    # 128 + SIGABRT: a C++ exception nobody caught. Which call it was
+    # thrown from does not show in the log — `--json-string {` throws
+    # before any Bela call and `-r 192000` throws inside
+    # `Bela_initAudio`, and both look like this. Appending an argument
+    # the parse rejects is what tells them apart: a case that still
+    # fails with `Error::CommandLine` got through the parse first.
+    where="aborted (uncaught C++ exception)"
   elif [ "$exit_code" = 124 ]; then
     where="nowhere: it ran"
   else
     where="unclassified"
   fi
   detail="$where (exit $exit_code)"
+  # What the run said about itself, for the cases that got far enough to
+  # say anything. `setup` reports the configuration libbela claims, and
+  # the block count is the only part of a run that the hardware has a
+  # say in: divided by the seconds the run lasted it is the rate the
+  # audio thread kept, which is what separates an option the board
+  # honoured from one it accepted and ignored.
+  reported="$(awk '/^setup:/ { print $2; exit }' "$log")"
+  blocks="$(awk -F'[ ,]+' '/^cleanup:/ { print $2; exit }' "$log")"
+  if [ -n "$reported" ]; then
+    detail="$detail, setup $reported Hz"
+  fi
+  if [ -n "$blocks" ]; then
+    detail="$detail, $blocks blocks in ${RUN_TIMEOUT}s"
+  fi
   printf '%s\t%s\n' "$name" "$detail" >> "$RESULTS"
   echo "  -> $detail"
 done

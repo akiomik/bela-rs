@@ -17,6 +17,15 @@
 //! with whatever argument parser it already uses, and pass the rest to
 //! `Bela::run_with_args`.
 //!
+//! `cleanup` reports how many blocks the run rendered, because what
+//! `setup` prints is what libbela says it configured rather than what
+//! the hardware then did. An option libbela accepts and the board
+//! ignores looks identical in the `setup` line and different in the
+//! block count: blocks divided by the seconds the run lasted is the
+//! rate the audio thread actually ran at, against the sample rate and
+//! block size `setup` reported. That is how `-r` was measured for
+//! `docs/board-facts.md`.
+//!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
@@ -37,13 +46,19 @@ use std::env;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo, rt_println};
+use bela::{
+    BelaApplication, BlockContext, CleanupContext, RenderContext, SetupContext, ThreadInfo,
+    rt_println,
+};
 
 /// The application's own default block size, which the command line
 /// can override.
 const PERIOD_SIZE: u32 = 32;
 
-struct Report;
+#[derive(Default)]
+struct Report {
+    blocks: u64,
+}
 
 impl BelaApplication for Report {
     type RenderState = ();
@@ -51,7 +66,8 @@ impl BelaApplication for Report {
     fn setup(&mut self, context: &SetupContext) -> bool {
         rt_println!(
             "setup: {} Hz, {} frames per block, {} in / {} out audio channels, \
-             {} analog in / {} analog out, {} digital, {} render thread(s)",
+             {} analog in / {} analog out, {} digital, {} render thread(s), \
+             analog {} Hz, digital {} Hz",
             context.audio_sample_rate(),
             context.audio_frames(),
             context.audio_in_channels(),
@@ -59,7 +75,9 @@ impl BelaApplication for Report {
             context.analog_in_channels(),
             context.analog_out_channels(),
             context.digital_channels(),
-            context.thread_count()
+            context.thread_count(),
+            context.analog_sample_rate(),
+            context.digital_sample_rate()
         );
         true
     }
@@ -69,6 +87,22 @@ impl BelaApplication for Report {
     // Silence: this example is about how the audio system was
     // configured, not about what it renders.
     fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+
+    // Counted in `render_post` rather than in `render`: a block is one
+    // block however many threads rendered it, and this runs once per
+    // block on the main audio thread with `&mut self`.
+    fn render_post(&mut self, _states: &mut [()], _context: &mut BlockContext) {
+        self.blocks += 1;
+    }
+
+    fn cleanup(&mut self, _states: &mut [()], context: &CleanupContext) {
+        rt_println!(
+            "cleanup: {} blocks, {} frames elapsed, {} underruns",
+            self.blocks,
+            context.audio_frames_elapsed(),
+            context.underrun_count()
+        );
+    }
 }
 
 #[cfg(bela_device)]
@@ -94,7 +128,7 @@ fn main() -> ExitCode {
     }
 
     let settings = bela::Settings::new().period_size(PERIOD_SIZE);
-    match bela::Bela::run_with_args(Report, &settings, args) {
+    match bela::Bela::run_with_args(Report::default(), &settings, args) {
         Ok(()) => ExitCode::SUCCESS,
         // Returning the error from `main` would print its `Debug`
         // form; the `Display` one says what went wrong. The options are
