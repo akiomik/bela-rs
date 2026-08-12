@@ -608,6 +608,29 @@ the segfault it guards against looks like"
     ;;
   *) fail "monitoring_rules: poisoned check reported '$poisoned'" ;;
   esac
+
+  # The other half of that: a configuration the application itself
+  # refuses has to cost the attempt and nothing more, so the same
+  # process goes on to run an audio system it does accept. Both halves
+  # are in one line, since one without the other says nothing.
+  validate="$(rules validate-settings | sed -n 's/^rules: //p' | head -1)"
+  refusal="${validate%% *}"
+  then_audio="${validate#* }"
+  if [ "$refusal" != "settings-refusal=refused" ]; then
+    fail "monitoring_rules: validate_settings reported '${validate:-nothing}' rather than \
+refusing the thread count it was not built for"
+  else
+    case "$then_audio" in
+    then-audio=blocks-0 | then-audio=blocks-)
+      fail "monitoring_rules: the audio system after a refusal rendered no blocks ('$then_audio')"
+      ;;
+    then-audio=blocks-*)
+      pass "monitoring_rules: a refused configuration left the process able to run one it \
+accepted ($then_audio)"
+      ;;
+    *) fail "monitoring_rules: after a refusal the audio system reported '$then_audio'" ;;
+    esac
+  fi
 fi
 
 # Multithreaded rendering, which only a board can answer: whether the

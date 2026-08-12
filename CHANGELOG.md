@@ -10,6 +10,34 @@ and this project adheres to
 
 ### Added
 
+- `BelaApplication::validate_settings`, which an application overrides
+  to refuse a configuration it will not run under — two render threads,
+  six analog inputs, a sample rate it has coefficients for. It is asked
+  once `Bela_defaultSettings()`, `Settings` and the command line have
+  all been applied and after the crate's own checks on the result, but
+  before the CPU monitoring counters are touched, before any render
+  state is allocated and before `Bela_initAudio` is called, so a
+  refusal is an ordinary error and the process can go on to build an
+  audio system with settings the application does accept. Refusing from
+  `setup` cannot do that: it runs inside `Bela_initAudio` with the
+  hardware already up, and failing there leaves the process unable to
+  build another audio system. The method has a default that accepts
+  everything, so existing implementations are unaffected.
+- `ResolvedSettings`, the read-only view of the settings an audio
+  system is about to be built with that `validate_settings` is given.
+  It reports what was asked for — the period size, the sample rate, the
+  analog and digital configuration, the resolved render thread count,
+  the CPU monitoring cycle and the flags `Settings` sets — and not what
+  the board will deliver, which is `SetupContext` and does not exist
+  until `Bela_initAudio` has run. `Settings::cpu_monitoring` is there
+  although it is not a `BelaInitSettings` field but a separate C call,
+  because it decides whether `BlockContext::cpu_usage` answers at all
+  and an application built around that reading has nothing else to
+  check before `setup`. `as_sys` reaches the whole `BelaInitSettings`
+  for what has no accessor.
+- `Error::SettingsRefused`, which carries the `&'static str`
+  `validate_settings` returned. Static so that `Error` stays `Copy` and
+  allocation-free.
 - `examples/io_digital --repeat`, a diagnostic mode for the libbela
   context-FIFO persistence problem. It reapplies the input/output
   directions and the current output values in every application block,

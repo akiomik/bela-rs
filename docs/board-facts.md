@@ -260,6 +260,18 @@ Captured from a verbose on-board build:
   which a failed initialisation never reaches, so nothing here is being
   used as its documentation intends.
 
+- **A configuration refused before `Bela_initAudio` costs the process
+  nothing.** The other side of the poisoning above, and the reason
+  `BelaApplication::validate_settings` is asked where it is: a program
+  that declines the resolved settings has not touched libbela yet.
+  Measured on 2026-08-13 with `monitoring_rules validate-settings`,
+  which refuses Bela's default single render thread from the hook and
+  then, in the same process, builds an audio system with the four
+  threads it wants: `settings-refusal=refused
+  then-audio=blocks-1382`, i.e. half a second of rendering after the
+  refusal. A `setup` that says the same thing ends that process
+  instead, which is the row above.
+
 - **Several audio systems in one process are fine, as long as each one
   succeeds.** Twelve full cycles (`Bela::new`, `start`, render, drop)
   in one process — `CYCLE_COUNT=12 scripts/probe-init-failure.sh

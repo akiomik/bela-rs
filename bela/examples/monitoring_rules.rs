@@ -3,7 +3,7 @@
 //! because only libbela knows the answer.
 //!
 //! Run by `scripts/smoke-test.sh`, which invokes it once per check and
-//! asserts on what that run prints. It covers four things:
+//! asserts on what that run prints. It covers five things:
 //!
 //! - **the period size limit is the right one** (`fifo-probe`). Above a
 //!   hardware-dependent period size libbela renders on a thread of its
@@ -29,15 +29,26 @@
 //!   the process rather than letting the next attempt segfault inside
 //!   libbela. Only a board can tell the refusal from the segfault it
 //!   replaces: on the host there is no `Bela_initAudio` to fail.
+//! - **a configuration the application refuses costs it nothing**
+//!   (`validate-settings`). `BelaApplication::validate_settings` is
+//!   asked before `Bela_initAudio`, so declining there has to leave the
+//!   process able to build an audio system that does run — which is the
+//!   whole difference from declining in `setup`, the check above. Only a
+//!   board can show the second half of that: on the host there is no
+//!   audio system to bring up afterwards.
 //!
 //! # One check per run
 //!
-//! Each invocation brings up at most one audio system and exits. Three
-//! of these checks abort the initialisation from `setup`, and a failed
-//! `Bela_initAudio` leaves libbela's globals in that process still
-//! believing the audio system is up, with no call that puts them back
-//! (`docs/board-facts.md`). `Bela::new` gives up on such a process, so
-//! a second check sharing it would be refused rather than run.
+//! Each invocation brings up at most one audio system and exits, with
+//! `validate-settings` the exception that proves the rule: it is about
+//! two attempts in one process, and it is only able to make them
+//! because the first was refused before libbela was asked anything.
+//! Three of the other checks abort the initialisation from `setup`, and
+//! a failed `Bela_initAudio` leaves libbela's globals in that process
+//! still believing the audio system is up, with no call that puts them
+//! back (`docs/board-facts.md`). `Bela::new` gives up on such a
+//! process, so a second check sharing it would be refused rather than
+//! run.
 //!
 //! That refusal is why the arrangement is now only an arrangement.
 //! Before it, the second check was the segfault itself, and running one
@@ -60,13 +71,28 @@
 )]
 
 use core::num::NonZeroU32;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use bela::{BelaApplication, RenderContext, SetupContext, ThreadInfo};
+use bela::{
+    BelaApplication, BlockContext, RenderContext, ResolvedSettings, SetupContext, ThreadInfo,
+};
 
 const MEASUREMENTS_PER_CYCLE: u32 = 2000;
+
+/// How many render threads the application below insists on, which is
+/// more than Bela's default of one, so that the same program is
+/// refused for one configuration and runs for another.
+const REQUIRED_THREADS: NonZeroU32 =
+    NonZeroU32::new(4).expect("the required thread count is a non-zero constant");
+
+/// What it says when it is not given them.
+const WRONG_THREAD_COUNT: &str = "this application renders on four threads";
+
+/// How long the accepted audio system is left rendering, which only has
+/// to be long enough for blocks to have been counted.
+const RENDER_MILLIS: u64 = 500;
 
 const fn cycle() -> NonZeroU32 {
     NonZeroU32::new(MEASUREMENTS_PER_CYCLE).expect("the cycle length is a non-zero constant")
@@ -109,6 +135,35 @@ impl BelaApplication for Abort {
     fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
 }
 
+/// Will only run on [`REQUIRED_THREADS`] render threads, and says so
+/// from `validate_settings` rather than from `setup`.
+///
+/// Counts the blocks it renders, so that a run which was accepted can
+/// be told from one that came up and did nothing.
+struct NeedsFourThreads {
+    blocks: Arc<AtomicU32>,
+}
+
+impl BelaApplication for NeedsFourThreads {
+    type RenderState = ();
+
+    fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
+        if settings.thread_count() == REQUIRED_THREADS.get() as usize {
+            Ok(())
+        } else {
+            Err(WRONG_THREAD_COUNT)
+        }
+    }
+
+    fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+    fn render_pre(&mut self, _states: &mut [()], _context: &mut BlockContext) {
+        self.blocks.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+}
+
 /// Does nothing, for the check that only needs an audio system to
 /// exist.
 struct Idle;
@@ -123,12 +178,17 @@ impl BelaApplication for Idle {
 
 #[cfg(bela_device)]
 mod checks {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use core::time::Duration;
     use std::sync::Arc;
+    use std::thread;
 
     use bela::{Bela, Error, Settings};
 
-    use super::{Abort, Idle, Observe, cycle};
+    use super::{
+        Abort, Idle, NeedsFourThreads, Observe, RENDER_MILLIS, REQUIRED_THREADS,
+        WRONG_THREAD_COUNT, cycle,
+    };
 
     /// Starts initialising audio at `period_size` with libbela's own
     /// logging on, so that it prints the `gFifoFactor` it chose, and
@@ -196,6 +256,53 @@ mod checks {
         println!("rules: monitoring={seen}");
     }
 
+    /// An application that refuses a configuration must be able to run
+    /// under another one in the same process.
+    ///
+    /// The first `Bela::new` is given Bela's default single render
+    /// thread, which `NeedsFourThreads` declines; the second asks for
+    /// the four it wants and is then started, so what this reports is a
+    /// refusal followed by rendered blocks. Both configurations are
+    /// ones libbela runs, which is deliberate: a hook that wrongly
+    /// accepted the first would produce a working audio system here
+    /// rather than a poisoned process, and the two are told apart by
+    /// the refusal being missing rather than by the run dying.
+    pub(crate) fn validate_settings() {
+        let blocks = Arc::new(AtomicU32::new(0));
+        let refusing = NeedsFourThreads {
+            blocks: Arc::clone(&blocks),
+        };
+        let refused = match Bela::new(refusing, &Settings::new()) {
+            Err(Error::SettingsRefused(reason)) if reason == WRONG_THREAD_COUNT => "refused",
+            Err(Error::SettingsRefused(_)) => "refused-with-another-reason",
+            Err(_) => "failed-otherwise",
+            Ok(bela) => {
+                drop(bela);
+                "created"
+            }
+        };
+
+        // The point of the refusal above having cost nothing: this is
+        // the same process, and it has to get a working audio system.
+        let accepting = NeedsFourThreads {
+            blocks: Arc::clone(&blocks),
+        };
+        let settings = Settings::new().thread_count(REQUIRED_THREADS);
+        let ran = match Bela::new(accepting, &settings) {
+            Err(error) => format!("failed-{error}"),
+            Ok(mut bela) => {
+                if let Err(error) = bela.start() {
+                    format!("start-failed-{error}")
+                } else {
+                    thread::sleep(Duration::from_millis(RENDER_MILLIS));
+                    bela.stop();
+                    format!("blocks-{}", blocks.load(Ordering::Relaxed))
+                }
+            }
+        };
+        println!("rules: settings-refusal={refused} then-audio={ran}");
+    }
+
     /// Once an initialisation has failed, every later one in the same
     /// process must be refused rather than attempted.
     ///
@@ -245,10 +352,11 @@ fn main() -> ExitCode {
         ["monitoring", "on"] => checks::monitoring(true),
         ["monitoring", "off"] => checks::monitoring(false),
         ["poisoned"] => checks::poisoned(),
+        ["validate-settings"] => checks::validate_settings(),
         _ => {
             eprintln!(
                 "usage: monitoring_rules (fifo-probe <frames> | second-new | monitoring on|off\n\
-                 \x20                       | poisoned)\n\
+                 \x20                       | poisoned | validate-settings)\n\
                  one check per run: three of these abort from `setup`, which makes \
                  `Bela::new` give up on it"
             );
