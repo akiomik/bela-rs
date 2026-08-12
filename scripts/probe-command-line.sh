@@ -64,6 +64,14 @@ ALL_CASES="$ALL_CASES analog-flag-2 uniform-5 pru-number-5 board-mismatch"
 ALL_CASES="$ALL_CASES board-unknown stop-pin-9999 disabled-digitals-all"
 ALL_CASES="$ALL_CASES pru-file-missing codec-mode-garbage mux-1 mux-3 mux-8"
 ALL_CASES="$ALL_CASES mux-no-analog mux-analog-4 mux-pru-0 expander-inputs"
+# The ladder that asks which audio sample rates this hardware takes.
+# Bela's own documentation only ever names 44100, while the Gem is sold
+# on a 96 kHz codec, so every rate a codec of that family is likely to
+# have a divider for is asked separately — an accepted rate that the
+# board then ignores is told from a real one by the block count, not by
+# what `setup` prints.
+ALL_CASES="$ALL_CASES rate-22050 rate-32000 rate-44100 rate-48000"
+ALL_CASES="$ALL_CASES rate-88200 rate-96000 rate-192000"
 
 # The arguments each case passes, kept next to the names so that the
 # summary and the command are never out of step.
@@ -115,6 +123,16 @@ case_arguments() {
   # clamps a negative rate to the same 0.
   rate-text) echo "-r abc" ;;
   rate-negative) echo "-r -5" ;;
+  # Rates the codec might divide down to, asked one per process. 44100
+  # is the control: it is the default, so it says what the block count
+  # of a rate that is certainly real looks like in this run.
+  rate-22050) echo "-r 22050" ;;
+  rate-32000) echo "-r 32000" ;;
+  rate-44100) echo "-r 44100" ;;
+  rate-48000) echo "-r 48000" ;;
+  rate-88200) echo "-r 88200" ;;
+  rate-96000) echo "-r 96000" ;;
+  rate-192000) echo "-r 192000" ;;
   # Options documented as booleans, given something else.
   analog-flag-2) echo "-N 2" ;;
   uniform-5) echo "-U 5" ;;
@@ -271,15 +289,33 @@ for name in $CASES; do
   elif grep -q 'McASP error, abort' "$log"; then
     where="killed by libbela (setup had run)"
   elif [ "$exit_code" = 134 ]; then
-    # 128 + SIGABRT: a C++ exception nobody caught, thrown while
-    # parsing, so before any of the three calls above was reached.
-    where="aborted in the parse"
+    # 128 + SIGABRT: a C++ exception nobody caught. Which call it was
+    # thrown from does not show in the log — `--json-string {` throws
+    # before any Bela call and `-r 192000` throws inside
+    # `Bela_initAudio`, and both look like this. Appending an argument
+    # the parse rejects is what tells them apart: a case that still
+    # fails with `Error::CommandLine` got through the parse first.
+    where="aborted (uncaught C++ exception)"
   elif [ "$exit_code" = 124 ]; then
     where="nowhere: it ran"
   else
     where="unclassified"
   fi
   detail="$where (exit $exit_code)"
+  # What the run said about itself, for the cases that got far enough to
+  # say anything. `setup` reports the configuration libbela claims, and
+  # the block count is the only part of a run that the hardware has a
+  # say in: divided by the seconds the run lasted it is the rate the
+  # audio thread kept, which is what separates an option the board
+  # honoured from one it accepted and ignored.
+  reported="$(awk '/^setup:/ { print $2; exit }' "$log")"
+  blocks="$(awk -F'[ ,]+' '/^cleanup:/ { print $2; exit }' "$log")"
+  if [ -n "$reported" ]; then
+    detail="$detail, setup $reported Hz"
+  fi
+  if [ -n "$blocks" ]; then
+    detail="$detail, $blocks blocks in ${RUN_TIMEOUT}s"
+  fi
   printf '%s\t%s\n' "$name" "$detail" >> "$RESULTS"
   echo "  -> $detail"
 done

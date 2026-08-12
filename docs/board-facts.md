@@ -733,7 +733,64 @@ caller different things.
   | `--codec-mode garbage` | nothing; it ran |
   | `-X 8` | nothing; it ran |
   | `-Y 0,1` | nothing; it ran |
+  | `-r 8000` … `-r 96000` | nothing; they ran |
+  | `-r 176400`, `-r 192000` | **`SIGABRT` inside `Bela_initAudio`** |
 
+- **`-r` is real, and it moves the audio, analog and digital rates
+  together.** Measured 2026-08-12 with the rate ladder in
+  `scripts/probe-command-line.sh`, one process per rate, each run
+  bounded at 15 s and asking for 32-frame blocks. Every rate came up
+  and `setup` reported the number that was asked for — as the digital
+  rate too, against `Bela.h`'s "Digital sample rate in Hz (currently
+  always 44100.0)".
+
+  | `-r` | blocks rendered | frames elapsed | those frames at the reported rate |
+  |---|---|---|---|
+  | 22050 | 9906 | 316992 | 14.38 s |
+  | 32000 | 14372 | 459904 | 14.37 s |
+  | 44100 (the default) | 19788 | 633216 | 14.36 s |
+  | 48000 | 21364 | 683648 | 14.24 s |
+  | 88200 | 39365 | 1259680 | 14.28 s |
+  | 96000 | 42921 | 1373472 | 14.31 s |
+
+  The last column is what settles it. A board that took the number,
+  echoed it back through `setup` and went on clocking at 44100 would
+  have rendered the same ≈19800 blocks in every row; instead the block
+  count follows the rate and the time those blocks account for stays
+  where it is, at about 14.3 s of the 15 s each run was given — the
+  remaining 0.7 s being the startup the run did not spend rendering,
+  which is the same figure `scripts/smoke-test.sh` sets its startup
+  allowance from. No row reported an underrun. So 48 kHz and 96 kHz
+  are rates this hardware runs at, not settings it accepts and
+  ignores.
+
+  The command line is also the only way to reach them from this crate:
+  `Settings` has no sample-rate setter, so a program asks either by
+  passing `-r` on to `Bela::run_with_args` or by writing
+  `BelaInitSettings::audioSampleRate` through `bela-sys`.
+
+  **What that does not establish is the codec's exact clock.** The
+  block count resolves the rate to about a percent, which separates
+  48000 from 44100 and says nothing about 44101 from 44100. `-r 44101`
+  and `-r 50000` are accepted and render at their nominal rate to
+  within that same percent, which is either a divider that takes
+  arbitrary numbers or one that snaps to a neighbour it does not
+  report; a frequency counter on a pin would say which, and a block
+  count cannot.
+- **Above 96 kHz libbela takes the process down.** `-r 176400` and
+  `-r 192000` both end on `terminate called after throwing an instance
+  of 'std::runtime_error'`, `what(): I2c_Codec: invalid combination of
+  sample rate and frame size` and `SIGABRT` (exit 134), printing
+  nothing at all beforehand — not even with `-v`. The message names
+  the frame size, and the frame size does not change it: 192000 fails
+  identically at `-p 16`, `-p 64` and `-p 128`, while 96000 runs at
+  `-p 128` just as it does at 32.
+
+  It is thrown after the parse, not during it. `-r 192000 --nonsense`
+  fails with this crate's `Error::CommandLine` and no abort at all, in
+  either argument order, so `Bela_getopt_long` ran to completion and
+  the throw belongs to `Bela_initAudio` — which makes this the case
+  that a bare exit code of 134 cannot classify on its own.
 - **`Bela_usage` advertises three options libbela does not implement.**
   `--receive-port`, `--transmit-port` and `--server-name` are printed
   by it — and therefore by this crate's `print_usage` — but appear in
