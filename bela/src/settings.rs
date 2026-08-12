@@ -1,7 +1,6 @@
 use core::ffi::c_int;
 use core::fmt;
 use core::num::NonZeroU32;
-use core::ptr;
 
 use bela_sys::BelaInitSettings;
 
@@ -425,6 +424,17 @@ fn to_c_int(value: u32) -> c_int {
 /// [`Bela::new`](crate::Bela::new). Refusing the request costs
 /// nothing; refusing the result costs the process.
 ///
+/// # More than the C structure
+///
+/// [`Settings::cpu_monitoring`] is not a `BelaInitSettings` field —
+/// it is a separate C call the audio system makes just before
+/// `Bela_initAudio` — so it is carried here alongside the structure
+/// and reported by [`cpu_monitoring`](ResolvedSettings::cpu_monitoring).
+/// Without it this view would be missing the one setting that decides
+/// whether [`BlockContext::cpu_usage`](crate::BlockContext::cpu_usage)
+/// answers at all, and an application built around that reading would
+/// have nothing to check.
+///
 /// # What is not here
 ///
 /// `numAudioInChannels` and `numAudioOutChannels`, which `Bela.h`
@@ -439,11 +449,14 @@ fn to_c_int(value: u32) -> c_int {
 /// [`as_sys`](ResolvedSettings::as_sys) reaches the whole C structure
 /// for anything else, including the fields this crate has no safe
 /// vocabulary for.
-#[repr(transparent)]
-pub struct ResolvedSettings(BelaInitSettings);
+pub struct ResolvedSettings<'a> {
+    raw: &'a BelaInitSettings,
+    cpu_monitoring: Option<NonZeroU32>,
+}
 
-impl ResolvedSettings {
-    /// Borrows resolved settings as the view an application sees.
+impl<'a> ResolvedSettings<'a> {
+    /// Borrows resolved settings, and the monitoring cycle that goes
+    /// with them, as the view an application sees.
     ///
     /// Not public: what makes this a *resolved* configuration is where
     /// the audio system calls it from, and a view built anywhere else
@@ -456,17 +469,21 @@ impl ResolvedSettings {
                       the host"
         )
     )]
-    pub(crate) const fn from_ref(raw: &BelaInitSettings) -> &Self {
-        // Safety: repr(transparent) makes the cast sound, and the
-        // borrow is the caller's.
-        unsafe { &*ptr::from_ref(raw).cast::<Self>() }
+    pub(crate) const fn new(raw: &'a BelaInitSettings, cpu_monitoring: Option<NonZeroU32>) -> Self {
+        Self {
+            raw,
+            cpu_monitoring,
+        }
     }
 
     /// Read access to the underlying `BelaInitSettings`.
+    ///
+    /// Everything except [`cpu_monitoring`](ResolvedSettings::cpu_monitoring),
+    /// which libbela keeps nowhere in this structure.
     #[must_use]
     #[inline]
     pub const fn as_sys(&self) -> &BelaInitSettings {
-        &self.0
+        self.raw
     }
 
     /// Requested number of audio frames per period ("block size").
@@ -481,7 +498,7 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn period_size(&self) -> i32 {
-        self.0.periodSize
+        self.raw.periodSize
     }
 
     /// Requested audio sample rate in Hz.
@@ -492,14 +509,14 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn audio_sample_rate(&self) -> f32 {
-        self.0.audioSampleRate
+        self.raw.audioSampleRate
     }
 
     /// Whether the analog input and output were asked for.
     #[must_use]
     #[inline]
     pub const fn use_analog(&self) -> bool {
-        self.0.useAnalog != 0
+        self.raw.useAnalog != 0
     }
 
     /// Requested number of analog input channels.
@@ -512,7 +529,7 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn num_analog_in_channels(&self) -> i32 {
-        self.0.numAnalogInChannels
+        self.raw.numAnalogInChannels
     }
 
     /// Requested number of analog output channels.
@@ -523,21 +540,21 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn num_analog_out_channels(&self) -> i32 {
-        self.0.numAnalogOutChannels
+        self.raw.numAnalogOutChannels
     }
 
     /// Whether the programmable GPIOs were asked for.
     #[must_use]
     #[inline]
     pub const fn use_digital(&self) -> bool {
-        self.0.useDigital != 0
+        self.raw.useDigital != 0
     }
 
     /// Requested number of digital (GPIO) channels.
     #[must_use]
     #[inline]
     pub const fn num_digital_channels(&self) -> i32 {
-        self.0.numDigitalChannels
+        self.raw.numDigitalChannels
     }
 
     /// How many threads `render` will be called on, which is how many
@@ -554,7 +571,7 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn thread_count(&self) -> usize {
-        render_threads(&self.0)
+        render_threads(self.raw)
     }
 
     /// Whether the analog channels were asked to be resampled to the
@@ -562,35 +579,58 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn uniform_sample_rate(&self) -> bool {
-        self.0.uniformSampleRate != 0
+        self.raw.uniformSampleRate != 0
     }
 
     /// Whether high-performance mode was asked for.
     #[must_use]
     #[inline]
     pub const fn high_performance_mode(&self) -> bool {
-        self.0.highPerformanceMode != 0
+        self.raw.highPerformanceMode != 0
     }
 
     /// Whether underrun detection and logging were asked for.
     #[must_use]
     #[inline]
     pub const fn detect_underruns(&self) -> bool {
-        self.0.detectUnderruns != 0
+        self.raw.detectUnderruns != 0
     }
 
     /// Whether libbela's own verbose logging was asked for.
     #[must_use]
     #[inline]
     pub const fn verbose(&self) -> bool {
-        self.0.verbose != 0
+        self.raw.verbose != 0
     }
 
     /// Whether the speaker amplifiers were asked to come up muted.
     #[must_use]
     #[inline]
     pub const fn begin_muted(&self) -> bool {
-        self.0.beginMuted != 0
+        self.raw.beginMuted != 0
+    }
+
+    /// The CPU monitoring acquisition cycle that was asked for, in
+    /// measurements per cycle, or `None` when monitoring is off.
+    ///
+    /// What [`Settings::cpu_monitoring`] said, and the one thing here
+    /// that is not a `BelaInitSettings` field: monitoring is a separate
+    /// C call, which the audio system makes immediately after this hook
+    /// has accepted the configuration. Nothing else can change it — it
+    /// has no command-line option — so unlike the rest of this view it
+    /// is the application's own setting read back, and it is here
+    /// because an application that needs
+    /// [`BlockContext::cpu_usage`](crate::BlockContext::cpu_usage) to
+    /// answer has no other way to find out before `setup`.
+    ///
+    /// A cycle that is here has already passed this crate's checks:
+    /// [`Error::CpuMonitoringCycle`] for a length libbela cannot take
+    /// and [`Error::CpuMonitoringPeriodSize`] for a period size where
+    /// the counters would not describe the thread that renders.
+    #[must_use]
+    #[inline]
+    pub const fn cpu_monitoring(&self) -> Option<NonZeroU32> {
+        self.cpu_monitoring
     }
 
     /// Which GPIO pin is monitored for stopping the program, or `None`
@@ -605,7 +645,7 @@ impl ResolvedSettings {
     #[must_use]
     #[inline]
     pub const fn stop_button_pin(&self) -> Option<u32> {
-        let pin = self.0.stopButtonPin;
+        let pin = self.raw.stopButtonPin;
         if pin < 0 {
             None
         } else {
@@ -622,7 +662,7 @@ impl ResolvedSettings {
 /// has a `Debug` of its own, with the callback pointers and the 256
 /// bytes of `pruFilename` in it, and [`as_sys`](ResolvedSettings::as_sys)
 /// is the way to it.
-impl fmt::Debug for ResolvedSettings {
+impl fmt::Debug for ResolvedSettings<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResolvedSettings")
             .field("period_size", &self.period_size())
@@ -638,6 +678,7 @@ impl fmt::Debug for ResolvedSettings {
             .field("detect_underruns", &self.detect_underruns())
             .field("verbose", &self.verbose())
             .field("begin_muted", &self.begin_muted())
+            .field("cpu_monitoring", &self.cpu_monitoring())
             .field("stop_button_pin", &self.stop_button_pin())
             .finish_non_exhaustive()
     }
@@ -730,6 +771,11 @@ pub(crate) const fn check_resolved(raw: &BelaInitSettings) -> Result<(), Error> 
 /// reset, no render states allocated, no audio hardware brought up. A
 /// refusal from there is an ordinary [`Error`] and the process is left
 /// as it was.
+///
+/// `cpu_monitoring` is the cycle [`Settings::cpu_monitoring`] asked
+/// for, which is both what decides whether the period size is checked
+/// at all and the one part of the configuration the application cannot
+/// read off `BelaInitSettings`, so it is passed on to the view.
 #[cfg_attr(
     not(bela_device),
     allow(
@@ -739,11 +785,11 @@ pub(crate) const fn check_resolved(raw: &BelaInitSettings) -> Result<(), Error> 
 )]
 pub(crate) fn check_supported<T: BelaApplication>(
     raw: &BelaInitSettings,
-    monitoring: bool,
+    cpu_monitoring: Option<NonZeroU32>,
     application: &T,
 ) -> Result<(), Error> {
     check_resolved(raw)?;
-    if monitoring {
+    if cpu_monitoring.is_some() {
         // Needs the resolved period size: unset in `Settings` means
         // Bela's default, not "no period size". The raw value is
         // signed even though Settings only accepts u32; map a negative
@@ -753,7 +799,7 @@ pub(crate) fn check_supported<T: BelaApplication>(
         cpu::check_period_size(period_size)?;
     }
     application
-        .validate_settings(ResolvedSettings::from_ref(raw))
+        .validate_settings(&ResolvedSettings::new(raw, cpu_monitoring))
         .map_err(Error::SettingsRefused)
 }
 
@@ -796,6 +842,12 @@ mod tests {
     const NEEDS_EIGHT: &str = "this application reads eight analog inputs";
     /// What an application refusing extra render threads says.
     const NEEDS_ONE_THREAD: &str = "this application renders on one thread";
+    /// What an application refusing to run unmonitored says.
+    const NEEDS_MONITORING: &str = "this application reports the CPU usage of every block";
+
+    fn cycle_of(measurements: u32) -> NonZeroU32 {
+        NonZeroU32::new(measurements).expect("the test cycles are non-zero")
+    }
 
     /// Says nothing about the settings, which is the default hook.
     struct Anything;
@@ -814,11 +866,31 @@ mod tests {
     impl BelaApplication for NeedsEightAnalogInputs {
         type RenderState = ();
 
-        fn validate_settings(&self, settings: &ResolvedSettings) -> Result<(), &'static str> {
+        fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
             if settings.num_analog_in_channels() < 8 {
                 return Err(NEEDS_EIGHT);
             }
             Ok(())
+        }
+
+        fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+
+        fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+    }
+
+    /// Reports the CPU usage of every block, so it will not run
+    /// without the monitoring that makes the reading exist.
+    struct NeedsMonitoring;
+
+    impl BelaApplication for NeedsMonitoring {
+        type RenderState = ();
+
+        fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
+            if settings.cpu_monitoring().is_some() {
+                Ok(())
+            } else {
+                Err(NEEDS_MONITORING)
+            }
         }
 
         fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
@@ -832,7 +904,7 @@ mod tests {
     impl BelaApplication for SingleThreaded {
         type RenderState = ();
 
-        fn validate_settings(&self, settings: &ResolvedSettings) -> Result<(), &'static str> {
+        fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
             if settings.thread_count() == 1 {
                 Ok(())
             } else {
@@ -1142,7 +1214,7 @@ mod tests {
         raw.threadCount = 4;
         raw.audioSampleRate = 48000.0;
 
-        let settings = ResolvedSettings::from_ref(&raw);
+        let settings = ResolvedSettings::new(&raw, None);
 
         assert_eq!(settings.period_size(), 64);
         assert_eq!(settings.audio_sample_rate(), 48000.0);
@@ -1171,7 +1243,7 @@ mod tests {
         raw.threadCount = 0;
         raw.stopButtonPin = -1;
 
-        let settings = ResolvedSettings::from_ref(&raw);
+        let settings = ResolvedSettings::new(&raw, None);
 
         assert_eq!(settings.thread_count(), 1);
         assert_eq!(settings.stop_button_pin(), None);
@@ -1182,7 +1254,7 @@ mod tests {
         // The default hook: a trait implementation from before this
         // existed keeps initialising exactly as it did.
         assert_eq!(
-            check_supported(&fake_defaults(), false, &Anything),
+            check_supported(&fake_defaults(), None, &Anything),
             Ok(()),
             "the default validate_settings should accept Bela's own defaults"
         );
@@ -1194,12 +1266,12 @@ mod tests {
         Settings::new().num_analog_in_channels(4).apply_to(&mut raw);
 
         assert_eq!(
-            check_supported(&raw, false, &NeedsEightAnalogInputs),
+            check_supported(&raw, None, &NeedsEightAnalogInputs),
             Err(Error::SettingsRefused(NEEDS_EIGHT))
         );
         // And accepts the configuration it was built for.
         assert_eq!(
-            check_supported(&fake_defaults(), false, &NeedsEightAnalogInputs),
+            check_supported(&fake_defaults(), None, &NeedsEightAnalogInputs),
             Ok(())
         );
     }
@@ -1215,14 +1287,35 @@ mod tests {
         Settings::new()
             .thread_count(NonZeroU32::new(1).expect("1 is not zero"))
             .apply_to(&mut raw);
-        assert_eq!(check_supported(&raw, false, &SingleThreaded), Ok(()));
+        assert_eq!(check_supported(&raw, None, &SingleThreaded), Ok(()));
 
         raw.threadCount = 4;
 
         assert_eq!(
-            check_supported(&raw, false, &SingleThreaded),
+            check_supported(&raw, None, &SingleThreaded),
             Err(Error::SettingsRefused(NEEDS_ONE_THREAD))
         );
+    }
+
+    #[test]
+    fn an_application_sees_the_cpu_monitoring_that_is_not_in_the_c_settings() {
+        // `Settings::cpu_monitoring` is a separate C call and leaves
+        // `BelaInitSettings` untouched, so without it being carried
+        // into the view an application could not tell an audio system
+        // that will report CPU usage from one that will not.
+        let raw = fake_defaults();
+        let cycle = cycle_of(2000);
+
+        assert_eq!(check_supported(&raw, Some(cycle), &NeedsMonitoring), Ok(()));
+        assert_eq!(
+            check_supported(&raw, None, &NeedsMonitoring),
+            Err(Error::SettingsRefused(NEEDS_MONITORING))
+        );
+        assert_eq!(
+            ResolvedSettings::new(&raw, Some(cycle)).cpu_monitoring(),
+            Some(cycle)
+        );
+        assert_eq!(ResolvedSettings::new(&raw, None).cpu_monitoring(), None);
     }
 
     #[test]
@@ -1237,7 +1330,7 @@ mod tests {
         raw.numAnalogInChannels = 4;
 
         assert_eq!(
-            check_supported(&raw, false, &NeedsEightAnalogInputs),
+            check_supported(&raw, None, &NeedsEightAnalogInputs),
             Err(Error::SampleRate)
         );
     }
@@ -1252,13 +1345,13 @@ mod tests {
 
         let period_size = u32::try_from(raw.periodSize).expect("the period size above is positive");
         assert_eq!(
-            check_supported(&raw, true, &NeedsEightAnalogInputs),
+            check_supported(&raw, Some(cycle_of(2000)), &NeedsEightAnalogInputs),
             Err(Error::CpuMonitoringPeriodSize(period_size))
         );
         // Without monitoring there is no such limit, and the
         // application is the only one with anything to say.
         assert_eq!(
-            check_supported(&raw, false, &NeedsEightAnalogInputs),
+            check_supported(&raw, None, &NeedsEightAnalogInputs),
             Err(Error::SettingsRefused(NEEDS_EIGHT))
         );
     }

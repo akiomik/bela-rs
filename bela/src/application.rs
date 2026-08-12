@@ -220,7 +220,7 @@ pub trait BelaApplication: Send + Sync {
     /// # struct Stereo;
     /// # impl BelaApplication for Stereo {
     /// # type RenderState = ();
-    /// fn validate_settings(&self, settings: &ResolvedSettings) -> Result<(), &'static str> {
+    /// fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
     ///     if settings.thread_count() != 1 {
     ///         return Err("this application renders on one thread");
     ///     }
@@ -236,7 +236,13 @@ pub trait BelaApplication: Send + Sync {
     ///
     /// # It sees the request, not the hardware
     ///
-    /// [`ResolvedSettings`] is what will be asked of libbela.
+    /// [`ResolvedSettings`] is what will be asked of libbela — the
+    /// whole of it, including
+    /// [`Settings::cpu_monitoring`](crate::Settings::cpu_monitoring),
+    /// which is a separate C call rather than a field of the settings
+    /// structure and is carried into the view so that an application
+    /// relying on the CPU reading can insist on it.
+    ///
     /// What the board makes of it is
     /// [`SetupContext`](crate::SetupContext), which does not exist
     /// until `Bela_initAudio` has run — so a check here cannot promise
@@ -250,7 +256,7 @@ pub trait BelaApplication: Send + Sync {
     /// [`Error`](crate::Error) allocation-free and `Copy`, which is
     /// what lets it be returned from a real-time-adjacent API without
     /// a heap behind it.
-    fn validate_settings(&self, _settings: &ResolvedSettings) -> Result<(), &'static str> {
+    fn validate_settings(&self, _settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
         Ok(())
     }
 

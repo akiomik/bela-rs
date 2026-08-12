@@ -5,6 +5,8 @@ use core::time::Duration;
 use std::ffi::OsStr;
 use std::thread;
 
+use bela_sys::BelaInitSettings;
+
 use crate::application::BelaApplication;
 use crate::cmdline::{self, Arguments};
 use crate::cpu;
@@ -13,6 +15,55 @@ use crate::runtime::{Runtime, trampoline, user_data};
 use crate::settings::{self, Settings};
 use crate::singleton::Claim;
 use crate::task;
+
+/// Owns the `BelaInitSettings` allocation while it is being filled in,
+/// so that leaving [`Bela::new`] frees it however the leaving happens.
+///
+/// The settings are libbela's to allocate and free —
+/// `Bela_InitSettings_alloc` hands back a structure with heap behind
+/// its gain arrays — and they are wanted for exactly as long as the
+/// `Bela_initAudio` call they are the argument to. Freeing at each
+/// `return` was enough while everything in between was this crate's
+/// own code. It stopped being enough with
+/// [`BelaApplication::validate_settings`], which is application code
+/// called from inside that window: a panic there unwinds past every
+/// `return`, and a caller that catches it around [`Bela::new`] would
+/// leak the allocation once per attempt. None of that is undefined
+/// behaviour, which is why a guard and nothing stronger — but a
+/// program that retries in a loop should not lose memory for it.
+struct InitSettings {
+    raw: *mut BelaInitSettings,
+}
+
+impl InitSettings {
+    /// Allocates the settings and takes ownership of them.
+    fn alloc() -> Self {
+        Self {
+            // Safety: no arguments and no state to get wrong; the
+            // pointer belongs to this value from here on.
+            raw: unsafe { bela_sys::Bela_InitSettings_alloc() },
+        }
+    }
+
+    /// The pointer libbela's own functions take, borrowed for as long
+    /// as this guard is.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the settings are written through the pointer, so an exclusive borrow is what \
+                  keeps a second writer out; the compiler cannot see that through a raw pointer"
+    )]
+    const fn as_mut_ptr(&mut self) -> *mut BelaInitSettings {
+        self.raw
+    }
+}
+
+impl Drop for InitSettings {
+    fn drop(&mut self) {
+        // Safety: allocated by `Bela_InitSettings_alloc` and freed
+        // exactly once, since nothing else holds the pointer.
+        unsafe { bela_sys::Bela_InitSettings_free(self.raw) };
+    }
+}
 
 /// Owns an initialised Bela audio system and the application driven by
 /// it.
@@ -278,8 +329,9 @@ impl<T: BelaApplication> Bela<T> {
             .cpu_monitoring_cycle()
             .map(cpu::check_cycle)
             .transpose()?;
+        let mut init_settings = InitSettings::alloc();
         let (ret, runtime) = unsafe {
-            let raw = bela_sys::Bela_InitSettings_alloc();
+            let raw = init_settings.as_mut_ptr();
             bela_sys::Bela_defaultSettings(raw);
             settings.apply_to(&mut *raw);
             // The command line last, so it overrides the defaults the
@@ -306,12 +358,13 @@ impl<T: BelaApplication> Bela<T> {
             let prepared = arguments
                 .as_mut()
                 .map_or(Ok(()), |arguments| cmdline::parse(arguments, &mut *raw))
-                .and_then(|()| settings::check_supported(&*raw, monitoring.is_some(), &application))
+                .and_then(|()| {
+                    settings::check_supported(&*raw, settings.cpu_monitoring_cycle(), &application)
+                })
                 .and_then(|()| cpu::apply_monitoring(monitoring));
-            if let Err(error) = prepared {
-                bela_sys::Bela_InitSettings_free(raw);
-                return Err(error);
-            }
+            // No free here, and none below: `init_settings` owns the
+            // allocation and frees it however this scope is left.
+            prepared?;
             // Built here rather than earlier, because how many render
             // states it needs is a resolved setting like any other:
             // `--thread-count` on the command line has just had its
@@ -326,9 +379,11 @@ impl<T: BelaApplication> Bela<T> {
             (*raw).render_post = Some(trampoline::render_post::<T>);
             (*raw).cleanup = Some(trampoline::cleanup::<T>);
             let ret = bela_sys::Bela_initAudio(raw, user_data(runtime));
-            bela_sys::Bela_InitSettings_free(raw);
             (ret, runtime)
         };
+        // libbela has copied whatever it keeps by now: the settings
+        // were only ever an argument to the call above.
+        drop(init_settings);
         if ret != 0 {
             // The audio system never took ownership of the callbacks.
             drop(unsafe { Box::from_raw(runtime) });

@@ -27,14 +27,17 @@ and this project adheres to
   system is about to be built with that `validate_settings` is given.
   It reports what was asked for — the period size, the sample rate, the
   analog and digital configuration, the resolved render thread count,
-  and the flags `Settings` sets — and not what the board will deliver,
-  which is `SetupContext` and does not exist until `Bela_initAudio` has
-  run. `as_sys` reaches the whole `BelaInitSettings` for what has no
-  accessor.
+  the CPU monitoring cycle and the flags `Settings` sets — and not what
+  the board will deliver, which is `SetupContext` and does not exist
+  until `Bela_initAudio` has run. `Settings::cpu_monitoring` is there
+  although it is not a `BelaInitSettings` field but a separate C call,
+  because it decides whether `BlockContext::cpu_usage` answers at all
+  and an application built around that reading has nothing else to
+  check before `setup`. `as_sys` reaches the whole `BelaInitSettings`
+  for what has no accessor.
 - `Error::SettingsRefused`, which carries the `&'static str`
   `validate_settings` returned. Static so that `Error` stays `Copy` and
   allocation-free.
-
 - `examples/io_digital --repeat`, a diagnostic mode for the libbela
   context-FIFO persistence problem. It reapplies the input/output
   directions and the current output values in every application block,

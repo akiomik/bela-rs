@@ -147,7 +147,7 @@ struct NeedsFourThreads {
 impl BelaApplication for NeedsFourThreads {
     type RenderState = ();
 
-    fn validate_settings(&self, settings: &ResolvedSettings) -> Result<(), &'static str> {
+    fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
         if settings.thread_count() == REQUIRED_THREADS.get() as usize {
             Ok(())
         } else {
