@@ -175,7 +175,7 @@ pub use application::{BelaApplication, ThreadInfo};
 #[cfg(bela_device)]
 pub use cmdline::print_usage;
 pub use context::{
-    BlockContext, CallbackContext, CleanupContext, PinMode, RenderContext, SetupContext,
+    BlockContext, CallbackContext, CleanupContext, PairedIo, PinMode, RenderContext, SetupContext,
 };
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
