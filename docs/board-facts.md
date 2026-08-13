@@ -784,10 +784,10 @@ caller different things.
   96 kHz are rates this hardware runs at, not settings it accepts and
   ignores.
 
-  The command line is also the only way to reach them from this crate:
-  `Settings` has no sample-rate setter, so a program asks either by
-  passing `-r` on to `Bela::run_with_args` or by writing
-  `BelaInitSettings::audioSampleRate` through `bela-sys`.
+  Before #109, the command line was the only way to reach them from
+  this crate without writing `BelaInitSettings::audioSampleRate`
+  through `bela-sys` directly; `Settings::audio_sample_rate` is the
+  safe setter.
 
   **What that does not establish is the codec's exact clock.** The
   block count resolves the rate to about a percent, which separates
@@ -837,6 +837,25 @@ caller different things.
   either argument order, so `Bela_getopt_long` ran to completion and
   the throw belongs to `Bela_initAudio` — which makes this the case
   that a bare exit code of 134 cannot classify on its own.
+- **`Settings::audio_sample_rate` reaches the same rates the same
+  way.** Measured 2026-08-13 with `bela/examples/sample_rate`, one
+  process per rate, `Settings::audio_sample_rate` and `Bela::new` doing
+  the asking rather than `-r` and `Bela::new_with_args`:
+
+  | rate | result |
+  |---|---|
+  | 48000 | ran, `setup` reported 48000 Hz, analog and digital rates following |
+  | 96000 | ran, `setup` reported 96000 Hz, analog and digital rates following |
+  | 106000 | ran, `setup` reported 106000 Hz, analog and digital rates following |
+  | 108000 | `terminate called … I2c_Codec: invalid combination of sample rate and frame size`, `SIGABRT` (exit 134) |
+
+  The same three rates that ran through `-r` above ran through the
+  setter, and 108000 aborted the process the same way and with the
+  same message. Nothing distinguishes the two paths on this board: the
+  `NonZeroU32` -> C `float` conversion the setter does costs no
+  precision at any of these rates, and both end up writing the same
+  `BelaInitSettings::audioSampleRate` before `Bela_initAudio` is
+  called.
 - **`Bela_usage` advertises three options libbela does not implement.**
   `--receive-port`, `--transmit-port` and `--server-name` are printed
   by it — and therefore by this crate's `print_usage` — but appear in

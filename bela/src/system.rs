@@ -281,6 +281,16 @@ impl<T: BelaApplication> Bela<T> {
     /// in every application block restores the measured output loopback;
     /// see [`Settings::period_size`].
     ///
+    /// `--sample-rate` is the same story: it is parsed after `settings`
+    /// has already been applied, so it overrides
+    /// [`Settings::audio_sample_rate`] rather than being overridden by
+    /// it. Anything `atof` cannot read, and a negative rate, both
+    /// resolve to 0 and are then refused with [`Error::SampleRate`]
+    /// below — nothing above this method's own checks understands a
+    /// board's ceiling on what the rate can be, so a value past it is
+    /// passed on and can still abort the process from inside the codec;
+    /// see [`Settings::audio_sample_rate`].
+    ///
     /// # A malformed `--json-string` ends the process
     ///
     /// `--json-string {` throws an uncaught `nlohmann::json` exception

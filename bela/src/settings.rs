@@ -26,6 +26,7 @@ use crate::error::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Settings {
     period_size: Option<u32>,
+    audio_sample_rate: Option<NonZeroU32>,
     use_analog: Option<bool>,
     use_digital: Option<bool>,
     num_analog_in_channels: Option<u32>,
@@ -58,6 +59,7 @@ impl Settings {
     pub const fn new() -> Self {
         Self {
             period_size: None,
+            audio_sample_rate: None,
             use_analog: None,
             use_digital: None,
             num_analog_in_channels: None,
@@ -95,6 +97,43 @@ impl Settings {
     #[must_use]
     pub const fn period_size(mut self, frames: u32) -> Self {
         self.period_size = Some(frames);
+        self
+    }
+
+    /// The audio sample rate, in Hz.
+    ///
+    /// `NonZeroU32` rather than the `f32` the C field is: zero is the
+    /// one value [`check_resolved`] refuses, so keeping it out of the
+    /// type keeps that failure out of reach from this builder, and an
+    /// integer matches how the rest of this crate spells a hardware
+    /// quantity — [`thread_count`](Settings::thread_count) and
+    /// [`stop_button_pin`](Settings::stop_button_pin) narrow the same
+    /// way (C-CUSTOM-TYPE). What it cannot express is the C field's own
+    /// range: a negative rate, which only the command line can produce
+    /// and which resolves to 0 the same way a NaN from it does.
+    ///
+    /// # Nothing here checks what the hardware accepts
+    ///
+    /// A Bela Gem Stereo has been measured running at every rate from
+    /// 8000 Hz to 106000 Hz, with the analog and digital rates
+    /// following when [`uniform_sample_rate`](Settings::uniform_sample_rate)
+    /// is on, and aborting the process from inside the codec at 108000
+    /// Hz and above — see `docs/board-facts.md`. That ceiling is one
+    /// board's, not a portable libbela contract, so nothing here
+    /// compiles it in: a rate this method accepts can still end the
+    /// process on `SIGABRT` with nothing returned to the caller, the
+    /// same failure shape `--json-string {` has.
+    ///
+    /// # The command line still wins
+    ///
+    /// [`Bela::new_with_args`](crate::Bela::new_with_args) applies
+    /// `--sample-rate` after this builder's overrides, the same order
+    /// [`period_size`](Settings::period_size) loses to `--period` in —
+    /// so a rate set here is only the value a program starts with, not
+    /// one it is guaranteed to run under.
+    #[must_use]
+    pub const fn audio_sample_rate(mut self, hz: NonZeroU32) -> Self {
+        self.audio_sample_rate = Some(hz);
         self
     }
 
@@ -175,11 +214,13 @@ impl Settings {
     ///
     /// What it removes is a frame count that follows the analog
     /// channel count rather than the block. Measured on a Gem Stereo
-    /// with 16-frame audio blocks at 44100 Hz: with it off, 8 analog
-    /// input channels give 8 analog frames at 22050 Hz, 4 give 16 at
-    /// 44100 Hz and 2 give 32 at 88200 Hz. With it on, every one of
-    /// them gives 16 frames at 44100 Hz — the audio block's own —
-    /// which is what lets one loop over
+    /// with 16-frame audio blocks, against whatever
+    /// [`audio_sample_rate`](Settings::audio_sample_rate) resolved to:
+    /// with it off, 8 analog input channels give 8 analog frames per
+    /// block at half the audio rate, 4 give 16 frames at the audio rate
+    /// itself and 2 give 32 frames at twice the audio rate. With it on,
+    /// every one of them gives 16 frames at the audio rate — the audio
+    /// block's own — which is what lets one loop over
     /// [`audio_frames`](crate::BlockContext::audio_frames) read analog
     /// inputs as it goes. See `docs/board-facts.md`.
     #[must_use]
@@ -338,6 +379,9 @@ impl Settings {
         if let Some(v) = self.period_size {
             raw.periodSize = to_c_int(v);
         }
+        if let Some(v) = self.audio_sample_rate {
+            raw.audioSampleRate = to_c_float(v);
+        }
         if let Some(v) = self.use_analog {
             raw.useAnalog = c_int::from(v);
         }
@@ -390,6 +434,19 @@ enum StopButtonPin {
 // saturate instead of wrapping if one ever does.
 fn to_c_int(value: u32) -> c_int {
     c_int::try_from(value).unwrap_or(c_int::MAX)
+}
+
+// The measured rate ladder (docs/board-facts.md) tops out in the
+// hundreds of thousands, far inside an f32's 24-bit exact integer
+// range, so this loses no precision for any rate that has been seen to
+// run.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "audioSampleRate is a C float; requested rates stay far below where u32 -> f32 loses \
+              precision"
+)]
+const fn to_c_float(value: NonZeroU32) -> f32 {
+    value.get() as f32
 }
 
 /// The settings an audio system is about to be built with, as
@@ -980,9 +1037,34 @@ mod tests {
         Settings::new().apply_to(&mut raw);
 
         assert_eq!(raw.periodSize, 16);
+        assert_eq!(raw.audioSampleRate, 44100.0);
         assert_eq!(raw.useAnalog, 1);
         assert_eq!(raw.uniformSampleRate, 1);
         assert_eq!(raw.stopButtonPin, 115);
+    }
+
+    #[test]
+    fn an_audio_sample_rate_is_written_to_the_c_field() {
+        let mut raw = fake_defaults();
+        let hz = NonZeroU32::new(48000).expect("48000 is not zero");
+        Settings::new().audio_sample_rate(hz).apply_to(&mut raw);
+
+        assert_eq!(raw.audioSampleRate, 48000.0);
+    }
+
+    #[test]
+    fn the_command_line_overrides_a_configured_sample_rate() {
+        // The same order `Bela::new_with_args` applies them in:
+        // `settings.apply_to` first, `--sample-rate` parsed on top of
+        // it (`system.rs`'s `init`), so a rate set here is only the one
+        // the run starts with.
+        let mut raw = fake_defaults();
+        let hz = NonZeroU32::new(48000).expect("48000 is not zero");
+        Settings::new().audio_sample_rate(hz).apply_to(&mut raw);
+        assert_eq!(raw.audioSampleRate, 48000.0);
+
+        raw.audioSampleRate = 96000.0;
+        assert_eq!(raw.audioSampleRate, 96000.0);
     }
 
     #[test]
