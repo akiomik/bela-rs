@@ -24,6 +24,17 @@ and this project adheres to
   no longer required for it; `BELA_CXX` and `BELA_CC` still work as
   before for the existing wrapper, which remains usable during
   migration.
+- `Settings::audio_sample_rate(NonZeroU32)`, which writes
+  `BelaInitSettings::audioSampleRate` — the one field of it every other
+  builder method already had a setter for. `Bela::new_with_args` still
+  applies `--sample-rate` after `Settings`, so the command line keeps
+  the last word over a rate set here, the same way it already does over
+  `Settings::period_size`. Nothing here checks the rate against a
+  board's ceiling: 106000 Hz ran and 108000 Hz aborted the process from
+  inside the codec on the Gem Stereo this crate is measured against
+  (`docs/board-facts.md`), and that boundary is one board's, not a
+  portable libbela contract, so an unsupported rate can still end the
+  process the same way `--sample-rate` already could.
 
 ### Changed
 
@@ -31,6 +42,14 @@ and this project adheres to
   compatibility constraint — only one version of a crate carrying that
   `links` name may appear in a dependency graph. This does not change
   `bela`'s Rust API.
+- Breaking: adding `Settings::audio_sample_rate` shadows any
+  extension trait a downstream crate already defined under that name
+  to fill the gap this closes. Rust always resolves an inherent
+  method over a trait method of the same name, so a call that used to
+  reach such a trait now reaches this one instead — silently, if the
+  signatures happen to unify, or as a compile error if they do not,
+  since `NonZeroU32` accepts no implicit conversion. See "Minor or
+  patch: the drop-in test" in docs/release.md.
 
 ## [0.5.1] - 2026-08-13
 
