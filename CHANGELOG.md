@@ -42,6 +42,14 @@ and this project adheres to
   compatibility constraint — only one version of a crate carrying that
   `links` name may appear in a dependency graph. This does not change
   `bela`'s Rust API.
+- Breaking: adding `Settings::audio_sample_rate` shadows any
+  extension trait a downstream crate already defined under that name
+  to fill the gap this closes. Rust always resolves an inherent
+  method over a trait method of the same name, so a call that used to
+  reach such a trait now reaches this one instead — silently, if the
+  signatures happen to unify, or as a compile error if they do not,
+  since `NonZeroU32` accepts no implicit conversion. See "Minor or
+  patch: the drop-in test" in docs/release.md.
 
 ## [0.5.1] - 2026-08-13
 
