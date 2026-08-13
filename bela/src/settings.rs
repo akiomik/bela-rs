@@ -114,15 +114,21 @@ impl Settings {
     ///
     /// # Nothing here checks what the hardware accepts
     ///
-    /// A Bela Gem Stereo has been measured running at every rate from
-    /// 8000 Hz to 106000 Hz, with the analog and digital rates
-    /// following when [`uniform_sample_rate`](Settings::uniform_sample_rate)
-    /// is on, and aborting the process from inside the codec at 108000
-    /// Hz and above — see `docs/board-facts.md`. That ceiling is one
-    /// board's, not a portable libbela contract, so nothing here
-    /// compiles it in: a rate this method accepts can still end the
-    /// process on `SIGABRT` with nothing returned to the caller, the
-    /// same failure shape `--json-string {` has.
+    /// A Bela Gem Stereo has been measured running at the rates
+    /// `docs/board-facts.md` lists between 8000 Hz and 106000 Hz, with
+    /// the analog and digital rates following when
+    /// [`uniform_sample_rate`](Settings::uniform_sample_rate) is on,
+    /// and aborting the process from inside the codec at every rate
+    /// tried from 108000 Hz up. Those are discrete points, not a swept
+    /// range: 106000 and 108000 are the closest pair measured on either
+    /// side of the ceiling, the rates between them were never tried,
+    /// and neither were most of the rates between the ones in the
+    /// lower list — so a rate this method accepts because it looks
+    /// close to a known-good one, such as 105000 Hz, is untested and
+    /// can still end the process on `SIGABRT` with nothing returned to
+    /// the caller, the same failure shape `--json-string {` has. That
+    /// ceiling is one board's, not a portable libbela contract, which
+    /// is why nothing here compiles it in as a check.
     ///
     /// # The command line still wins
     ///
