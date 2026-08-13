@@ -58,6 +58,10 @@ welcome from someone who can check it against the hardware.
 
 ## Quick start
 
+```sh
+cargo add bela
+```
+
 Implement `BelaApplication` and hand it to `Bela::run`. `render` must
 be real-time safe: no allocation, blocking, system calls or panics.
 
@@ -98,8 +102,10 @@ what lets `Settings::thread_count` use all four of a Bela Gem's cores
 for one block. It is the same code either way; see
 [Multithreaded rendering](docs/multithreaded-rendering.md).
 
-Building requires a sysroot synced from the board; see
-[docs/cross-compile.md](docs/cross-compile.md) for the one-time setup.
+Building requires a sysroot synced from the board and a small
+`build.rs` of your own to relay link arguments; see
+[docs/cross-compile.md](docs/cross-compile.md) and [bela's downstream
+setup](bela/README.md#downstream-setup) for the one-time setup.
 
 ```sh
 export BELA_SYSROOT="$PWD/bela-sysroot"
