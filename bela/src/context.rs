@@ -19,8 +19,18 @@
 //! nothing, so a view that handed each of them `&mut [f32]` over all
 //! the outputs would be the aliasing the design exists to avoid. See
 //! `docs/multithreaded-rendering.md`.
+//!
+//! Reading and writing in the same loop cannot be done through
+//! `audio_in()` and `audio_out()` together — the first borrows `&self`,
+//! the second `&mut self`, and holding both at once does not compile.
+//! [`PairedIo`], returned by `audio_io()` / `analog_io()` on both
+//! [`BlockContext`] and [`RenderContext`], is one borrow that reads the
+//! whole block and writes this view's output range, with a
+//! [`frames`](PairedIo::frames) path that walks the two aligned.
 
 use core::fmt;
+use core::iter;
+use core::mem;
 use core::ops::Range;
 use core::slice;
 
@@ -445,7 +455,16 @@ macro_rules! from_mut_ptr {
                     "`].\n\n# Safety\n\n`ptr` must be non-null, properly aligned, and point to a \
                      live `BelaContext` that is not accessed through any other reference for the \
                      duration of `'a`. The buffer pointers inside must be either null or valid \
-                     for the lengths implied by the frame and channel counts.\n\nThe result \
+                     for the lengths implied by the frame and channel counts, and for each \
+                     domain — audio, analog — the input buffer must not overlap the output \
+                     buffer: [`PairedIo`] borrows both from one call and relies on that \
+                     separation. Every context libbela hands to a callback satisfies it — \
+                     `BelaContextManager` (`/root/Bela/core/BelaContextManager.cpp`) allocates \
+                     `audioInV`/`audioOutV` and `analogInV`/`analogOutV` as independent \
+                     `std::vector<float>`s and stores each one's own `.data()` pointer in the \
+                     context — but it is a constraint on what `ptr` may point to that this crate \
+                     cannot check, so it is one a context built by hand or by a test fixture must \
+                     keep too.\n\nThe result \
                      stands in for the context of the ", $phase, " callback, and some accessors \
                      take it as proof of being in one — see the type documentation for what they \
                      rely on. A context conjured up elsewhere is not that proof."
@@ -465,6 +484,171 @@ from_mut_ptr!(
     BlockContext: "render_pre / render_post",
     RenderContext: "render",
 );
+
+/// A single borrow over one domain's whole-block input and this view's
+/// output range.
+///
+/// Audio comes from [`audio_io`](BlockContext::audio_io) /
+/// [`RenderContext::audio_io`], analog from
+/// [`analog_io`](BlockContext::analog_io) /
+/// [`RenderContext::analog_io`].
+///
+/// [`input`](PairedIo::input) always covers the whole block, the same
+/// as `audio_in()`. [`output`](PairedIo::output) and
+/// [`frames`](PairedIo::frames) are confined to
+/// [`output_range`](PairedIo::output_range) instead: the whole block
+/// from a [`BlockContext`], this thread's share from a
+/// [`RenderContext`] — the same range `audio_frame_range()` and its
+/// analog counterpart already describe there. That asymmetry is
+/// [`RenderContext`]'s, not this type's; on a [`BlockContext`] input and
+/// output cover the same frames.
+///
+/// There is no `digital_io`. `BelaContext::digital` is one combined
+/// input/output word buffer — the pin directions and values share it —
+/// so a paired view over it would be two aliasing references to the
+/// same memory, which is exactly what this type exists to avoid handing
+/// out. [`BlockContext::digital`] / [`BlockContext::digital_mut`] (and
+/// their `RenderContext` counterparts) already reach that buffer.
+pub struct PairedIo<'a> {
+    input: &'a [f32],
+    in_channels: usize,
+    output: &'a mut [f32],
+    out_channels: usize,
+    output_range: Range<usize>,
+}
+
+// A manual impl, not `#[derive(Debug)]`, for the same reason
+// `metadata_debug!` leaves the buffers out: a block is thousands of
+// samples, and printing them from a callback would be a real-time
+// hazard dressed as a debug line.
+impl fmt::Debug for PairedIo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PairedIo")
+            .field("in_channels", &self.in_channels)
+            .field("out_channels", &self.out_channels)
+            .field("output_range", &self.output_range)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> PairedIo<'a> {
+    const fn new(
+        input: &'a [f32],
+        in_channels: usize,
+        output: &'a mut [f32],
+        out_channels: usize,
+        output_range: Range<usize>,
+    ) -> Self {
+        Self {
+            input,
+            in_channels,
+            output,
+            out_channels,
+            output_range,
+        }
+    }
+
+    /// The whole block's input samples, interleaved. Length is
+    /// `frames * in_channels()`, where `frames` is whichever of
+    /// `audio_frames()` / `analog_frames()` matches this view's domain.
+    #[must_use]
+    #[inline]
+    pub const fn input(&self) -> &[f32] {
+        self.input
+    }
+
+    /// Number of input channels; see [`input`](PairedIo::input) for the
+    /// layout it multiplies into.
+    #[must_use]
+    #[inline]
+    pub const fn in_channels(&self) -> usize {
+        self.in_channels
+    }
+
+    /// This view's output samples, interleaved — the frames of
+    /// [`output_range`](PairedIo::output_range), so index 0 is channel
+    /// 0 of `output_range().start`, not of block frame 0.
+    #[inline]
+    pub const fn output(&mut self) -> &mut [f32] {
+        self.output
+    }
+
+    /// Number of output channels; see [`output`](PairedIo::output) for
+    /// the layout it multiplies into.
+    #[must_use]
+    #[inline]
+    pub const fn out_channels(&self) -> usize {
+        self.out_channels
+    }
+
+    /// The block frames [`output`](PairedIo::output) and
+    /// [`frames`](PairedIo::frames) cover.
+    #[must_use]
+    #[inline]
+    pub const fn output_range(&self) -> Range<usize> {
+        self.output_range.start..self.output_range.end
+    }
+
+    /// Reads and writes one frame at a time: for each frame in
+    /// [`output_range`](PairedIo::output_range), the input channels at
+    /// that same block frame paired with the output channels to fill
+    /// in.
+    ///
+    /// This is the aligned path the module documentation promises:
+    /// `input()` indexes from block frame 0 and `output()` from
+    /// `output_range().start`, and `frames()` walks both origins
+    /// together so a caller never subtracts the offset by hand — the
+    /// mistake a [`RenderContext`] view invites, since its input and
+    /// output do not start at the same block frame.
+    ///
+    /// ```
+    /// # use bela::RenderContext;
+    /// # fn passthrough(context: &mut RenderContext) {
+    /// let mut io = context.audio_io();
+    /// for (input, output) in io.frames() {
+    ///     for (sample, value) in output.iter_mut().zip(input) {
+    ///         *sample = *value;
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub fn frames(&mut self) -> impl Iterator<Item = (&[f32], &mut [f32])> + '_ {
+        let start = self.output_range.start;
+        let len = self.output_range.end - self.output_range.start;
+        let in_channels = self.in_channels;
+        let out_channels = self.out_channels;
+        let input = self.input;
+        let mut output: &mut [f32] = self.output;
+        let mut index = 0_usize;
+        iter::from_fn(move || {
+            if index >= len {
+                return None;
+            }
+            let frame = start + index;
+            index += 1;
+
+            let in_frame = if in_channels == 0 {
+                &[][..]
+            } else {
+                let offset = frame * in_channels;
+                &input[offset..offset + in_channels]
+            };
+
+            // Safe equivalent of `chunks_mut`, which panics on a
+            // zero-sized chunk — analog output is zero-channel on a
+            // Gem Stereo, and this must not panic there.
+            let out_frame: &mut [f32] = if out_channels == 0 {
+                &mut [][..]
+            } else {
+                let (frame_slice, rest) = mem::take(&mut output).split_at_mut(out_channels);
+                output = rest;
+                frame_slice
+            };
+
+            Some((in_frame, out_frame))
+        })
+    }
+}
 
 impl BlockContext {
     /// Mutable access to the underlying `BelaContext`.
@@ -546,6 +730,36 @@ impl BlockContext {
     #[inline]
     pub const fn digital_mut(&mut self) -> &mut [u32] {
         unsafe { exclusive(self.0.digital, self.digital_frames()) }
+    }
+
+    // --- Paired input/output views ---
+
+    /// A single borrow over the whole audio block: [`audio_in`] to read
+    /// and [`audio_out`] to write, which cannot be held at the same
+    /// time — see the module documentation. The output covers the
+    /// whole block here, the same as [`audio_out`].
+    ///
+    /// [`audio_in`]: BlockContext::audio_in
+    /// [`audio_out`]: BlockContext::audio_out
+    #[inline]
+    pub const fn audio_io(&mut self) -> PairedIo<'_> {
+        let in_channels = self.audio_in_channels();
+        let out_channels = self.audio_out_channels();
+        let frames = self.audio_frames();
+        let input = unsafe { shared(self.0.audioIn, frames * in_channels) };
+        let output = unsafe { exclusive(self.0.audioOut, frames * out_channels) };
+        PairedIo::new(input, in_channels, output, out_channels, 0..frames)
+    }
+
+    /// The analog counterpart of [`audio_io`](BlockContext::audio_io).
+    #[inline]
+    pub const fn analog_io(&mut self) -> PairedIo<'_> {
+        let in_channels = self.analog_in_channels();
+        let out_channels = self.analog_out_channels();
+        let frames = self.analog_frames();
+        let input = unsafe { shared(self.0.analogIn, frames * in_channels) };
+        let output = unsafe { exclusive(self.0.analogOut, frames * out_channels) };
+        PairedIo::new(input, in_channels, output, out_channels, 0..frames)
     }
 
     // --- Indexed access (mirrors the C helpers) ---
@@ -837,6 +1051,40 @@ impl RenderContext {
     pub const fn digital_mut(&mut self) -> &mut [u32] {
         let range = self.digital_frame_range();
         self.digital_share(range)
+    }
+
+    // --- Paired input/output views ---
+
+    /// A single borrow over the audio domain: the whole block's input
+    /// to read and this thread's [`audio_frame_range`] to write, which
+    /// cannot be held at the same time through `audio_in()` and
+    /// [`audio_out`](RenderContext::audio_out) — see the module
+    /// documentation.
+    ///
+    /// [`audio_frame_range`]: RenderContext::audio_frame_range
+    #[inline]
+    pub const fn audio_io(&mut self) -> PairedIo<'_> {
+        let in_channels = self.audio_in_channels();
+        let out_channels = self.audio_out_channels();
+        let frames = self.audio_frames();
+        let range = self.audio_frame_range();
+        let input = unsafe { shared(self.0.audioIn, frames * in_channels) };
+        let output = self.audio_share(range.start..range.end);
+        PairedIo::new(input, in_channels, output, out_channels, range)
+    }
+
+    /// The analog counterpart of
+    /// [`audio_io`](RenderContext::audio_io), over
+    /// [`analog_frame_range`](RenderContext::analog_frame_range).
+    #[inline]
+    pub const fn analog_io(&mut self) -> PairedIo<'_> {
+        let in_channels = self.analog_in_channels();
+        let out_channels = self.analog_out_channels();
+        let frames = self.analog_frames();
+        let range = self.analog_frame_range();
+        let input = unsafe { shared(self.0.analogIn, frames * in_channels) };
+        let output = self.analog_share(range.start..range.end);
+        PairedIo::new(input, in_channels, output, out_channels, range)
     }
 
     // --- Indexed access (mirrors the C helpers) ---
@@ -1554,6 +1802,132 @@ pub(crate) mod tests {
         fixture.block().digital_write(0, DIGITAL_CHANNELS, true);
     }
 
+    // --- PairedIo ---
+
+    #[test]
+    fn paired_audio_view_covers_the_whole_block_on_a_block_context() {
+        let mut fixture = Fixture::new();
+        let mut io = fixture.block().audio_io();
+
+        assert_eq!(io.in_channels(), AUDIO_IN_CHANNELS);
+        assert_eq!(io.out_channels(), AUDIO_OUT_CHANNELS);
+        assert_eq!(io.output_range(), 0..AUDIO_FRAMES);
+        assert_eq!(io.input().len(), AUDIO_FRAMES * AUDIO_IN_CHANNELS);
+        assert_eq!(io.output().len(), AUDIO_FRAMES * AUDIO_OUT_CHANNELS);
+        // Sample values encode frame*10+channel, same as `audio_read`.
+        assert_eq!(
+            io.input()[AUDIO_IN_CHANNELS + 1],
+            11.0,
+            "frame 1, channel 1"
+        );
+    }
+
+    #[test]
+    fn paired_audio_frames_writes_reach_the_underlying_buffer_on_a_block_context() {
+        let mut fixture = Fixture::new();
+        {
+            let mut io = fixture.block().audio_io();
+            for (input, output) in io.frames() {
+                // AUDIO_OUT_CHANNELS (4) > AUDIO_IN_CHANNELS (2), so
+                // `zip` fills only the first two of every frame's
+                // four output channels — same as the doctest.
+                for (sample, value) in output.iter_mut().zip(input) {
+                    *sample = *value;
+                }
+            }
+        }
+
+        for frame in 0..AUDIO_FRAMES {
+            for channel in 0..AUDIO_IN_CHANNELS {
+                let expected = (frame * 10 + channel) as f32;
+                assert_eq!(
+                    fixture.audio_out[frame * AUDIO_OUT_CHANNELS + channel],
+                    expected,
+                    "frame {frame} channel {channel}"
+                );
+            }
+            for channel in AUDIO_IN_CHANNELS..AUDIO_OUT_CHANNELS {
+                assert_eq!(
+                    fixture.audio_out[frame * AUDIO_OUT_CHANNELS + channel],
+                    0.0,
+                    "frame {frame} channel {channel} has no input counterpart"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paired_analog_view_is_independent_of_the_audio_buffers() {
+        let mut fixture = Fixture::new();
+        {
+            let mut io = fixture.block().analog_io();
+            assert_eq!(io.in_channels(), ANALOG_IN_CHANNELS);
+            assert_eq!(io.out_channels(), ANALOG_OUT_CHANNELS);
+            assert_eq!(io.input().len(), ANALOG_FRAMES * ANALOG_IN_CHANNELS);
+            io.output().fill(9.0);
+        }
+
+        assert!(fixture.analog_out.iter().all(|&v| v == 9.0));
+        assert!(
+            fixture.audio_out.iter().all(|&v| v == 0.0),
+            "analog_io must not touch the audio buffers"
+        );
+    }
+
+    #[test]
+    fn paired_view_frames_does_not_panic_when_output_has_no_channels() {
+        // A Gem Stereo's analog_out_channels is 0 for every channel
+        // count it accepts (docs/board-facts.md); `frames()` must
+        // still yield one item per input frame rather than panicking
+        // the way `chunks_mut(0)` would.
+        let mut context: BelaContext = unsafe { mem::zeroed() };
+        context.audioFrames = 3;
+        context.audioInChannels = 2;
+        context.audioOutChannels = 0;
+        let audio_in = [0.0_f32, 1.0, 10.0, 11.0, 20.0, 21.0];
+        context.audioIn = audio_in.as_ptr();
+
+        let context = unsafe { BlockContext::from_mut_ptr(&raw mut context) };
+        let mut io = context.audio_io();
+        assert_eq!(io.out_channels(), 0);
+
+        let mut frame_count = 0;
+        for (input, output) in io.frames() {
+            assert!(output.is_empty());
+            assert_eq!(input.len(), 2);
+            frame_count += 1;
+        }
+        assert_eq!(
+            frame_count, 3,
+            "three frames, each with zero output channels"
+        );
+    }
+
+    #[test]
+    fn paired_view_frames_does_not_panic_when_input_has_no_channels() {
+        let mut context: BelaContext = unsafe { mem::zeroed() };
+        context.audioFrames = 3;
+        context.audioInChannels = 0;
+        context.audioOutChannels = 2;
+        let mut audio_out = [0.0_f32; 6];
+        context.audioOut = audio_out.as_mut_ptr();
+
+        let context = unsafe { BlockContext::from_mut_ptr(&raw mut context) };
+        let mut io = context.audio_io();
+        assert_eq!(io.in_channels(), 0);
+
+        let mut frame_count = 0;
+        for (input, output) in io.frames() {
+            assert!(input.is_empty());
+            assert_eq!(output.len(), 2);
+            frame_count += 1;
+        }
+        assert_eq!(
+            frame_count, 3,
+            "three frames, each with zero input channels"
+        );
+    }
+
     // --- RenderContext ---
 
     #[test]
@@ -1601,6 +1975,39 @@ pub(crate) mod tests {
         out[0] = 9.0;
         assert_eq!(fixture.audio_out[2 * AUDIO_OUT_CHANNELS], 9.0);
         assert_eq!(fixture.audio_out[0], 0.0, "frame 0 belongs to thread 0");
+    }
+
+    #[test]
+    fn paired_audio_frames_align_input_and_output_when_the_range_does_not_start_at_zero() {
+        let mut fixture = Fixture::with_threads(4);
+        {
+            // Thread 2 of 4 owns exactly frame 2 (partition(4, 2, 4)).
+            let context = fixture.render(2);
+            let mut io = context.audio_io();
+            assert_eq!(io.output_range(), 2..3);
+
+            let mut frames = io.frames();
+            let (input, output) = frames.next().expect("one frame in this thread's range");
+            // Input is indexed by the same absolute frame the output
+            // range starts at (2), not by 0 — the mismatch `frames()`
+            // exists to rule out.
+            assert_eq!(input, [20.0, 21.0]);
+            output.copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+            assert!(
+                frames.next().is_none(),
+                "thread 2 of 4 owns exactly one frame"
+            );
+        }
+
+        assert_eq!(
+            fixture.audio_out[2 * AUDIO_OUT_CHANNELS..3 * AUDIO_OUT_CHANNELS],
+            [1.0, 2.0, 3.0, 4.0]
+        );
+        assert_eq!(
+            fixture.audio_out[0..AUDIO_OUT_CHANNELS],
+            [0.0; AUDIO_OUT_CHANNELS],
+            "frame 0 belongs to another thread"
+        );
     }
 
     #[test]

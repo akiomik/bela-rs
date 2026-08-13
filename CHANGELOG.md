@@ -35,6 +35,24 @@ and this project adheres to
   (`docs/board-facts.md`), and that boundary is one board's, not a
   portable libbela contract, so an unsupported rate can still end the
   process the same way `--sample-rate` already could.
+- `PairedIo`, returned by `BlockContext::audio_io` / `analog_io` and
+  `RenderContext::audio_io` / `analog_io`. It borrows a domain's whole
+  block of input and this view's output range together, which
+  `audio_in()` and `audio_out()` cannot do at once — the first takes
+  `&self`, the second `&mut self` — so a loop that reads and writes in
+  the same pass had to choose between a scratch buffer it owns or the
+  per-call bounds checks of `audio_read` / `audio_write`. `frames()` is
+  the aligned path for that loop: `input()` indexes from block frame 0
+  and `output()` from `output_range().start`, and `frames()` walks the
+  two together so a `RenderContext` view — whose input and output start
+  at different block frames — cannot mix the offsets up. There is no
+  `digital_io`: `BelaContext::digital` is one combined input/output
+  word buffer, already reachable through `digital()` / `digital_mut()`.
+  Confirmed on a Gem Stereo: `examples/paired_io_check.rs` compares the
+  paired audio path against the indexed one, sample for sample, every
+  block; a 6 s run checked 469184 samples with 0 mismatches. The analog
+  side stays host-tested until hardware with analog outputs is
+  available (`docs/board-facts.md`).
 
 ### Changed
 
@@ -50,6 +68,18 @@ and this project adheres to
   signatures happen to unify, or as a compile error if they do not,
   since `NonZeroU32` accepts no implicit conversion. See "Minor or
   patch: the drop-in test" in docs/release.md.
+- Breaking: adding `audio_io` and `analog_io` shadows any extension
+  trait a downstream crate already defined under those names on
+  `BlockContext` or `RenderContext`, the same hazard as
+  `Settings::audio_sample_rate` above.
+- `BlockContext::from_mut_ptr` / `RenderContext::from_mut_ptr`'s safety
+  contract now also requires each domain's input buffer not to overlap
+  its output buffer, which is what makes `PairedIo` sound. Every
+  context libbela hands to a callback already satisfies it —
+  `BelaContextManager` (`/root/Bela/core/BelaContextManager.cpp`)
+  allocates `audioInV`/`audioOutV` and `analogInV`/`analogOutV` as
+  independent `std::vector<float>`s — so this only reaches a context
+  built by hand or by a test fixture.
 
 ## [0.5.1] - 2026-08-13
 
