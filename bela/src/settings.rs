@@ -103,10 +103,10 @@ impl Settings {
     /// The audio sample rate, in Hz.
     ///
     /// `NonZeroU32` rather than the `f32` the C field is: zero is the
-    /// one value [`check_resolved`] refuses, so keeping it out of the
-    /// type keeps that failure out of reach from this builder, and an
-    /// integer matches how the rest of this crate spells a hardware
-    /// quantity — [`thread_count`](Settings::thread_count) and
+    /// one value this crate's own resolved-settings check refuses, so
+    /// keeping it out of the type keeps that failure out of reach from
+    /// this builder, and an integer matches how the rest of this crate
+    /// spells a hardware quantity — [`thread_count`](Settings::thread_count) and
     /// [`stop_button_pin`](Settings::stop_button_pin) narrow the same
     /// way (C-CUSTOM-TYPE). What it cannot express is the C field's own
     /// range: a negative rate, which only the command line can produce
