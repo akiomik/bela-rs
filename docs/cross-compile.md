@@ -19,15 +19,81 @@ Non-linking checks need nothing else installed:
 cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu
 ```
 
-## 2. Linker wrapper
+## 2. Linking
+
+Three compiler-driver arguments, derived from the sysroot, are needed
+at link time:
+
+- `--sysroot=<BELA_SYSROOT>`, because Debian's linker scripts (e.g.
+  `libc.so`) refer to absolute paths that must resolve inside it;
+- `-B<BELA_SYSROOT>/usr/lib/aarch64-linux-gnu`, because Debian keeps
+  the startup files (`Scrt1.o`, `crti.o`, `crtn.o`) in that multiarch
+  directory, which a toolchain built for a different triple —
+  `aarch64-unknown-linux-gnu` against Debian's `aarch64-linux-gnu` —
+  does not search on its own;
+- `-Wl,-rpath-link=...`, so the linker can resolve the dependencies
+  *of* the Bela shared libraries at link time (`libbela` needs
+  `libevl` and `libstdc++`, which in turn need `libbpf`, `libm` and
+  others).
+
+There are two ways to get them onto the link line. **An application
+depending on the published `bela` and `bela-sys` crates uses the
+direct linker below** — nothing to copy, no wrapper file, no
+executable bit. This repository's own workspace still uses the
+compatibility wrapper, kept for exactly that: a working path during
+migration, and evidence that the two agree (`scripts/smoke-test.sh`
+passes either way).
+
+### Downstream: a direct linker and a small `build.rs`
+
+`bela-sys/build.rs` derives the three arguments above from
+`BELA_SYSROOT` and publishes them as `links` metadata. `bela`
+(`links = "bela_relay"`) reads that and republishes it under its own
+name, because Cargo passes `links` metadata only to an *immediate*
+dependent (`bela-sys` → `bela`), not to `bela`'s own dependents — see
+[the Cargo reference](https://doc.rust-lang.org/cargo/reference/build-scripts.html#the-links-manifest-key).
+An application therefore needs a short build script of its own to read
+what `bela` republished and turn it into link arguments for its own
+binary:
+
+```rust
+// build.rs
+fn main() {
+    let Ok(count) = std::env::var("DEP_BELA_RELAY_LINK_ARGS_COUNT") else {
+        return; // host build, or a native build with BELA_SYSROOT unset
+    };
+    let count: usize = count.parse().expect("DEP_BELA_RELAY_LINK_ARGS_COUNT is not a number");
+    for index in 0..count {
+        let key = format!("DEP_BELA_RELAY_LINK_ARGS_{index}");
+        let arg = std::env::var(&key).unwrap_or_else(|_| panic!("{key} is missing"));
+        println!("cargo::rustc-link-arg={arg}");
+    }
+}
+```
+
+and `.cargo/config.toml` names the compiler driver directly — no
+wrapper in the path at all:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-unknown-linux-gnu-gcc"   # or aarch64-linux-gnu-gcc, gcc, ...
+```
+
+The compiler still has to be installed; see the toolchain
+installation instructions below. An intermediary crate between `bela`
+and an application — one more layer of wrapping — has to relay the
+same way `bela` does: read `DEP_BELA_RELAY_LINK_ARGS_*`, apply it to
+its own targets, and republish it under its own `links` name.
+
+### This repository: the compatibility wrapper
 
 `.cargo/config.toml` points the linker at
 [`scripts/aarch64-bela-linker.sh`](../scripts/aarch64-bela-linker.sh),
-a wrapper that adds the sysroot-specific flags Debian needs (see the
-comments in the script for why each is required). The wrapper calls a
-compiler, which has to be installed, and `BELA_CC` says which one. A
-cross toolchain is named after the triple it was built for, so the name
-depends on where the toolchain came from.
+a wrapper that adds the same three arguments (see the comments in the
+script). The wrapper calls a compiler, which has to be installed, and
+`BELA_CC` says which one. A cross toolchain is named after the triple
+it was built for, so the name depends on where the toolchain came
+from.
 
 On macOS, from the [messense/macos-cross-toolchains] tap:
 
@@ -50,44 +116,6 @@ Any other aarch64 Linux compiler is used the same way: install it and
 name it in `BELA_CC`. The value is a name to find on `PATH` or an
 absolute path — the wrapper runs it as a program, so it cannot carry
 arguments or a prefix command like `ccache`.
-
-A **C++** compiler from the same toolchain is needed as well, because
-`bela-sys` compiles a small shim over Bela's `Midi` class (see
-[midi.md](midi.md)). `bela-sys/build.rs` picks it in this order:
-
-1. `BELA_CXX`, if set.
-2. Otherwise a name derived from `BELA_CC`, if that is set and ends in
-   `gcc`: `aarch64-linux-gnu-gcc` gives `aarch64-linux-gnu-g++`,
-   `/usr/bin/gcc` gives `/usr/bin/g++`, plain `gcc` gives `g++`.
-3. Otherwise — `BELA_CC` unset as well — the tap's
-   `aarch64-unknown-linux-gnu-g++`.
-
-A `BELA_CC` that is set and does not end in `gcc` **fails the build**
-rather than falling back to the default, because the fallback would
-compile the shim with a toolchain the linker is not using. `BELA_CXX`
-is the answer for those:
-
-```sh
-export BELA_CXX=aarch64-linux-gnu-g++
-```
-
-`BELA_CXX` and `BELA_CC` are what this reads, and `CXX` and
-`CXX_aarch64-unknown-linux-gnu` — which `cc` would otherwise honour —
-are not consulted: the compiler has to match the one the linker
-wrapper calls, and that wrapper knows only `BELA_CC`. The archiver
-follows the compiler's name (`aarch64-linux-gnu-g++` implies
-`aarch64-linux-gnu-ar`), except for names nothing follows from, such as
-a `clang++`; `AR` and `AR_aarch64-unknown-linux-gnu` are read first
-either way, so a toolchain that needs a different one can say so.
-
-Both have to come from the same toolchain. The shim allocates a class
-whose methods live in `libbelaextra.so`, so it has to agree with it
-about layout — measured equal between the tap's g++ 15.2.0 and the
-board's own `clang++`, and recorded in
-[board-facts.md](board-facts.md). Compiling with one toolchain and
-linking with another is also how a binary ends up asking the board for
-`libstdc++` or `libgcc_s` symbols it does not have, which is a failure
-that waits until the program runs.
 
 Not every build that comes through the wrapper is a cross build. It is
 attached to the target in `.cargo/config.toml`, not to cross-compiling,
@@ -119,6 +147,54 @@ runs, not when it links, which is the other reason to run the smoke
 test on a board after changing toolchains.
 
 [messense/macos-cross-toolchains]: https://github.com/messense/macos-cross-toolchains
+
+### The MIDI shim's compiler
+
+A **C++** compiler from the same toolchain as the final link is needed
+too, because `bela-sys` compiles a small shim over Bela's `Midi` class
+(see [midi.md](midi.md)). `bela-sys/build.rs` picks it in this order:
+
+1. `BELA_CXX`, if set, always wins.
+2. Otherwise, the linker Cargo resolved for the target (`RUSTC_LINKER`,
+   set when `.cargo/config.toml` or `CARGO_TARGET_*_LINKER` names one
+   directly — the direct-linker path above): a name ending in `gcc`
+   answers for the C++ compiler beside it the same way `BELA_CC` does
+   below, so nothing more has to be set. The wrapper's own name is
+   recognised and treated as "nothing resolved", so a workspace still
+   using it falls through to step 3 instead of being read as an
+   unsupported linker.
+3. Otherwise `BELA_CC` — read here because the wrapper reads it too,
+   so following it keeps the shim and the wrapped link in one
+   toolchain: `aarch64-linux-gnu-gcc` gives `aarch64-linux-gnu-g++`,
+   `/usr/bin/gcc` gives `/usr/bin/g++`, plain `gcc` gives `g++`.
+4. With none of the three set, the tap's `aarch64-unknown-linux-gnu-g++`.
+
+A resolved linker or a `BELA_CC` that does not end in `gcc` **fails the
+build** rather than falling back to a default, because the fallback
+would compile the shim with a toolchain the link is not using.
+`BELA_CXX` is the answer for those:
+
+```sh
+export BELA_CXX=aarch64-linux-gnu-g++
+```
+
+`BELA_CXX`, `RUSTC_LINKER` and `BELA_CC` are what this reads; `CXX` and
+`CXX_aarch64-unknown-linux-gnu` — which `cc` would otherwise honour —
+are not consulted, because the compiler has to match whatever links
+the binary, not a general-purpose default. The archiver follows the
+compiler's name (`aarch64-linux-gnu-g++` implies `aarch64-linux-gnu-ar`),
+except for names nothing follows from, such as a `clang++`; `AR` and
+`AR_aarch64-unknown-linux-gnu` are read first either way, so a
+toolchain that needs a different one can say so.
+
+Both have to come from the same toolchain. The shim allocates a class
+whose methods live in `libbelaextra.so`, so it has to agree with it
+about layout — measured equal between the tap's g++ 15.2.0 and the
+board's own `clang++`, and recorded in
+[board-facts.md](board-facts.md). Compiling with one toolchain and
+linking with another is also how a binary ends up asking the board for
+`libstdc++` or `libgcc_s` symbols it does not have, which is a failure
+that waits until the program runs.
 
 ## 3. Sysroot
 

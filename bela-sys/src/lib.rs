@@ -64,26 +64,31 @@ mod shim_compiler {
     #[test]
     fn bela_cxx_is_taken_as_it_stands() {
         assert_eq!(
-            shim_compiler_from("clang++", "aarch64-linux-gnu-gcc"),
+            shim_compiler_from(
+                "clang++",
+                "aarch64-unknown-linux-gnu-gcc",
+                "aarch64-linux-gnu-gcc"
+            ),
             Ok("clang++".to_owned()),
-            "an explicit C++ compiler outranks anything derived"
+            "an explicit C++ compiler outranks anything derived, even a resolved linker"
         );
     }
 
     #[test]
     fn a_c_compiler_ending_in_gcc_answers_for_both() {
-        // The two cases docs/cross-compile.md documents.
+        // The two cases docs/cross-compile.md documents, driven
+        // through the legacy BELA_CC path (no linker resolved).
         assert_eq!(
-            shim_compiler_from("", "aarch64-linux-gnu-gcc"),
+            shim_compiler_from("", "", "aarch64-linux-gnu-gcc"),
             Ok("aarch64-linux-gnu-g++".to_owned())
         );
-        assert_eq!(shim_compiler_from("", "gcc"), Ok("g++".to_owned()));
+        assert_eq!(shim_compiler_from("", "", "gcc"), Ok("g++".to_owned()));
     }
 
     #[test]
     fn neither_set_is_the_tap_default() {
         assert_eq!(
-            shim_compiler_from("", ""),
+            shim_compiler_from("", "", ""),
             Ok(DEFAULT_CXX.to_owned()),
             "the same default scripts/aarch64-bela-linker.sh has"
         );
@@ -94,7 +99,69 @@ mod shim_compiler {
         // Deriving `ar`, or a C++ name, from this would mix
         // toolchains silently, which the build script fails on
         // instead.
-        let error = shim_compiler_from("", "clang").unwrap_err();
+        let error = shim_compiler_from("", "", "clang").unwrap_err();
+        assert!(
+            error.contains("BELA_CXX"),
+            "the message should say what to set, got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_resolved_gcc_linker_answers_for_the_shim_too() {
+        // The direct-linker path (docs/cross-compile.md): Cargo
+        // resolved a compiler driver directly, so no BELA_CC is
+        // needed at all.
+        assert_eq!(
+            shim_compiler_from("", "aarch64-unknown-linux-gnu-gcc", ""),
+            Ok("aarch64-unknown-linux-gnu-g++".to_owned())
+        );
+        assert_eq!(shim_compiler_from("", "gcc", ""), Ok("g++".to_owned()));
+    }
+
+    #[test]
+    fn a_resolved_linker_outranks_a_stale_bela_cc() {
+        // RUSTC_LINKER reflects the toolchain that will actually link
+        // the binary; a leftover BELA_CC from before migrating off the
+        // wrapper must not silently win and build the shim with a
+        // different one.
+        assert_eq!(
+            shim_compiler_from("", "aarch64-unknown-linux-gnu-gcc", "gcc"),
+            Ok("aarch64-unknown-linux-gnu-g++".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_wrapper_as_the_resolved_linker_falls_through_to_bela_cc() {
+        // .cargo/config.toml still names the wrapper: RUSTC_LINKER is
+        // set, but to something that names no C++ compiler on its own,
+        // so BELA_CC answers as it always has.
+        assert_eq!(
+            shim_compiler_from("", "scripts/aarch64-bela-linker.sh", "gcc"),
+            Ok("g++".to_owned())
+        );
+        assert_eq!(
+            shim_compiler_from(
+                "",
+                "/Users/dev/bela-rs/scripts/aarch64-bela-linker.sh",
+                "aarch64-linux-gnu-gcc"
+            ),
+            Ok("aarch64-linux-gnu-g++".to_owned()),
+            "an absolute path still matches by its last segment"
+        );
+        assert_eq!(
+            shim_compiler_from("", "scripts/aarch64-bela-linker.sh", ""),
+            Ok(DEFAULT_CXX.to_owned()),
+            "and with BELA_CC unset too, the tap default"
+        );
+    }
+
+    #[test]
+    fn a_resolved_linker_nothing_follows_from_is_refused() {
+        // A directly configured non-GNU linker (clang, lld, mold, ...)
+        // names no C++ compiler to derive, and BELA_CC is the legacy
+        // path's variable, not this one's — guessing here would risk
+        // the same toolchain mismatch BELA_CC guards against.
+        let error = shim_compiler_from("", "clang", "").unwrap_err();
         assert!(
             error.contains("BELA_CXX"),
             "the message should say what to set, got: {error}"
@@ -125,11 +192,11 @@ mod shim_compiler {
         // docs/cross-compile.md allows an absolute path, and
         // /usr/bin/gcc is the board's own compiler.
         assert_eq!(
-            shim_compiler_from("", "/usr/bin/gcc"),
+            shim_compiler_from("", "", "/usr/bin/gcc"),
             Ok("/usr/bin/g++".to_owned())
         );
         assert_eq!(
-            shim_compiler_from("", "/opt/tc/bin/aarch64-linux-gnu-gcc"),
+            shim_compiler_from("", "", "/opt/tc/bin/aarch64-linux-gnu-gcc"),
             Ok("/opt/tc/bin/aarch64-linux-gnu-g++".to_owned())
         );
         assert_eq!(
@@ -143,12 +210,69 @@ mod shim_compiler {
     fn a_compiler_that_merely_ends_in_gcc_is_not_one() {
         // Same trap on the compiler side: only a bare `gcc` or a
         // `<triple>-gcc` names a toolchain to follow.
-        assert!(shim_compiler_from("", "notgcc").is_err());
+        assert!(shim_compiler_from("", "", "notgcc").is_err());
         assert_eq!(shim_archiver("notg++"), None);
         assert_eq!(
             shim_archiver("/usr/bin/clang++"),
             None,
             "a path does not make it one"
+        );
+    }
+}
+
+// The metadata encoding build.rs publishes so `bela` can relay device
+// link arguments to its own dependents; tested here for the same
+// reason as shim_compiler above. See link_args.rs and bela/link_args.rs.
+#[cfg(test)]
+mod link_args {
+    extern crate std;
+
+    use std::borrow::ToOwned;
+    use std::format;
+    use std::string::{String, ToString};
+    use std::vec;
+    use std::vec::Vec;
+
+    include!("../link_args.rs");
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn no_arguments_still_publishes_a_zero_count() {
+        assert_eq!(
+            encode_link_args(&[]),
+            vec![("LINK_ARGS_COUNT".to_owned(), "0".to_owned())],
+            "a dependent has to see a count of zero, not an absent key, \
+             to tell \"nothing to add\" apart from \"never ran\""
+        );
+    }
+
+    #[test]
+    fn arguments_are_indexed_from_zero_in_order() {
+        assert_eq!(
+            encode_link_args(&args(&["--sysroot=/opt/bela", "-Bfoo"])),
+            vec![
+                ("LINK_ARGS_COUNT".to_owned(), "2".to_owned()),
+                ("LINK_ARGS_0".to_owned(), "--sysroot=/opt/bela".to_owned()),
+                ("LINK_ARGS_1".to_owned(), "-Bfoo".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn whitespace_in_an_argument_survives_uninterpreted() {
+        // The reason for a count-plus-index encoding over one joined
+        // string: a BELA_SYSROOT with a space in it must not need a
+        // shell-style parser on the reading side.
+        let value = "--sysroot=/Volumes/Bela Sysroot";
+        assert_eq!(
+            encode_link_args(&args(&[value])),
+            vec![
+                ("LINK_ARGS_COUNT".to_owned(), "1".to_owned()),
+                ("LINK_ARGS_0".to_owned(), value.to_owned()),
+            ]
         );
     }
 }

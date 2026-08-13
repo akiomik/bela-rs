@@ -3,6 +3,15 @@ name = "bela"
 description = "Safe Rust API for real-time audio on Bela Gem"
 readme = "README.md"
 documentation = "https://docs.rs/bela"
+# Not this crate's own native library — bela-sys already claims
+# "bela" for that. This publishes device link arguments to bela's own
+# dependents, relaying what bela-sys publishes to its immediate
+# dependent, bela, since `links` metadata does not reach past one
+# level. See build.rs, link_args.rs and docs/cross-compile.md.
+#
+# A published `links` name is a compatibility constraint: only one
+# version of a crate carrying it may appear in a dependency graph.
+links = "bela_relay"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

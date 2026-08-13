@@ -8,6 +8,30 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `bela-sys` publishes the device-link compiler-driver arguments
+  (`--sysroot`, `-B`, `-Wl,-rpath-link`) as `links` metadata, and
+  `bela` relays them to its own dependents. An application depending
+  on `bela` can now link a device binary with `linker =
+  "aarch64-unknown-linux-gnu-gcc"` (or the equivalent for its own
+  toolchain) plus a small `build.rs`, instead of copying
+  `scripts/aarch64-bela-linker.sh` and its executable bit out of this
+  repository. See [docs/cross-compile.md](docs/cross-compile.md) and
+  the `bela` and `bela-sys` READMEs. `bela-sys/build.rs` also now
+  derives the MIDI shim's C++ compiler from Cargo's resolved
+  `RUSTC_LINKER` when the direct-linker path is used, so `BELA_CC` is
+  no longer required for it; `BELA_CXX` and `BELA_CC` still work as
+  before for the existing wrapper, which remains usable during
+  migration.
+
+### Changed
+
+- Breaking: `bela` now declares `links = "bela_relay"`, which is a
+  compatibility constraint — only one version of a crate carrying that
+  `links` name may appear in a dependency graph. This does not change
+  `bela`'s Rust API.
+
 ## [0.5.1] - 2026-08-13
 
 ### Added
