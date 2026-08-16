@@ -1224,6 +1224,12 @@ mod tests {
         Settings::new().enable_led(true).apply_to(&mut raw);
 
         assert_eq!(raw.enableLED, 1);
+        // Both sides of the accessor's own conversion, so that a
+        // comparison the wrong way round would fail here rather than
+        // pass every test that only ever looks at LEDs turned off.
+        assert!(ResolvedSettings::new(&raw, None).enable_led());
+        raw.enableLED = 0;
+        assert!(!ResolvedSettings::new(&raw, None).enable_led());
     }
 
     #[test]
