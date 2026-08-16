@@ -269,6 +269,9 @@ impl Settings {
     ///
     /// Off, libbela opens neither pin and gives the PRU no LED address
     /// to write to, so nothing on the board lights for either event.
+    /// On a Gem Stereo that has been measured as the two GPIOs being
+    /// claimed or left alone together; see "The board LEDs" in
+    /// `docs/board-facts.md`.
     ///
     /// # It changes what is shown, not what is detected
     ///

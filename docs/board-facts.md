@@ -729,6 +729,46 @@ rather than in blocks.
   pattern and the first block's writes are still in flight. Every
   window after it is identical.
 
+## The board LEDs
+
+Collected 2026-08-17 with a throwaway probe (not in the repository)
+that brings one audio system up per process — with `enable_led` unset,
+`true` and `false` — and lists what `/sys/class/gpio` holds before,
+during and after the run. libbela reaches these pins through sysfs, so
+an exported pin is the library having claimed it. On this board
+`gpiochip539` is bank 0 (`600000.gpio`), which puts the blue running
+LED (`GPIO0_45`) at `gpio584` and the red underrun LED (`GPIO0_46`) at
+`gpio585`.
+
+- **Unset and `true` produce the same run, and both claim both LED
+  pins.** `gpio584` and `gpio585` appear between `Bela::new` and the
+  end of the run and are gone afterwards, together with the analog
+  chip selects and the digital channels. So Bela's documented default
+  of `enableLED = 1` is what this board actually starts from, and
+  asking for it changes nothing.
+- **`false` claims neither.** Every other pin of the same run is
+  exported as before — the ADC reset, the SPI chip select, the sixteen
+  digital channels — and only `gpio584` and `gpio585` are missing.
+  `prepareGPIO` and the `underrunLed.open` in `PRU::initialise` are
+  gated on the one flag, and the measurement agrees: both indicators
+  go together, and there is no configuration that keeps one.
+- **The running LED is driven while audio runs.** Reading
+  `gpio584/value` ten times at 100 ms intervals gave `1011010101`. The
+  PRU blinks it by writing the GPIO bank directly rather than through
+  sysfs, and sysfs still reads the pin, so a value that changes is the
+  indicator being driven rather than a pin merely claimed.
+- **`--disable-led` beats `Settings::enable_led(true)`.** A run built
+  with the setting on and given `--disable-led` through
+  `Bela::new_with_args` resolves to `enable_led = false` in
+  `validate_settings` and exports neither pin — the layer order
+  `cmdline.rs` documents, measured. libbela has no option in the other
+  direction, so this is the only way the two can disagree.
+- **The stop button pin outlives every run.** `gpio586`
+  (`GPIO0_47`) was exported before the first run and after the last,
+  whatever the LED setting was. libbela opens it with
+  `Gpio::open(..., unexport = false)`, unlike the LEDs, so the export
+  is left behind for the next program rather than cleaned up.
+
 ## The Multiplexer Capelet
 
 Collected 2026-08-07: partly on the board with a throwaway C++ project
