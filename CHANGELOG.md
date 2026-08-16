@@ -14,7 +14,7 @@ and this project adheres to
   `ResolvedSettings::enable_led` to read what it resolved to. It is the
   one way to decline libbela's use of the board's LEDs: the running
   indicator the PRU blinks — the blue LED on a Bela Gem Stereo, the
-  BeagleBone's user LED where there is no LED on the cape — and the
+  board's own user LED where the cape has none — and the
   red underrun LED, lit for 20000 frames each time an underrun is
   detected. It changes what is shown and not what is measured:
   underruns are still counted and still logged with the LEDs off, and

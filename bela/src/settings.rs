@@ -286,12 +286,14 @@ impl Settings {
     /// Declining libbela's use of them does not hand them to the
     /// application. They are ordinary GPIOs reached through sysfs,
     /// which is file I/O and has no place in a real-time callback, and
-    /// this crate offers no API for them. An indicator that
-    /// [`render`](crate::BelaApplication::render) can drive is an LED
-    /// on a digital channel, where
-    /// [`pin_mode`](crate::BlockContext::pin_mode) and
-    /// [`digital_write`](crate::BlockContext::digital_write) are
-    /// real-time safe and need nothing else.
+    /// this crate offers no API for them. An indicator a callback can
+    /// drive is an LED on a digital channel, where `pin_mode` and
+    /// `digital_write` are real-time safe and need nothing else — on
+    /// [`RenderContext`](crate::RenderContext::pin_mode) in
+    /// [`render`](crate::BelaApplication::render), and on
+    /// [`BlockContext`](crate::BlockContext::pin_mode) in
+    /// [`render_pre`](crate::BelaApplication::render_pre) and
+    /// [`render_post`](crate::BelaApplication::render_post).
     ///
     /// # The command line can still turn it off
     ///
@@ -741,12 +743,12 @@ impl<'a> ResolvedSettings<'a> {
     /// Whether libbela's running and underrun LEDs were left on; see
     /// [`Settings::enable_led`].
     ///
-    /// This is the one place the answer can be had: `--disable-led` is
-    /// applied after [`Settings`] and clears the flag whatever the
-    /// application asked for, so a program that must know whether the
-    /// board will light up — to put its own indicator somewhere else,
-    /// or to refuse the run — has to read it here rather than from the
-    /// [`Settings`] it was built with.
+    /// Worth reading rather than assuming: `--disable-led` is applied
+    /// after [`Settings`] and clears the flag whatever the application
+    /// asked for. So a program that must know whether the board will
+    /// light up — to put its own indicator somewhere else, or to
+    /// refuse the run — has to look at the resolved value here, not at
+    /// the [`Settings`] it was built with.
     #[must_use]
     #[inline]
     pub const fn enable_led(&self) -> bool {
