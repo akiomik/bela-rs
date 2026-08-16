@@ -329,38 +329,43 @@ the board's output instead, and says so.
   from decibels to register values is only approximate below -18 dB, so
   an attenuation set there is not quite the one that arrives.
 - **The line out level changes nothing on this board; the headphone
-  level is the control that does.** Measured 2026-08-16 on the image
-  above, with a probe that renders a 440 Hz sine at amplitude 0.1 —
-  so the signal is known and needs no external source — and sets both
-  levels on the handle between `Bela::new` and `until_stopped`. The
-  Gem's line output was recorded at an RME Babyface Pro FS; the
+  level is the control that does.** Measured 2026-08-16 on image
+  2026-03-25, with a probe that renders a 440 Hz sine at amplitude
+  0.1 — so the signal is known and needs no external source — and sets
+  both levels on the handle between `Bela::new` and `until_stopped`.
+  The Gem's line output was recorded at an RME Babyface Pro FS; the
   figures are the RMS of the captured tone. With the headphone level
   held at -6 dB, `Bela_setLineOutLevel` at 0, -12 and -24 dB all gave
   -19.39 dBFS: 24 dB of requested attenuation produced 0.00 dB. With
   the line out held at 0 dB, `Bela_setHpLevel` at -6, -18 and -30 dB
   gave -19.38, -31.17 and -42.65 dBFS, so the same 24 dB produced
-  23.26 dB. Both calls returned 0 throughout, and both were made in
-  the same window on the same handle, so what stops the line out call
-  from arriving is not that it was made too early or too late. A
-  separate run through an application, sweeping its own line out level
-  option across the codec's whole range (+9 to -60 dB), moved a noise
-  floor by 0.06 dB.
+  23.26 dB. The two sweeps are separate runs, which is where the
+  0.01 dB between their nominally identical points comes from; at that
+  scale they say the same thing about the -6 dB point they share. Both
+  calls returned 0 throughout, and both were made in the same window
+  on the same handle, so what stops the line out call from arriving is
+  not that it was made too early or too late. A separate run through
+  an application, sweeping its own line out level option across the
+  codec's whole range (+9 to -60 dB), moved a noise floor by 0.06 dB.
 
-  The two calls write different TLV320 registers. A Gem Stereo takes
-  the `Bela_hwContains(belaHw, Tlv320aic3104)` branch in `RTAudio.cpp`,
-  so `gAudioCodec` is an `I2c_Codec`;
-  `I2c_Codec::writeLineOutVolumeRegisters` writes the LOP routing and
-  level registers (`0x52`/`0x5C`, then `0x56`/`0x5D`), while
-  `writeHPVolumeRegisters` writes the high-power output routing
-  registers (`0x2F`/`0x40`). `I2c_Codec::startAudio` writes both pairs,
-  one after the other, and only the high-power pair changes what leaves
-  the board — which reads as this board's output being fed from the
-  TLV320's high-power outputs rather than its LOP line outputs. That
-  last step is an inference from the source plus the measurement, not a
-  contract libbela states, and it is this board's rather than a
-  portable one. What is directly observed is narrower and enough on its
-  own: here `Bela_setLineOutLevel` reports success and changes nothing,
-  and `Bela_setHpLevel` changes everything.
+  The two calls write different TLV320 registers, in the same shape —
+  routing volume, then output level — against different outputs. A Gem
+  Stereo takes the `Bela_hwContains(belaHw, Tlv320aic3104)` branch in
+  `RTAudio.cpp`, so `gAudioCodec` is an `I2c_Codec`;
+  `I2c_Codec::writeLineOutVolumeRegisters` writes the LOP routing
+  registers (`0x52`/`0x5C`) and then the LOP output level control
+  registers (`0x56`/`0x5D`), while `writeHPVolumeRegisters` writes the
+  high-power routing registers (`0x2F`/`0x40`) and then the HPLOUT and
+  HPROUT output level control registers (`0x33`/`0x41`), with the pop
+  reduction register `0x2A` in between. `I2c_Codec::startAudio` writes
+  both sets, one after the other, and only the high-power set changes
+  what leaves the board — which reads as this board's output being fed
+  from the TLV320's high-power outputs rather than its LOP line
+  outputs. That last step is an inference from the source plus the
+  measurement, not a contract libbela states, and it is this board's
+  rather than a portable one. What is directly observed is narrower
+  and enough on its own: here `Bela_setLineOutLevel` reports success
+  and changes nothing, and `Bela_setHpLevel` changes everything.
 - **There is no speaker amplifier mute pin.** `kAmplifierMutePin` is
   the default-constructed (invalid) `Gpio::Pin` for `IS_AM62_PB2`, so
   `Bela_defaultSettings` reports `ampMutePin = -1`, `Bela_initAudio`

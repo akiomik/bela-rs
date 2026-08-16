@@ -165,11 +165,20 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// Zero is full scale and negative values attenuate; how far in
     /// either direction depends on the codec. On a Bela Gem Stereo the
-    /// line out is channels 0 and 1, attenuates in 0.5 dB steps down to
-    /// -63.5 dB and boosts up to +9 dB, and a value outside that is
-    /// clamped without being reported.
+    /// codec takes channels 0 and 1, attenuation in 0.5 dB steps down
+    /// to -63.5 dB and boost up to +9 dB, and clamps a value outside
+    /// that without reporting it — but what the board puts out does not
+    /// follow any of it, which is the section below.
     ///
-    /// # It does nothing on a Bela Gem Stereo
+    /// Takes effect immediately once audio is running, and is otherwise
+    /// remembered and applied when it starts — so this is also how a
+    /// program that uses [`until_stopped`](Bela::until_stopped) sets
+    /// the level audio comes up with. The example on
+    /// [`until_stopped`](Bela::until_stopped) is that program, and
+    /// [`examples/levels.rs`][example] is a whole one that sets all
+    /// four controls and reports what each call returned.
+    ///
+    /// # No effect on a Bela Gem Stereo's output
     ///
     /// That board's audio output does not change with this level: a
     /// 440 Hz tone recorded off it came out at the same amplitude with
@@ -182,14 +191,6 @@ impl<T: BelaApplication> Bela<T> {
     /// `docs/board-facts.md` for the measurement and the registers.
     /// Other Bela hardware is not covered by it: this stays the call
     /// for the line out where a board has one.
-    ///
-    /// Takes effect immediately once audio is running, and is otherwise
-    /// remembered and applied when it starts — so this is also how a
-    /// program that uses [`until_stopped`](Bela::until_stopped) sets
-    /// the level audio comes up with. The example on
-    /// [`until_stopped`](Bela::until_stopped) is that program, and
-    /// [`examples/levels.rs`][example] is a whole one that sets all
-    /// four controls and reports what each call returned.
     ///
     /// # Errors
     /// Returns [`Error::LineOutLevel`] when the codec refuses the call,

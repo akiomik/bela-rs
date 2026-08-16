@@ -44,7 +44,7 @@ const AMPLITUDE: f32 = 0.3;
 
 /// Asked of the line out. Where a board's line out follows it, this
 /// attenuates the tone without `render` knowing anything about it; a
-/// Bela Gem Stereo reports success and stays where it was.
+/// Bela Gem Stereo reports success and its output stays where it was.
 const LINE_OUT_LEVEL: f32 = -12.0;
 /// Bela's own default is -6 dB; this one is quieter still, because a
 /// 440 Hz tone in headphones is not a pleasant surprise — and on a
