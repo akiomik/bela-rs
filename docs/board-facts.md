@@ -317,10 +317,13 @@ measured off the analogue signal instead, and say so.
 - **Only channels 0 and 1 exist.** `Bela_setLineOutLevel` and
   `Bela_setHpLevel` return 1 for any channel above 1 (checked at 2, 9,
   10 and 20), before and while audio runs. `Bela_setAudioInputGain`
-  returns 0 for the same channels and does nothing with them:
-  `I2c_Codec::setInputGain` selects no register unless the channel is
-  0, 1 or negative, and that choice is made before either TLV320
-  variant's code is reached. A negative channel means "all" throughout.
+  returns 0 for the same channels and changes nothing with them:
+  `I2c_Codec::setInputGain` selects no PGA register unless the channel
+  is 0, 1 or negative, and that choice is made before either TLV320
+  variant's code is reached. It still rewrites the ADC volume
+  registers on the way out, but from an `inputGain[]` the call left
+  untouched, so the bytes are the ones already there. A negative
+  channel means "all" throughout.
 - **Levels are clamped, not validated.** `-1, +18 dB` and
   `-1, -200 dB` on the line out and `-1, 999 dB` on the input gain all
   return 0. The codec clamps: line out and headphone boost stops at
@@ -337,16 +340,16 @@ measured off the analogue signal instead, and say so.
   then `writeAdcVolumeRegisters`. So the note says nothing about the
   input, whose own floor is the next fact and is a different number.
 - **The audio input gain stops responding below -12 dB, and between
-  there and 0 dB moves in 1.5 dB steps.** Measured 2026-08-17 on image 2026-03-25
-  (libbela reporting 1.18.0, the overlaid `/root/Bela` recorded above),
-  with a cable from the board's audio output back into its audio input,
-  so the source is the board's own 440 Hz sine at amplitude 0.3 and
-  needs no external gear. The headphone level — this board's output
-  level, see above — was held at -6 dB, one input gain was set per
-  process before `Bela_startAudio`, and the figure is the RMS of the
-  audio input over a one-second window taken after four seconds of
-  running. Channel 0 below; channel 1 tracked it within 0.05 dB
-  throughout.
+  there and 0 dB moves in 1.5 dB steps.** Measured 2026-08-17 on image
+  2026-03-25 (libbela reporting 1.18.0, the overlaid `/root/Bela`
+  recorded above), with a cable from the board's audio output back into
+  its audio input, so the source is the board's own 440 Hz sine at
+  amplitude 0.3 and needs no external gear. The headphone level — this
+  board's output level, see above — was held at -6 dB, one input gain
+  was set per process before `Bela_startAudio`, and the figure is the
+  RMS of the audio input over a one-second window taken after four
+  seconds of running. Channel 0 below; channel 1 tracked it within
+  0.05 dB throughout.
 
   | `Bela_setAudioInputGain` | Input level | Against 0 dB | Register setting |
   | --- | --- | --- | --- |

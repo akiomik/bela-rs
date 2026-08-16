@@ -251,18 +251,19 @@ impl<T: BelaApplication> Bela<T> {
         }
     }
 
-    /// Sets the gain of the input preamplifier, in decibels.
+    /// Sets the gain of the audio input, in decibels.
     ///
-    /// This is the programmable gain amplifier ahead of the ADC, so it
-    /// changes what the audio inputs actually sample — turn it up for a
-    /// quiet source rather than scaling in `render`, which only
-    /// amplifies the noise the ADC already digitised. It does not
-    /// affect the analog inputs.
+    /// Above zero this is the programmable gain amplifier ahead of the
+    /// ADC, so it changes what the audio inputs actually sample — turn
+    /// it up for a quiet source rather than scaling in `render`, which
+    /// only amplifies the noise the ADC already digitised. Below zero
+    /// it is an attenuator behind that amplifier, with a range of its
+    /// own. Neither half affects the analog inputs.
     ///
-    /// Bela's documented range is 0 dB to 59.5 dB in 0.5 dB steps, and
-    /// the default is 16 dB. A negative gain is accepted too, and is a
-    /// different control underneath — the section below is what a Bela
-    /// Gem Stereo does with one.
+    /// Bela's documented range is the amplifier's: 0 dB to 59.5 dB in
+    /// 0.5 dB steps, with 16 dB the default. A negative gain is
+    /// accepted but not documented, and what it does is the codec's —
+    /// the section below is a Bela Gem Stereo's answer.
     ///
     /// # Two controls on a Bela Gem Stereo
     ///
@@ -275,15 +276,16 @@ impl<T: BelaApplication> Bela<T> {
     /// this call gets**: -13.5, -18 and -24 dB all measured the same
     /// as -12 dB. Between 0 and -12 dB the request is taken toward
     /// zero to a multiple of 1.5 dB, which makes -1 dB the same as
-    /// 0 dB and -4 dB the same as -3 dB. Below -96 dB the
-    /// preamplifier is muted outright and nothing arrives at all;
-    /// between that and -12 dB there is nothing to ask for.
+    /// 0 dB and -4 dB the same as -3 dB. At or below -96 dB the
+    /// amplifier is muted outright and nothing arrives at all; between
+    /// that and -12 dB there is nothing to ask for.
     ///
     /// Every one of those calls reports success, so a source loud
     /// enough to clip the ADC at -12 dB has to be attenuated before it
-    /// reaches the board — this call has nothing left to give. Other
-    /// Bela hardware has its own floor; see `docs/board-facts.md` for
-    /// the measurement and the codec path behind it.
+    /// reaches the board — this call has nothing left to give.
+    /// Hardware with a different codec has its own floor; see
+    /// `docs/board-facts.md` for the measurement and the codec path
+    /// behind it.
     ///
     /// # Errors
     /// Returns [`Error::AudioInputGain`] when the codec refuses the
