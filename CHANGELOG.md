@@ -23,7 +23,10 @@ and this project adheres to
   sysfs GPIOs, which no real-time callback can touch, so an indicator
   `render` drives is still an LED on a digital channel. Bela's
   `--disable-led` is applied after `Settings` and can only clear the
-  flag, which is why the resolved value is worth reading back.
+  flag, which is why the resolved value is worth reading back. The
+  `command_line` example now asks for the LEDs and prints what the
+  setting resolved to, so that the option has an explicit request to
+  override rather than a default to agree with.
 - `stop_requested` is now available on every target instead of only on
   the device one, where it keeps reading the flag the stop button, the
   IDE and `request_stop` set. Off-device it answers `false`: there is

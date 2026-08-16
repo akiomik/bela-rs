@@ -1,15 +1,25 @@
 //! Reconfiguring a built binary through Bela's standard command-line
 //! options, and adding one of your own.
 //!
-//! The application asks for 32-frame blocks in its own `Settings`; the
-//! command line is applied on top, so `--period 64` wins over it and
-//! `setup` reports what the audio system was actually configured with:
+//! The application asks for 32-frame blocks and for libbela's LEDs in
+//! its own `Settings`; the command line is applied on top, so
+//! `--period 64` wins over the first and `--disable-led` over the
+//! second:
 //!
 //! ```sh
-//! ./command_line                  # 32 frames per block
+//! ./command_line                  # 32 frames per block, LEDs on
 //! ./command_line --period 64 -v   # 64, plus libbela's verbose logging
+//! ./command_line --disable-led    # the LEDs the application asked for, off
 //! ./command_line --help
 //! ```
+//!
+//! The two are reported from different places, because they resolve at
+//! different times to different audiences. `setup` reports what the
+//! audio system was actually configured with, which is the block size
+//! after libbela has had it; `validate_settings` reports the LED
+//! setting, which is a request the hardware never answers — nothing in
+//! `SetupContext` says whether the indicators are on, so the resolved
+//! settings are the last place it can be read.
 //!
 //! `--help` is this program's own option rather than one of Bela's, so
 //! it is handled here before the remaining arguments are handed on —
@@ -47,13 +57,19 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 
 use bela::{
-    BelaApplication, BlockContext, CleanupContext, RenderContext, SetupContext, ThreadInfo,
-    rt_println,
+    BelaApplication, BlockContext, CleanupContext, RenderContext, ResolvedSettings, SetupContext,
+    ThreadInfo, rt_println,
 };
 
 /// The application's own default block size, which the command line
 /// can override.
 const PERIOD_SIZE: u32 = 32;
+
+/// Whether the application asks for libbela's running and underrun
+/// LEDs. Bela's own default too, and said out loud so that
+/// `--disable-led` has an explicit request to override rather than a
+/// default to agree with.
+const ENABLE_LED: bool = true;
 
 #[derive(Default)]
 struct Report {
@@ -62,6 +78,14 @@ struct Report {
 
 impl BelaApplication for Report {
     type RenderState = ();
+
+    // Runs on the calling thread before any audio exists, so an
+    // ordinary `println!` is fine here; `setup` below is the one that
+    // prints from inside `Bela_initAudio`.
+    fn validate_settings(&self, settings: &ResolvedSettings<'_>) -> Result<(), &'static str> {
+        println!("settings: enable_led={}", settings.enable_led());
+        Ok(())
+    }
 
     fn setup(&mut self, context: &SetupContext) -> bool {
         rt_println!(
@@ -127,7 +151,9 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let settings = bela::Settings::new().period_size(PERIOD_SIZE);
+    let settings = bela::Settings::new()
+        .period_size(PERIOD_SIZE)
+        .enable_led(ENABLE_LED);
     match bela::Bela::run_with_args(Report::default(), &settings, args) {
         Ok(()) => ExitCode::SUCCESS,
         // Returning the error from `main` would print its `Debug`

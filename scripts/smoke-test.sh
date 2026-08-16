@@ -468,6 +468,38 @@ else
 ${reported_period:-nothing} frames per block"
 fi
 
+# The other half of the same question, for a setting the hardware never
+# reports back: `--disable-led` has to beat the `enable_led(true)` the
+# application asked for, and the resolved settings are the only place
+# that can be seen. Which GPIOs libbela then claims is a measurement
+# rather than a check — see "The board LEDs" in docs/board-facts.md.
+led_asked_for="$(awk '/^const ENABLE_LED/ { print $NF }' \
+  "$ROOT/bela/examples/command_line.rs" | tr -d ';' | head -1)"
+# settings: enable_led=true
+reported_led="$(awk -F= '/^settings:/ { print $2; exit }' "$LOG_DIR/command_line.log" \
+  2>/dev/null || true)"
+if [ "$reported_led" = "$led_asked_for" ]; then
+  pass "command_line: the application's own enable_led=$led_asked_for was used"
+else
+  fail "command_line: expected the application's enable_led=$led_asked_for, \
+got ${reported_led:-nothing}"
+fi
+
+echo "Running command_line with --disable-led on $HOST..."
+result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --disable-led" ||
+  echo state=ssh-failed)"
+remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-led.log" 2>/dev/null || true
+reported_led="$(awk -F= '/^settings:/ { print $2; exit }' "$LOG_DIR/command_line-led.log" \
+  2>/dev/null || true)"
+if [ "$result" != "state=stopped exit=0" ]; then
+  fail "command_line: --disable-led: $result"
+  sed 's/^/        /' "$LOG_DIR/command_line-led.log" >&2
+elif [ "$reported_led" = false ]; then
+  pass "command_line: --disable-led overrode the application's enable_led=$led_asked_for"
+else
+  fail "command_line: --disable-led left enable_led as ${reported_led:-nothing}"
+fi
+
 # The usage text comes from libbela, so it is also a check that
 # `Bela_usage` is reachable at all. No audio system is involved.
 help_output="$(remote "cd $REMOTE_DIR && ./command_line --help 2>&1" || echo run-failed)"
