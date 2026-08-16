@@ -10,6 +10,22 @@ and this project adheres to
 
 ### Fixed
 
+- `Bela::set_audio_input_gain` documented only the preamplifier's
+  0 dB to 59.5 dB range, which is the half of the control a positive
+  gain uses. A negative gain is a different control: libbela pins the
+  preamplifier at 0 dB and attenuates in the ADC's input control
+  instead, which on a Bela Gem Stereo has eight steps of 1.5 dB and no
+  ninth. Measured on the board with a loopback cable, -12 dB is the
+  floor — -13.5, -18 and -24 dB all gave the same input level — and a
+  request between 0 and -12 dB is taken toward zero to a multiple of
+  1.5 dB, so -1 dB attenuates as much as 0 dB. Every such call reports
+  success. The method and the level module overview now say so, and
+  `docs/board-facts.md` records the sweep, the two codec paths, and
+  that libbela's existing "approximate below -18 dB" note is about the
+  output routing rather than the input. No behaviour changed, and
+  nothing here refuses a gain below -12 dB: that floor is this codec's,
+  not a portable contract.
+
 - The documentation on `Bela::set_line_out_level` did not distinguish
   the boards, and `examples/levels.rs` said its line out level makes
   the tone come out quieter than the signal `render` writes. On a Bela

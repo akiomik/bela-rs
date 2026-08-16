@@ -57,6 +57,11 @@
 //!   but ignored for the input gain.
 //! - a level outside the codec's range is clamped rather than refused,
 //!   so nothing reports that `+18` dB on the line out became `+9`.
+//! - the input gain has a floor of -12 dB and a step of 1.5 dB below
+//!   zero, where it is the ADC's attenuator rather than the
+//!   preamplifier —
+//!   [`set_audio_input_gain`](crate::Bela::set_audio_input_gain) has
+//!   both halves.
 //! - the board's output level is
 //!   [`set_headphone_level`](crate::Bela::set_headphone_level), not
 //!   [`set_line_out_level`](crate::Bela::set_line_out_level): the
@@ -246,16 +251,41 @@ impl<T: BelaApplication> Bela<T> {
         }
     }
 
-    /// Sets the gain of the input preamplifier, in decibels.
+    /// Sets the gain of the audio input, in decibels.
     ///
-    /// This is the programmable gain amplifier ahead of the ADC, so it
-    /// changes what the audio inputs actually sample — turn it up for a
-    /// quiet source rather than scaling in `render`, which only
-    /// amplifies the noise the ADC already digitised. It does not
-    /// affect the analog inputs.
+    /// Above zero this is the programmable gain amplifier ahead of the
+    /// ADC, so it changes what the audio inputs actually sample — turn
+    /// it up for a quiet source rather than scaling in `render`, which
+    /// only amplifies the noise the ADC already digitised. Below zero
+    /// it is a separate attenuator at the ADC's input, with a range of
+    /// its own. Neither half affects the analog inputs.
     ///
-    /// Bela's documented range is 0 dB to 59.5 dB in 0.5 dB steps, and
-    /// the default is 16 dB.
+    /// Bela's documented range is the amplifier's: 0 dB to 59.5 dB in
+    /// 0.5 dB steps, with 16 dB the default. A negative gain is
+    /// accepted but not documented, and what it does is the codec's —
+    /// the section below is a Bela Gem Stereo's answer.
+    ///
+    /// # Two controls on a Bela Gem Stereo
+    ///
+    /// Above zero this is the preamplifier, and the board follows it:
+    /// +6 dB measured +6.01 dB at the input.
+    ///
+    /// Below zero it is not. libbela pins the preamplifier at 0 dB and
+    /// attenuates in the ADC's own input control instead, which has
+    /// eight steps of 1.5 dB and no ninth — so **-12 dB is as quiet as
+    /// this call gets**: -13.5, -18 and -24 dB all measured the same
+    /// as -12 dB. Between 0 and -12 dB the request is taken toward
+    /// zero to a multiple of 1.5 dB, which makes -1 dB the same as
+    /// 0 dB and -4 dB the same as -3 dB. At or below -96 dB the
+    /// amplifier is muted outright and nothing arrives at all; between
+    /// that and -12 dB there is nothing to ask for.
+    ///
+    /// Every one of those calls reports success, so a source loud
+    /// enough to clip the ADC at -12 dB has to be attenuated before it
+    /// reaches the board — this call has nothing left to give.
+    /// Hardware with a different codec has its own floor; see
+    /// `docs/board-facts.md` for the measurement and the codec path
+    /// behind it.
     ///
     /// # Errors
     /// Returns [`Error::AudioInputGain`] when the codec refuses the
