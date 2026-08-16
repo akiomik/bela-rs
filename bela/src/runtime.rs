@@ -83,7 +83,9 @@ const fn request_stop() {}
 /// What tells an expected refusal from an anomalous one — see
 /// [`Guard::fault`]. Off-device nothing can request a stop, so every
 /// fault a test raises counts as one raised while running, which is
-/// what those tests are about.
+/// what those tests are about. [`crate::stop_requested`] is the same
+/// answer, published: it exists on both targets, so callback code
+/// that reacts to a pending stop needs no `cfg` of its own.
 ///
 /// `Bela_stopRequested` reads `int volatile gShouldStop`, which is
 /// volatile rather than atomic: a thread that has not been told about
@@ -98,7 +100,7 @@ pub(crate) fn stop_requested() -> bool {
 }
 
 #[cfg(not(bela_device))]
-const fn stop_requested() -> bool {
+pub(crate) const fn stop_requested() -> bool {
     false
 }
 
