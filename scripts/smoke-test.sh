@@ -441,7 +441,6 @@ fi
 # line overriding it.
 default_period="$(awk '/^const PERIOD_SIZE/ { print $NF + 0 }' \
   "$ROOT/bela/examples/command_line.rs" | head -1)"
-override_period=$((default_period * 2))
 # setup: 44100 Hz, 32 frames per block, 2 in / 2 out audio channels, ...
 reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line.log" 2>/dev/null || true)"
 # Both sides have to have been read: a constant this stopped finding
@@ -454,21 +453,33 @@ else
 ${default_period:-<unread>} frames per block, got ${reported_period:-nothing}"
 fi
 
-# Long enough for setup to report — this run is not about rendering.
-echo "Running command_line with --period $override_period on $HOST..."
-result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --period $override_period" ||
-  echo state=ssh-failed)"
-remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-period.log" 2>/dev/null || true
-reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line-period.log" \
-  2>/dev/null || true)"
-if [ "$result" != "state=stopped exit=0" ]; then
-  fail "command_line: --period $override_period: $result"
-  sed 's/^/        /' "$LOG_DIR/command_line-period.log" >&2
-elif [ "$reported_period" = "$override_period" ]; then
-  pass "command_line: --period $override_period overrode the application's default"
+# The override is the default doubled, so an unread default has nothing
+# to double: it would ask for `--period 0`, which the parser clamps to
+# 1 and the PRU then times out on, exiting 1 from inside libbela with
+# nothing returned to the program ("Command-line options" in
+# docs/board-facts.md). A check this script can no longer make must not
+# turn into a configuration it sends to the board by accident, so the
+# run is not made at all.
+if [ -z "$default_period" ]; then
+  fail "command_line: --period: not run, the example's own default could not be read"
 else
-  fail "command_line: --period $override_period was configured as \
+  override_period=$((default_period * 2))
+  # Long enough for setup to report — this run is not about rendering.
+  echo "Running command_line with --period $override_period on $HOST..."
+  result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --period $override_period" ||
+    echo state=ssh-failed)"
+  remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-period.log" 2>/dev/null || true
+  reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line-period.log" \
+    2>/dev/null || true)"
+  if [ "$result" != "state=stopped exit=0" ]; then
+    fail "command_line: --period $override_period: $result"
+    sed 's/^/        /' "$LOG_DIR/command_line-period.log" >&2
+  elif [ "$reported_period" = "$override_period" ]; then
+    pass "command_line: --period $override_period overrode the application's default"
+  else
+    fail "command_line: --period $override_period was configured as \
 ${reported_period:-nothing} frames per block"
+  fi
 fi
 
 # The other half of the same question, for a setting the hardware never
