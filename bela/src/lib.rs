@@ -204,10 +204,64 @@ pub fn request_stop() {
 
 /// Whether a stop has been requested by the stop button, IDE, or
 /// [`request_stop`].
-#[cfg(bela_device)]
+///
+/// Unlike the rest of the audio system this exists on every target.
+/// Off-device it is always `false`: there is no audio system, so
+/// nothing has asked it to stop. That keeps a callback that reacts to
+/// a pending stop — putting an indicator out, writing a last value —
+/// one piece of code that compiles, lints and unit-tests on a
+/// development machine and runs on the board, rather than one guarded
+/// by a `cfg` and so absent from the build its tests run in.
+///
+/// ```
+/// use bela::{BelaApplication, BlockContext, RenderContext, SetupContext, ThreadInfo};
+///
+/// /// Holds an indicator on a digital pin for a while after each peak.
+/// struct Indicator {
+///     frames_left: usize,
+/// }
+///
+/// impl BelaApplication for Indicator {
+///     type RenderState = ();
+///
+///     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
+///
+///     fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
+///
+///     fn render_post(&mut self, _states: &mut [()], context: &mut BlockContext) {
+///         // A digital output keeps driving after the program exits,
+///         // so a run stopped while the indicator is lit would leave
+///         // it lit. This block may be the last one.
+///         let lit = self.frames_left > 0 && !bela::stop_requested();
+///         context.digital_write_once(0, 0, lit);
+///     }
+/// }
+/// ```
 #[must_use]
+#[cfg_attr(
+    not(bela_device),
+    allow(
+        clippy::missing_const_for_fn,
+        reason = "the device implementation reads a flag through libbela and cannot be const; one signature for both targets is the point"
+    )
+)]
 pub fn stop_requested() -> bool {
     runtime::stop_requested()
+}
+
+#[cfg(all(test, not(bela_device)))]
+mod tests {
+    #[test]
+    fn a_stop_is_never_requested_off_the_device() {
+        // The point of the function existing here at all: an
+        // application's callbacks can ask, and get the answer that
+        // matches a host build — no audio system, so nothing has asked
+        // it to stop.
+        assert!(
+            !super::stop_requested(),
+            "off-device there is no audio system for anything to have stopped"
+        );
+    }
 }
 
 // The relay build.rs performs, tested where a build script cannot be:

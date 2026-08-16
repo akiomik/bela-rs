@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `stop_requested` is now available on every target instead of only on
+  the device one, where it keeps reading the flag the stop button, the
+  IDE and `request_stop` set. Off-device it answers `false`: there is
+  no audio system, so nothing has asked it to stop. A callback that
+  reacts to a pending stop — putting an indicator out, writing a last
+  value — is therefore one piece of code that compiles, lints and
+  unit-tests on a development machine and runs on the board, rather
+  than one behind a `cfg` and so absent from the build its tests run
+  in. `request_stop` stays device-only: off-device it could only be a
+  no-op, and a call that looks like it changed something without
+  changing anything is worse than not compiling.
+
 ### Fixed
 
 - `Bela::set_audio_input_gain` documented only the preamplifier's
