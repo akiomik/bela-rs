@@ -62,7 +62,8 @@
 //!   [`set_line_out_level`](crate::Bela::set_line_out_level): the
 //!   latter reports success and leaves the output where it was. The
 //!   two calls write different registers of the codec, and on this
-//!   board only the headphone pair reaches what leaves it.
+//!   board only the ones behind the headphone level reach what leaves
+//!   it.
 //! - there is no amplifier mute pin, so
 //!   [`mute_speakers`](crate::Bela::mute_speakers) and
 //!   [`Settings::begin_muted`](crate::Settings::begin_muted) succeed
@@ -187,10 +188,10 @@ impl<T: BelaApplication> Bela<T> {
     /// [`set_headphone_level`](Bela::set_headphone_level): the same
     /// measurement had the output following that call dB for dB. The
     /// two write different registers of the codec, and on this board
-    /// only the headphone pair reaches what leaves it — see
-    /// `docs/board-facts.md` for the measurement and the registers.
-    /// Other Bela hardware is not covered by it: this stays the call
-    /// for the line out where a board has one.
+    /// only the set behind the headphone level reaches what leaves it
+    /// — see `docs/board-facts.md` for the measurement and the
+    /// registers. Other Bela hardware is not covered by it: this stays
+    /// the call for the line out where a board has one.
     ///
     /// # Errors
     /// Returns [`Error::LineOutLevel`] when the codec refuses the call,
