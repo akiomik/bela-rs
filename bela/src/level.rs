@@ -257,8 +257,8 @@ impl<T: BelaApplication> Bela<T> {
     /// ADC, so it changes what the audio inputs actually sample — turn
     /// it up for a quiet source rather than scaling in `render`, which
     /// only amplifies the noise the ADC already digitised. Below zero
-    /// it is an attenuator behind that amplifier, with a range of its
-    /// own. Neither half affects the analog inputs.
+    /// it is a separate attenuator at the ADC's input, with a range of
+    /// its own. Neither half affects the analog inputs.
     ///
     /// Bela's documented range is the amplifier's: 0 dB to 59.5 dB in
     /// 0.5 dB steps, with 16 dB the default. A negative gain is
