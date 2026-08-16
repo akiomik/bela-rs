@@ -14,19 +14,19 @@ and this project adheres to
   `ResolvedSettings::enable_led` to read what it resolved to. It is the
   one way to decline libbela's use of the board's LEDs: the running
   indicator the PRU blinks — the blue LED on a Bela Gem Stereo, the
-  board's own user LED where the cape has none — and the
-  red underrun LED, lit for 20000 frames each time an underrun is
-  detected. It changes what is shown and not what is measured:
-  underruns are still counted and still logged with the LEDs off, and
-  `detect_underruns` off keeps the red LED dark whatever this says.
-  Nor does declining them hand those pins to the application; they are
-  sysfs GPIOs, which no real-time callback can touch, so an indicator
-  `render` drives is still an LED on a digital channel. Bela's
-  `--disable-led` is applied after `Settings` and can only clear the
-  flag, which is why the resolved value is worth reading back. The
-  `command_line` example now asks for the LEDs and prints what the
-  setting resolved to, so that the option has an explicit request to
-  override rather than a default to agree with.
+  board's own user LED where the cape has none — and the red underrun
+  LED, lit for 20000 frames each time an underrun is detected. It
+  changes what is shown and not what is measured: underruns are still
+  counted and still logged with the LEDs off, and `detect_underruns`
+  off keeps the red LED dark whatever this says. Nor does declining
+  them hand those pins to the application; they are sysfs GPIOs, which
+  no real-time callback can touch, so an indicator `render` drives is
+  still an LED on a digital channel. Bela's `--disable-led` is applied
+  after `Settings` and can only clear the flag, which is why the
+  resolved value is worth reading back. The `command_line` example now
+  asks for the LEDs and prints what the setting resolved to, so that
+  the option has an explicit request to override rather than a default
+  to agree with.
 - `stop_requested` is now available on every target instead of only on
   the device one, where it keeps reading the flag the stop button, the
   IDE and `request_stop` set. Off-device it answers `false`: there is

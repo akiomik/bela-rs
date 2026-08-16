@@ -444,11 +444,14 @@ default_period="$(awk '/^const PERIOD_SIZE/ { print $NF + 0 }' \
 override_period=$((default_period * 2))
 # setup: 44100 Hz, 32 frames per block, 2 in / 2 out audio channels, ...
 reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line.log" 2>/dev/null || true)"
-if [ "$reported_period" = "$default_period" ]; then
+# Both sides have to have been read: a constant this stopped finding
+# and a log line it stopped finding are both the empty string, and
+# comparing those would pass without having checked anything.
+if [ -n "$default_period" ] && [ "$reported_period" = "$default_period" ]; then
   pass "command_line: the application's own default of $default_period frames per block was used"
 else
-  fail "command_line: expected the application's default of $default_period frames per block, \
-got ${reported_period:-nothing}"
+  fail "command_line: expected the application's default of \
+${default_period:-<unread>} frames per block, got ${reported_period:-nothing}"
 fi
 
 # Long enough for setup to report — this run is not about rendering.
@@ -478,11 +481,12 @@ led_asked_for="$(awk '/^const ENABLE_LED/ { print $NF }' \
 # settings: enable_led=true
 reported_led="$(awk -F= '/^settings:/ { print $2; exit }' "$LOG_DIR/command_line.log" \
   2>/dev/null || true)"
-if [ "$reported_led" = "$led_asked_for" ]; then
+# Read as unread-proof as the period above.
+if [ -n "$led_asked_for" ] && [ "$reported_led" = "$led_asked_for" ]; then
   pass "command_line: the application's own enable_led=$led_asked_for was used"
 else
-  fail "command_line: expected the application's enable_led=$led_asked_for, \
-got ${reported_led:-nothing}"
+  fail "command_line: expected the application's \
+enable_led=${led_asked_for:-<unread>}, got ${reported_led:-nothing}"
 fi
 
 echo "Running command_line with --disable-led on $HOST..."

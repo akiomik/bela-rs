@@ -290,13 +290,11 @@ impl Settings {
     /// application. They are ordinary GPIOs reached through sysfs,
     /// which is file I/O and has no place in a real-time callback, and
     /// this crate offers no API for them. An indicator a callback can
-    /// drive is an LED on a digital channel, where `pin_mode` and
-    /// `digital_write` are real-time safe and need nothing else — on
-    /// [`RenderContext`](crate::RenderContext::pin_mode) in
-    /// [`render`](crate::BelaApplication::render), and on
-    /// [`BlockContext`](crate::BlockContext::pin_mode) in
-    /// [`render_pre`](crate::BelaApplication::render_pre) and
-    /// [`render_post`](crate::BelaApplication::render_post).
+    /// drive is an LED on a digital channel, where [`pin_mode`] and
+    /// [`digital_write`] are real-time safe and need nothing else —
+    /// those two on [`RenderContext`] in [`render`], and their
+    /// counterparts on [`BlockContext`] in [`render_pre`] and
+    /// [`render_post`].
     ///
     /// # The command line can still turn it off
     ///
@@ -307,6 +305,14 @@ impl Settings {
     /// rather than one it is guaranteed to keep, and
     /// [`ResolvedSettings::enable_led`] is where the value that
     /// survived can be read.
+    ///
+    /// [`pin_mode`]: crate::RenderContext::pin_mode
+    /// [`digital_write`]: crate::RenderContext::digital_write
+    /// [`RenderContext`]: crate::RenderContext
+    /// [`BlockContext`]: crate::BlockContext
+    /// [`render`]: crate::BelaApplication::render
+    /// [`render_pre`]: crate::BelaApplication::render_pre
+    /// [`render_post`]: crate::BelaApplication::render_post
     #[must_use]
     pub const fn enable_led(mut self, enabled: bool) -> Self {
         self.enable_led = Some(enabled);
