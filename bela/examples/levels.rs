@@ -13,6 +13,12 @@
 //! a channel no Bela codec has, which is refused rather than quietly
 //! ignored.
 //!
+//! What a call returns and what it does to the board are two things.
+//! On a Bela Gem Stereo the line out level succeeds and changes
+//! nothing that comes out, and the headphone level is what the output
+//! follows; see `docs/board-facts.md`. Both are set here, because both
+//! return values are part of the behaviour this example reports.
+//!
 //! Cross-compile and run on the board (see docs/cross-compile.md):
 //!
 //! ```sh
@@ -36,11 +42,14 @@ use bela::{BelaApplication, BlockContext, RenderContext, SetupContext, ThreadInf
 const FREQUENCY: f32 = 440.0;
 const AMPLITUDE: f32 = 0.3;
 
-/// Attenuates the line out, so the tone comes out quieter than the
-/// signal `render` writes without `render` knowing anything about it.
+/// Asked of the line out. Where a board's line out follows it, this
+/// attenuates the tone without `render` knowing anything about it; a
+/// Bela Gem Stereo reports success and its output stays where it was.
 const LINE_OUT_LEVEL: f32 = -12.0;
 /// Bela's own default is -6 dB; this one is quieter still, because a
-/// 440 Hz tone in headphones is not a pleasant surprise.
+/// 440 Hz tone in headphones is not a pleasant surprise — and on a
+/// Bela Gem Stereo it is the level of everything the board puts out,
+/// headphones or not.
 const HEADPHONE_LEVEL: f32 = -20.0;
 /// The default is 16 dB. Higher suits a quiet source, such as a
 /// microphone straight into the audio input.

@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- The documentation on `Bela::set_line_out_level` did not distinguish
+  the boards, and `examples/levels.rs` said its line out level makes
+  the tone come out quieter than the signal `render` writes. On a Bela
+  Gem Stereo it does not: a 440 Hz tone recorded off the board stayed
+  at the same level for a line out set to 0, -12 and -24 dB, while the
+  same 24 dB asked of `Bela::set_headphone_level` took 23.26 dB off it.
+  Both calls report success either way. Both methods, the level module
+  overview and the example now say which of the two the board's output
+  follows, and `docs/board-facts.md` records the measurement alongside
+  the codec registers each call writes. The generic descriptions stay
+  for the hardware whose line out is its own output; no behaviour
+  changed, only what the crate claims about it.
+
 ## [0.6.0] - 2026-08-13
 
 ### Added

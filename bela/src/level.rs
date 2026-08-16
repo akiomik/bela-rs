@@ -57,6 +57,13 @@
 //!   but ignored for the input gain.
 //! - a level outside the codec's range is clamped rather than refused,
 //!   so nothing reports that `+18` dB on the line out became `+9`.
+//! - the board's output level is
+//!   [`set_headphone_level`](crate::Bela::set_headphone_level), not
+//!   [`set_line_out_level`](crate::Bela::set_line_out_level): the
+//!   latter reports success and leaves the output where it was. The
+//!   two calls write different registers of the codec, and on this
+//!   board only the ones behind the headphone level reach what leaves
+//!   it.
 //! - there is no amplifier mute pin, so
 //!   [`mute_speakers`](crate::Bela::mute_speakers) and
 //!   [`Settings::begin_muted`](crate::Settings::begin_muted) succeed
@@ -159,9 +166,10 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// Zero is full scale and negative values attenuate; how far in
     /// either direction depends on the codec. On a Bela Gem Stereo the
-    /// line out is channels 0 and 1, attenuates in 0.5 dB steps down to
-    /// -63.5 dB and boosts up to +9 dB, and a value outside that is
-    /// clamped without being reported.
+    /// codec takes channels 0 and 1, attenuation in 0.5 dB steps down
+    /// to -63.5 dB and boost up to +9 dB, and clamps a value outside
+    /// that without reporting it — but what the board puts out does not
+    /// follow any of it, which is the section below.
     ///
     /// Takes effect immediately once audio is running, and is otherwise
     /// remembered and applied when it starts — so this is also how a
@@ -170,6 +178,20 @@ impl<T: BelaApplication> Bela<T> {
     /// [`until_stopped`](Bela::until_stopped) is that program, and
     /// [`examples/levels.rs`][example] is a whole one that sets all
     /// four controls and reports what each call returned.
+    ///
+    /// # No effect on a Bela Gem Stereo's output
+    ///
+    /// That board's audio output does not change with this level: a
+    /// 440 Hz tone recorded off it came out at the same amplitude with
+    /// the line out set to 0, -12 and -24 dB, and every call reported
+    /// success. What moves it there is
+    /// [`set_headphone_level`](Bela::set_headphone_level): the same
+    /// measurement had the output following that call dB for dB. The
+    /// two write different registers of the codec, and on this board
+    /// only the set behind the headphone level reaches what leaves it
+    /// — see `docs/board-facts.md` for the measurement and the
+    /// registers. Other Bela hardware is not covered by it: this stays
+    /// the call for the line out where a board has one.
     ///
     /// # Errors
     /// Returns [`Error::LineOutLevel`] when the codec refuses the call,
@@ -193,11 +215,20 @@ impl<T: BelaApplication> Bela<T> {
 
     /// Sets the level of the onboard headphone amplifier, in decibels.
     ///
-    /// The headphone output only: the line out and the speakers are
-    /// unaffected. Bela's documented range is -63.5 dB to 0 dB in
-    /// 0.5 dB steps, and the default is -6 dB. Like
-    /// [`set_line_out_level`](Bela::set_line_out_level), it applies at
-    /// once while audio runs and is otherwise applied when it starts.
+    /// The headphone output only, as far as libbela documents it: the
+    /// line out and the speakers are unaffected. Bela's documented
+    /// range is -63.5 dB to 0 dB in 0.5 dB steps, and the default is
+    /// -6 dB. Like [`set_line_out_level`](Bela::set_line_out_level), it
+    /// applies at once while audio runs and is otherwise applied when
+    /// it starts.
+    ///
+    /// # It is the output level on a Bela Gem Stereo
+    ///
+    /// On that board this is the level of what comes out, not of a
+    /// separate headphone output: a 440 Hz tone recorded off it lost
+    /// 23.26 dB for the 24 dB asked of this call, while the same 24 dB
+    /// asked of [`set_line_out_level`](Bela::set_line_out_level) left
+    /// it where it was. See `docs/board-facts.md`.
     ///
     /// # Errors
     /// Returns [`Error::HeadphoneLevel`] when the codec refuses the
