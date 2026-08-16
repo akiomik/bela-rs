@@ -37,6 +37,7 @@ pub struct Settings {
     high_performance_mode: Option<bool>,
     uniform_sample_rate: Option<bool>,
     stop_button_pin: Option<StopButtonPin>,
+    enable_led: Option<bool>,
     thread_count: Option<NonZeroU32>,
     cpu_monitoring: Option<NonZeroU32>,
     begin_muted: Option<bool>,
@@ -70,6 +71,7 @@ impl Settings {
             high_performance_mode: None,
             uniform_sample_rate: None,
             stop_button_pin: None,
+            enable_led: None,
             thread_count: None,
             cpu_monitoring: None,
             begin_muted: None,
@@ -248,6 +250,75 @@ impl Settings {
         self
     }
 
+    /// Whether libbela uses the board's LEDs to show that it is
+    /// running and that an underrun happened.
+    ///
+    /// On unless the board's configuration says otherwise, and the
+    /// other board-level behaviour an application can decline besides
+    /// [`stop_button_pin`](Settings::stop_button_pin). One flag covers
+    /// two indicators, both libbela's own:
+    ///
+    /// - a running indicator, blinked by the PRU firmware for as long
+    ///   as audio runs. That is the blue LED on a Bela Gem Stereo
+    ///   (`GPIO0_45`, `P2_02`); on a board with no LED of its own it
+    ///   is the board's own user LED, which libbela takes away from
+    ///   its kernel trigger for the run and hands back afterwards.
+    /// - an underrun indicator, lit for 20000 frames — 0.42 s at
+    ///   48 kHz — whenever an underrun is detected. On a Gem Stereo
+    ///   that is the red LED (`GPIO0_46`, `P2_04`).
+    ///
+    /// Off, libbela opens neither pin and gives the PRU no LED address
+    /// to write to, so nothing on the board lights for either event.
+    /// On a Gem Stereo that has been measured as the two GPIOs being
+    /// claimed or left alone together; see "The board LEDs" in
+    /// `docs/board-facts.md`.
+    ///
+    /// # It changes what is shown, not what is detected
+    ///
+    /// [`detect_underruns`](Settings::detect_underruns) is what decides
+    /// whether underruns are counted and logged, and libbela lights the
+    /// red LED from inside that same check. So detection off means no
+    /// underrun LED however this is set, and this off still leaves
+    /// underruns counted into
+    /// [`underrun_count`](crate::BlockContext::underrun_count) and
+    /// still printed to standard error. What it buys is a dark board,
+    /// not a quiet one.
+    ///
+    /// # It is not a way to use those LEDs
+    ///
+    /// Declining libbela's use of them does not hand them to the
+    /// application. They are ordinary GPIOs reached through sysfs,
+    /// which is file I/O and has no place in a real-time callback, and
+    /// this crate offers no API for them. An indicator a callback can
+    /// drive is an LED on a digital channel, where [`pin_mode`] and
+    /// [`digital_write`] are real-time safe and need nothing else —
+    /// those two on [`RenderContext`] in [`render`], and their
+    /// counterparts on [`BlockContext`] in [`render_pre`] and
+    /// [`render_post`].
+    ///
+    /// # The command line can still turn it off
+    ///
+    /// `--disable-led` is applied after this builder, the same order
+    /// [`period_size`](Settings::period_size) loses to `--period` in.
+    /// It goes one way only — Bela has no option that turns the LEDs
+    /// back on — so `enable_led(true)` is the value a run starts with
+    /// rather than one it is guaranteed to keep, and
+    /// [`ResolvedSettings::enable_led`] is where the value that
+    /// survived can be read.
+    ///
+    /// [`pin_mode`]: crate::RenderContext::pin_mode
+    /// [`digital_write`]: crate::RenderContext::digital_write
+    /// [`RenderContext`]: crate::RenderContext
+    /// [`BlockContext`]: crate::BlockContext
+    /// [`render`]: crate::BelaApplication::render
+    /// [`render_pre`]: crate::BelaApplication::render_pre
+    /// [`render_post`]: crate::BelaApplication::render_post
+    #[must_use]
+    pub const fn enable_led(mut self, enabled: bool) -> Self {
+        self.enable_led = Some(enabled);
+        self
+    }
+
     /// Number of threads used for `render` (multithreaded rendering on
     /// the quad-core Bela Gem).
     ///
@@ -420,6 +491,9 @@ impl Settings {
                 StopButtonPin::Gpio(pin) => to_c_int(pin),
                 StopButtonPin::Disabled => -1,
             };
+        }
+        if let Some(v) = self.enable_led {
+            raw.enableLED = c_int::from(v);
         }
         if let Some(v) = self.thread_count {
             raw.threadCount = v.get();
@@ -675,6 +749,21 @@ impl<'a> ResolvedSettings<'a> {
         self.raw.verbose != 0
     }
 
+    /// Whether libbela's running and underrun LEDs were left on; see
+    /// [`Settings::enable_led`].
+    ///
+    /// Worth reading rather than assuming: `--disable-led` is applied
+    /// after [`Settings`] and clears the flag whatever the application
+    /// asked for. So a program that must know whether the board will
+    /// light up — to put its own indicator somewhere else, or to
+    /// refuse the run — has to look at the resolved value here, not at
+    /// the [`Settings`] it was built with.
+    #[must_use]
+    #[inline]
+    pub const fn enable_led(&self) -> bool {
+        self.raw.enableLED != 0
+    }
+
     /// Whether the speaker amplifiers were asked to come up muted.
     #[must_use]
     #[inline]
@@ -749,6 +838,7 @@ impl fmt::Debug for ResolvedSettings<'_> {
             .field("high_performance_mode", &self.high_performance_mode())
             .field("detect_underruns", &self.detect_underruns())
             .field("verbose", &self.verbose())
+            .field("enable_led", &self.enable_led())
             .field("begin_muted", &self.begin_muted())
             .field("cpu_monitoring", &self.cpu_monitoring())
             .field("stop_button_pin", &self.stop_button_pin())
@@ -1007,6 +1097,8 @@ mod tests {
         raw.uniformSampleRate = 1;
         raw.stopButtonPin = 115;
         raw.verbose = 0;
+        raw.detectUnderruns = 1;
+        raw.enableLED = 1;
         raw
     }
 
@@ -1023,13 +1115,17 @@ mod tests {
         // The point of `new` being const: this is evaluated at compile
         // time, so a builder method that stopped being one would fail
         // to compile here rather than fail an assertion.
-        const SETTINGS: Settings = Settings::new().period_size(64).thread_count(FOUR_THREADS);
+        const SETTINGS: Settings = Settings::new()
+            .period_size(64)
+            .thread_count(FOUR_THREADS)
+            .enable_led(false);
 
         let mut raw = fake_defaults();
         SETTINGS.apply_to(&mut raw);
 
         assert_eq!(raw.periodSize, 64);
         assert_eq!(raw.threadCount, 4);
+        assert_eq!(raw.enableLED, 0);
     }
 
     #[test]
@@ -1047,6 +1143,7 @@ mod tests {
         assert_eq!(raw.useAnalog, 1);
         assert_eq!(raw.uniformSampleRate, 1);
         assert_eq!(raw.stopButtonPin, 115);
+        assert_eq!(raw.enableLED, 1);
     }
 
     #[test]
@@ -1114,6 +1211,7 @@ mod tests {
             .detect_underruns(false)
             .high_performance_mode(true)
             .uniform_sample_rate(false)
+            .enable_led(false)
             .begin_muted(true)
             .apply_to(&mut raw);
 
@@ -1121,7 +1219,43 @@ mod tests {
         assert_eq!(raw.detectUnderruns, 0);
         assert_eq!(raw.highPerformanceMode, 1);
         assert_eq!(raw.uniformSampleRate, 0);
+        assert_eq!(raw.enableLED, 0);
         assert_eq!(raw.beginMuted, 1);
+    }
+
+    #[test]
+    fn the_leds_can_be_asked_for_as_well_as_declined() {
+        // Bela's default, but a board's configured `CL=` line can carry
+        // `--disable-led`, so an application that wants the indicators
+        // is better saying so than assuming them — the same reason
+        // `begin_muted(false)` is worth spelling out.
+        let mut raw = fake_defaults();
+        raw.enableLED = 0;
+
+        Settings::new().enable_led(true).apply_to(&mut raw);
+
+        assert_eq!(raw.enableLED, 1);
+        // Both sides of the accessor's own conversion, so that a
+        // comparison the wrong way round would fail here rather than
+        // pass every test that only ever looks at LEDs turned off.
+        assert!(ResolvedSettings::new(&raw, None).enable_led());
+        raw.enableLED = 0;
+        assert!(!ResolvedSettings::new(&raw, None).enable_led());
+    }
+
+    #[test]
+    fn the_command_line_can_turn_the_leds_off_after_they_were_asked_for() {
+        // `--disable-led` is parsed after `Settings` is applied
+        // (`system.rs`'s `init`), and it only clears the flag: there is
+        // no option that sets it, so this is the one direction the
+        // command line can move it in.
+        let mut raw = fake_defaults();
+        Settings::new().enable_led(true).apply_to(&mut raw);
+        assert_eq!(raw.enableLED, 1);
+
+        raw.enableLED = 0;
+
+        assert!(!ResolvedSettings::new(&raw, None).enable_led());
     }
 
     #[test]
@@ -1304,6 +1438,7 @@ mod tests {
             .use_digital(false)
             .verbose(true)
             .begin_muted(true)
+            .enable_led(false)
             .stop_button_pin(Some(27))
             .apply_to(&mut raw);
         // `--sample-rate 48000` on top, applied where the audio system
@@ -1326,6 +1461,8 @@ mod tests {
         assert!(!settings.high_performance_mode());
         assert!(settings.verbose());
         assert!(settings.begin_muted());
+        assert!(!settings.enable_led());
+        assert!(settings.detect_underruns());
         assert_eq!(settings.stop_button_pin(), Some(27));
         // The whole structure is still reachable for what has no
         // accessor here.

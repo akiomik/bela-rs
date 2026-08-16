@@ -441,31 +441,78 @@ fi
 # line overriding it.
 default_period="$(awk '/^const PERIOD_SIZE/ { print $NF + 0 }' \
   "$ROOT/bela/examples/command_line.rs" | head -1)"
-override_period=$((default_period * 2))
 # setup: 44100 Hz, 32 frames per block, 2 in / 2 out audio channels, ...
 reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line.log" 2>/dev/null || true)"
-if [ "$reported_period" = "$default_period" ]; then
+# Both sides have to have been read: a constant this stopped finding
+# and a log line it stopped finding are both the empty string, and
+# comparing those would pass without having checked anything.
+if [ -n "$default_period" ] && [ "$reported_period" = "$default_period" ]; then
   pass "command_line: the application's own default of $default_period frames per block was used"
 else
-  fail "command_line: expected the application's default of $default_period frames per block, \
-got ${reported_period:-nothing}"
+  fail "command_line: expected the application's default of \
+${default_period:-<unread>} frames per block, got ${reported_period:-nothing}"
 fi
 
-# Long enough for setup to report — this run is not about rendering.
-echo "Running command_line with --period $override_period on $HOST..."
-result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --period $override_period" ||
+# The override is the default doubled, so an unread default has nothing
+# to double: it would ask for `--period 0`, which the parser clamps to
+# 1 and the PRU then times out on, exiting 1 from inside libbela with
+# nothing returned to the program ("Command-line options" in
+# docs/board-facts.md). A check this script can no longer make must not
+# turn into a configuration it sends to the board by accident, so the
+# run is not made at all.
+if [ -z "$default_period" ]; then
+  fail "command_line: --period: not run, the example's own default could not be read"
+else
+  override_period=$((default_period * 2))
+  # Long enough for setup to report — this run is not about rendering.
+  echo "Running command_line with --period $override_period on $HOST..."
+  result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --period $override_period" ||
+    echo state=ssh-failed)"
+  remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-period.log" 2>/dev/null || true
+  reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line-period.log" \
+    2>/dev/null || true)"
+  if [ "$result" != "state=stopped exit=0" ]; then
+    fail "command_line: --period $override_period: $result"
+    sed 's/^/        /' "$LOG_DIR/command_line-period.log" >&2
+  elif [ "$reported_period" = "$override_period" ]; then
+    pass "command_line: --period $override_period overrode the application's default"
+  else
+    fail "command_line: --period $override_period was configured as \
+${reported_period:-nothing} frames per block"
+  fi
+fi
+
+# The other half of the same question, for a setting the hardware never
+# reports back: `--disable-led` has to beat the `enable_led(true)` the
+# application asked for, and the resolved settings are the only place
+# that can be seen. Which GPIOs libbela then claims is a measurement
+# rather than a check — see "The board LEDs" in docs/board-facts.md.
+led_asked_for="$(awk '/^const ENABLE_LED/ { print $NF }' \
+  "$ROOT/bela/examples/command_line.rs" | tr -d ';' | head -1)"
+# settings: enable_led=true
+reported_led="$(awk -F= '/^settings:/ { print $2; exit }' "$LOG_DIR/command_line.log" \
+  2>/dev/null || true)"
+# Read as unread-proof as the period above.
+if [ -n "$led_asked_for" ] && [ "$reported_led" = "$led_asked_for" ]; then
+  pass "command_line: the application's own enable_led=$led_asked_for was used"
+else
+  fail "command_line: expected the application's \
+enable_led=${led_asked_for:-<unread>}, got ${reported_led:-nothing}"
+fi
+
+echo "Running command_line with --disable-led on $HOST..."
+result="$(remote "sh $REMOTE_DIR/run-remote.sh command_line 2 --disable-led" ||
   echo state=ssh-failed)"
-remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-period.log" 2>/dev/null || true
-reported_period="$(awk '/^setup:/ { print $4; exit }' "$LOG_DIR/command_line-period.log" \
+remote "cat $REMOTE_DIR/command_line.log" > "$LOG_DIR/command_line-led.log" 2>/dev/null || true
+reported_led="$(awk -F= '/^settings:/ { print $2; exit }' "$LOG_DIR/command_line-led.log" \
   2>/dev/null || true)"
 if [ "$result" != "state=stopped exit=0" ]; then
-  fail "command_line: --period $override_period: $result"
-  sed 's/^/        /' "$LOG_DIR/command_line-period.log" >&2
-elif [ "$reported_period" = "$override_period" ]; then
-  pass "command_line: --period $override_period overrode the application's default"
+  fail "command_line: --disable-led: $result"
+  sed 's/^/        /' "$LOG_DIR/command_line-led.log" >&2
+elif [ "$reported_led" = false ]; then
+  pass "command_line: --disable-led overrode the application's enable_led=$led_asked_for"
 else
-  fail "command_line: --period $override_period was configured as \
-${reported_period:-nothing} frames per block"
+  fail "command_line: --disable-led left enable_led as ${reported_led:-nothing}"
 fi
 
 # The usage text comes from libbela, so it is also a check that
