@@ -294,9 +294,9 @@ Captured from a verbose on-board build:
 
 Measured with a C probe against the shipped `libbela` (the level
 functions, `Bela_defaultSettings`), on a Bela Gem Stereo. These are
-what the calls *return* and what libbela does with them; the one fact
-below about what the board actually puts out was measured by recording
-the board's output instead, and says so.
+what the calls *return* and what libbela does with them; the two facts
+below about what the board actually puts out and takes in were
+measured off the analogue signal instead, and say so.
 
 - **Defaults** (`Bela_defaultSettings`): `lineOutGains` is one entry,
   all channels at 0 dB; `headphoneGains` all channels at -6 dB;
@@ -317,17 +317,84 @@ the board's output instead, and says so.
 - **Only channels 0 and 1 exist.** `Bela_setLineOutLevel` and
   `Bela_setHpLevel` return 1 for any channel above 1 (checked at 2, 9,
   10 and 20), before and while audio runs. `Bela_setAudioInputGain`
-  returns 0 for the same channels and does nothing with them: the
-  TLV320AIC3106 path writes no register unless the channel is 0, 1 or
-  negative. A negative channel means "all" throughout.
+  returns 0 for the same channels and does nothing with them:
+  `I2c_Codec::setInputGain` selects no register unless the channel is
+  0, 1 or negative, and that choice is made before either TLV320
+  variant's code is reached. A negative channel means "all" throughout.
 - **Levels are clamped, not validated.** `-1, +18 dB` and
   `-1, -200 dB` on the line out and `-1, 999 dB` on the input gain all
   return 0. The codec clamps: line out and headphone boost stops at
   +9 dB and attenuation runs in 0.5 dB steps to -63.5 dB, and an input
-  gain at or below -96 dB is taken as a mute. libbela's own comment in
-  `I2c_Codec::writeRoutingVolumeControlReg` notes that its conversion
-  from decibels to register values is only approximate below -18 dB, so
-  an attenuation set there is not quite the one that arrives.
+  gain at or below -96 dB is taken as a mute — at -96 and -200 dB the
+  recorded input was exactly zero, in the measurement below.
+- **The "approximate below -18 dB" note is about the outputs, not the
+  input.** libbela's own comment — that its conversion from decibels to
+  register values is only approximate there, so an attenuation set
+  below it is not quite the one that arrives — is in
+  `I2c_Codec::writeRoutingVolumeControlReg`, which is the routing half
+  of the line out and headphone writes. The input gain never reaches
+  that function: `I2c_Codec::setInputGain` writes the PGA registers and
+  then `writeAdcVolumeRegisters`. So the note says nothing about the
+  input, whose own floor is the next fact and is a different number.
+- **The audio input gain stops responding below -12 dB, and between
+  there and 0 dB moves in 1.5 dB steps.** Measured 2026-08-17 on image 2026-03-25
+  (libbela reporting 1.18.0, the overlaid `/root/Bela` recorded above),
+  with a cable from the board's audio output back into its audio input,
+  so the source is the board's own 440 Hz sine at amplitude 0.3 and
+  needs no external gear. The headphone level — this board's output
+  level, see above — was held at -6 dB, one input gain was set per
+  process before `Bela_startAudio`, and the figure is the RMS of the
+  audio input over a one-second window taken after four seconds of
+  running. Channel 0 below; channel 1 tracked it within 0.05 dB
+  throughout.
+
+  | `Bela_setAudioInputGain` | Input level | Against 0 dB | Register setting |
+  | --- | --- | --- | --- |
+  | +6 dB | -12.40 dBFS | +6.01 | +6 |
+  | 0 dB | -18.40 dBFS | 0.00 | 0 |
+  | -1 dB | -18.40 dBFS | 0.00 | 0 |
+  | -1.5 dB | -19.89 dBFS | -1.49 | -1.5 |
+  | -3 dB | -21.43 dBFS | -3.02 | -3 |
+  | -4 dB | -21.43 dBFS | -3.02 | -3 |
+  | -6 dB | -24.55 dBFS | -6.14 | -6 |
+  | -9 dB | -27.55 dBFS | -9.15 | -9 |
+  | -10.5 dB | -29.04 dBFS | -10.64 | -10.5 |
+  | -12 dB | -30.62 dBFS | -12.21 | -12 |
+  | -13.5 dB | -30.62 dBFS | -12.22 | -12 |
+  | -18 dB | -30.62 dBFS | -12.21 | -12 |
+  | -24 dB | -30.62 dBFS | -12.22 | -12 |
+
+  Two readings are what the table is for. **-12 dB is the floor**: the
+  four settings from -12 to -24 dB gave the same RMS to five
+  significant figures (0.029444 to 0.029447), so 12 dB of further
+  request produced nothing. And **the step is 1.5 dB, taken toward
+  zero**: -1 dB attenuates as much as 0 dB, -4 dB as much as -3 dB, and
+  every measured point sits within 0.25 dB of the multiple of 1.5 dB at
+  or above it. Above 0 dB the request arrives as asked — +6 dB measured
+  +6.01.
+
+  This is what the source says the two halves are. For a negative
+  request `I2c_Codec::setInputGain` pins the PGA at 0 dB and leaves the
+  attenuation to `writeAdcVolumeRegisters`, which computes
+  `volumeBits = -gain / 1.5` — an assignment to `int`, hence the
+  truncation toward zero — and clamps it at 8. Eight steps of 1.5 dB is
+  12 dB, and there is no ninth. A positive request is the other path:
+  the PGA registers (`0x0F`/`0x10`) in 0.5 dB steps to 59.5 dB, with
+  the ADC attenuation left at 0. Both TLV320 branches of
+  `writeAdcVolumeRegisters` compute the same eight steps, so the floor
+  does not depend on which one this board takes; the Gem Stereo takes
+  the `TLV320AIC3104` one (`RTAudio.cpp` picks that type unless the
+  build is `IS_AM62_SK` or the hardware is a Gem Multi, and the board's
+  `Makefile` autodetects `IS_AM62_PB2`), which writes the level into
+  registers `0x11` and `0x12`.
+
+  libbela says the same number in its own comment, on the same path:
+  above `Bela_setADCLevel`, `RTAudio.cpp` has "0dB is the maximum,
+  -12dB is the minimum; 1.5dB steps". That is not a separate control —
+  `Bela_setADCLevel`, `Bela_setAdcLevel`, `Bela_setPgaGain` and
+  `Bela_setAudioInputGain` all end in `gAudioCodec->setInputGain`,
+  which is why one function has both a 1.5 dB negative half and a
+  0.5 dB positive one.
 - **The line out level changes nothing on this board; the headphone
   level is the control that does.** Measured 2026-08-16 on image
   2026-03-25, with a probe that renders a 440 Hz sine at amplitude
