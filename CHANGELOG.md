@@ -8,6 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `stop_requested` was documented with a render callback reacting to a
+  pending stop as the case it exists for, and offered one — an
+  indicator cleared on the way out — as its example. A callback cannot
+  do that. libbela's render loop reads the same flag itself, as its
+  loop condition and again part-way through the iteration, and both
+  reads come before the block reaches the application, so a stop asked
+  for by the stop button, the IDE or a signal ends the loop rather than
+  arriving in `render_pre`, `render` or `render_post`: measured on a
+  Bela Gem Stereo, 25784 blocks ended with SIGINT and not one of the
+  three callbacks ever read `true`. The documentation now says so,
+  along with the one stop a callback does see — the one the
+  application asked for itself, which is visible for the rest of that
+  block and makes it the last one — and with what an output that must
+  not be left mid-value is left with on an outside stop, which is
+  nothing: `cleanup` runs after the audio thread has been joined and
+  `CleanupContext` carries no buffers to write to. The example is now
+  a reporting thread, which is a use that works. The 0.7.0 entry below
+  named the same impossible case and has been corrected in place;
+  `docs/board-facts.md` records the measurement. No behaviour changed.
+
 ## [0.7.0] - 2026-08-17
 
 ### Added
@@ -32,12 +54,15 @@ and this project adheres to
 - `stop_requested` is now available on every target instead of only on
   the device one, where it keeps reading the flag the stop button, the
   IDE and `request_stop` set. Off-device it answers `false`: there is
-  no audio system, so nothing has asked it to stop. A callback that
-  reacts to a pending stop — putting an indicator out, writing a last
-  value — is therefore one piece of code that compiles, lints and
-  unit-tests on a development machine and runs on the board, rather
-  than one behind a `cfg` and so absent from the build its tests run
-  in. `request_stop` stays device-only: off-device it could only be a
+  no audio system, so nothing has asked it to stop. Code that winds
+  down with the audio system — a thread of the program's own, an
+  auxiliary task deciding it has nothing left to report — is therefore
+  one piece of code that compiles, lints and unit-tests on a
+  development machine and runs on the board, rather than one behind a
+  `cfg` and so absent from the build its tests run in. A render
+  callback is not such a place, which this entry originally said it
+  was; see the `Fixed` entry under `Unreleased`. `request_stop` stays
+  device-only: off-device it could only be a
   no-op, and a call that looks like it changed something without
   changing anything is worse than not compiling.
 

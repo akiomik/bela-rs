@@ -203,6 +203,39 @@ Captured from a verbose on-board build:
   the two boundary values on every run so the constant cannot drift away
   from the hardware.
 
+- **The render loop reads the stop flag before the callbacks, so a
+  stop asked for between blocks never reaches them.** `core/PRU.cpp`
+  on image 2026-03-25 calls `Bela_stopRequested()` as its loop
+  condition (line 741) and again mid-iteration (line 803), and only
+  then copies the PRU buffers in, calls `context->beforeRender()` and
+  the user's `render`. The first iteration in which the flag is
+  already set is therefore the one that leaves, and no callback is
+  entered with a stop pending. What that leaves is the window inside
+  the block: another thread setting the flag while the callbacks run
+  sets one they can still read. That is a race, and it is the only way
+  an outside stop can be seen from a callback at all.
+
+  Measured on 2026-08-17 with a probe counting the blocks in which
+  `render_pre`, `render` or `render_post` observed
+  `bela::stop_requested()`, at the default 48 kHz and period of 16, one
+  audio system per process:
+
+  | run | blocks | seen in a callback |
+  |---|---|---|
+  | ended with SIGINT after 10 s | 25784 | 0 |
+  | `request_stop` from `render_pre` of block 100 | 100 | that block's `render_pre`, `render` and `render_post` |
+
+  So the only stop a callback can observe is one the application asked
+  for itself, and the block it asked from is the last one — the second
+  run rendered no block after it. `cleanup` reads `true` in both, as it
+  runs after the audio thread has been joined.
+
+  This is not the `volatile`-versus-atomic visibility question
+  `bela::runtime` documents; the render thread reads the flag perfectly
+  well, and libbela acts on it before the application is called. It is
+  why `bela::stop_requested` documents itself as unusable from a
+  callback for anything but a self-requested stop (issue #133).
+
 - **A failed initialisation poisons its process, and only its
   process.** Returning `false` from `setup` fails `Bela_initAudio` with
   1 and leaves libbela's globals in that process still believing the
