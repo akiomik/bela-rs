@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-17
+
 ### Added
 
 - `Settings::enable_led`, wrapping the `enableLED` init setting, and
@@ -38,6 +40,21 @@ and this project adheres to
   in. `request_stop` stays device-only: off-device it could only be a
   no-op, and a call that looks like it changed something without
   changing anything is worse than not compiling.
+
+### Changed
+
+- Breaking: adding `Settings::enable_led` and
+  `ResolvedSettings::enable_led` shadows any extension trait a
+  downstream crate already defined under those names to fill the gap
+  they close. Rust always resolves an inherent method over a trait
+  method of the same name, so a call that used to reach such a trait
+  now reaches these instead — silently where the signatures unify, and
+  as a compile error where they do not. The reading side is where that
+  is likeliest: `ResolvedSettings::as_sys` is the documented way to a
+  field this view has no accessor for, so a trait that returned
+  `enableLED` as the C `int` it is no longer compiles against a method
+  returning `bool`. See "Minor or patch: the drop-in test" in
+  docs/release.md.
 
 ### Fixed
 
@@ -883,7 +900,8 @@ and this project adheres to
 - Dual MIT / Apache-2.0 licensing
 - A draft of the cross-compilation setup in `docs/cross-compile.md`
 
-[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/akiomik/bela-rs/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/akiomik/bela-rs/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/akiomik/bela-rs/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/akiomik/bela-rs/compare/v0.4.0...v0.5.0
