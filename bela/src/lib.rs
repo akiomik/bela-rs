@@ -207,36 +207,66 @@ pub fn request_stop() {
 ///
 /// Unlike the rest of the audio system this exists on every target.
 /// Off-device it is always `false`: there is no audio system, so
-/// nothing has asked it to stop. That keeps a callback that reacts to
-/// a pending stop — putting an indicator out, writing a last value —
-/// one piece of code that compiles, lints and unit-tests on a
-/// development machine and runs on the board, rather than one guarded
-/// by a `cfg` and so absent from the build its tests run in.
+/// nothing has asked it to stop. A loop of the program's own that
+/// winds down with the audio system is therefore one piece of code
+/// that compiles, lints and unit-tests on a development machine and
+/// runs on the board, rather than one guarded by a `cfg` and so absent
+/// from the build its tests run in.
 ///
 /// ```
-/// use bela::{BelaApplication, BlockContext, RenderContext, SetupContext, ThreadInfo};
+/// use std::sync::mpsc::Receiver;
+/// use std::time::Duration;
 ///
-/// /// Holds an indicator on a digital pin for a while after each peak.
-/// struct Indicator {
-///     frames_left: usize,
-/// }
-///
-/// impl BelaApplication for Indicator {
-///     type RenderState = ();
-///
-///     fn create_render_state(&mut self, _thread: ThreadInfo, _context: &SetupContext) {}
-///
-///     fn render(&self, _state: &mut (), _context: &mut RenderContext) {}
-///
-///     fn render_post(&mut self, _states: &mut [()], context: &mut BlockContext) {
-///         // A digital output keeps driving after the program exits,
-///         // so a run stopped while the indicator is lit would leave
-///         // it lit. This block may be the last one.
-///         let lit = self.frames_left > 0 && !bela::stop_requested();
-///         context.digital_write_once(0, 0, lit);
+/// /// Prints peaks a render callback published, on a thread of the
+/// /// program's own, until the audio system is asked to stop.
+/// fn report(peaks: &Receiver<f32>) {
+///     // Bounded, so that the flag is read whether or not peaks are
+///     // still arriving: a `recv` with nothing to return would either
+///     // block past the stop or, once the sender is gone, spin.
+///     while !bela::stop_requested() {
+///         if let Ok(peak) = peaks.recv_timeout(Duration::from_millis(100)) {
+///             println!("peak {peak:.3}");
+///         }
 ///     }
 /// }
 /// ```
+///
+/// # A render callback cannot react to an outside stop
+///
+/// libbela's render loop reads this same flag itself — as its loop
+/// condition, and again part-way through the iteration — and both
+/// reads come before the block reaches the application. So a stop
+/// asked for between blocks, which is where a stop from the stop
+/// button, the IDE, or the signal handlers
+/// [`Bela::until_stopped`](crate::Bela::until_stopped) installs almost
+/// always lands, ends the loop rather than arriving in
+/// [`render_pre`](BelaApplication::render_pre),
+/// [`render`](BelaApplication::render) or
+/// [`render_post`](BelaApplication::render_post).
+///
+/// What is left is the block itself: a stop asked for by another
+/// thread while the callbacks are running sets a flag they can still
+/// read, and nothing rules that out. It is a race no application can
+/// arrange or rely on, and on a Bela Gem Stereo at 48 kHz with a
+/// period of 16 it did not happen at all — a run of 25784 blocks
+/// ended with SIGINT had all three callbacks read `false` in every one
+/// of them, the last block rendered included.
+///
+/// The stop a callback does see is one the application asked for
+/// itself. [`request_stop`] from `render_pre` is visible to that
+/// block's `render` and `render_post`, measured on the same board — and
+/// that block is the last one, because libbela's next read of the flag
+/// ends the loop.
+///
+/// So an output that must not be abandoned mid-value — a digital pin
+/// held high, an indicator lit — has no hook for an outside stop.
+/// [`cleanup`](BelaApplication::cleanup) is not one: it runs after the
+/// audio thread has been joined, and [`CleanupContext`] carries no
+/// buffers to write to. The pin goes on driving its last value after
+/// the program exits, until the next audio system to start opens every
+/// channel as an input. An application that must not leave one driving
+/// has to be the one requesting the stop, and to have written the
+/// value it wants left behind in an earlier block.
 #[must_use]
 #[cfg_attr(
     not(bela_device),
