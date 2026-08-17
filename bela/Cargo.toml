@@ -31,7 +31,7 @@ targets = ["aarch64-unknown-linux-gnu"]
 workspace = true
 
 [dependencies]
-bela-sys = { path = "../bela-sys", version = "0.6.0" }
+bela-sys = { path = "../bela-sys", version = "0.7.0" }
 
 # Same condition as the `bela_device` cfg emitted by build.rs.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
