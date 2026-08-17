@@ -41,6 +41,21 @@ and this project adheres to
   no-op, and a call that looks like it changed something without
   changing anything is worse than not compiling.
 
+### Changed
+
+- Breaking: adding `Settings::enable_led` and
+  `ResolvedSettings::enable_led` shadows any extension trait a
+  downstream crate already defined under those names to fill the gap
+  they close. Rust always resolves an inherent method over a trait
+  method of the same name, so a call that used to reach such a trait
+  now reaches these instead — silently where the signatures unify, and
+  as a compile error where they do not. The reading side is where that
+  is likeliest: `ResolvedSettings::as_sys` is the documented way to a
+  field this view has no accessor for, so a trait that returned
+  `enableLED` as the C `int` it is no longer compiles against a method
+  returning `bool`. See "Minor or patch: the drop-in test" in
+  docs/release.md.
+
 ### Fixed
 
 - `Bela::set_audio_input_gain` documented only the preamplifier's
