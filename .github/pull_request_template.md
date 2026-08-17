@@ -9,21 +9,22 @@ an answer nobody wrote reads exactly like an answer nobody needed.
 
 ## Semver
 
-Does this add, remove or change anything in the public API of `bela` or
-`bela-sys` — a method, a trait implementation, an enum variant, a
-signature?
+Does this change anything the drop-in test covers? The public API is the
+usual case — a method, a trait implementation, an enum variant, a
+signature — but not the only one: 0.4.0 broke nothing in its API and
+still went out as a minor.
 
 - [ ] No.
 - [ ] Yes, and it is not breaking, because:
 - [ ] Yes, and it is breaking. Its changelog entry opens with
-      `Breaking:` under `### Changed`, and this pull request carries the
-      `breaking` label.
+      `Breaking:`, and this pull request carries the `breaking` label.
 
-"Not breaking" is a claim about code that is not in this repository:
-whether a downstream crate could already have an extension trait, a
-wrapper or an `impl` of that name filling the gap this closes. Searching
-this repository cannot answer that — it can only ever find nothing. What
-decides it is the drop-in test in
+Where the public API is what changed, "not breaking" is a claim about
+code that is not in this repository: whether a downstream crate could
+already have an extension trait, a wrapper or an `impl` of that name
+filling the gap this closes. Searching this repository cannot answer
+that — it can only ever find nothing. What decides it, there and for
+everything else the question reaches, is the drop-in test in
 [docs/release.md](https://github.com/akiomik/bela-rs/blob/main/docs/release.md).
 
 ## Hardware
