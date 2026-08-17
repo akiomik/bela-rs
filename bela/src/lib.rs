@@ -207,11 +207,11 @@ pub fn request_stop() {
 ///
 /// Unlike the rest of the audio system this exists on every target.
 /// Off-device it is always `false`: there is no audio system, so
-/// nothing has asked it to stop. That keeps a loop of the program's
-/// own that winds down with the audio system one piece of code that
-/// compiles, lints and unit-tests on a development machine and runs on
-/// the board, rather than one guarded by a `cfg` and so absent from
-/// the build its tests run in.
+/// nothing has asked it to stop. A loop of the program's own that
+/// winds down with the audio system is therefore one piece of code
+/// that compiles, lints and unit-tests on a development machine and
+/// runs on the board, rather than one guarded by a `cfg` and so absent
+/// from the build its tests run in.
 ///
 /// ```
 /// use std::sync::mpsc::Receiver;
