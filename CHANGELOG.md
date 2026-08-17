@@ -54,17 +54,16 @@ and this project adheres to
 - `stop_requested` is now available on every target instead of only on
   the device one, where it keeps reading the flag the stop button, the
   IDE and `request_stop` set. Off-device it answers `false`: there is
-  no audio system, so nothing has asked it to stop. Code that winds
-  down with the audio system — a thread of the program's own, an
-  auxiliary task deciding it has nothing left to report — is therefore
-  one piece of code that compiles, lints and unit-tests on a
-  development machine and runs on the board, rather than one behind a
-  `cfg` and so absent from the build its tests run in. A render
-  callback is not such a place, which this entry originally said it
-  was; see the `Fixed` entry under `Unreleased`. `request_stop` stays
-  device-only: off-device it could only be a
-  no-op, and a call that looks like it changed something without
-  changing anything is worse than not compiling.
+  no audio system, so nothing has asked it to stop. A loop of the
+  program's own that winds down with the audio system is therefore one
+  piece of code that compiles, lints and unit-tests on a development
+  machine and runs on the board, rather than one behind a `cfg` and so
+  absent from the build its tests run in. A render callback is not
+  such a place, which this entry originally said it was; see the
+  `Fixed` entry under `Unreleased`. `request_stop` stays device-only:
+  off-device it could only be a no-op, and a call that looks like it
+  changed something without changing anything is worse than not
+  compiling.
 
 ### Changed
 

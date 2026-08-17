@@ -225,6 +225,12 @@ Captured from a verbose on-board build:
   | ended with SIGINT after 10 s | 25784 | 0 |
   | `request_stop` from `render_pre` of block 100 | 100 | that block's `render_pre`, `render` and `render_post` |
 
+  The ten seconds are wall-clock from launch, so the first row is the
+  rendering that fitted inside them rather than ten seconds of it:
+  25784 blocks of 16 frames at 48 kHz is 8.6 s, the rest being the
+  startup this file puts at about 0.7 s and the teardown after the
+  signal.
+
   So the only stop a callback can observe is one the application asked
   for itself, and the block it asked from is the last one — the second
   run rendered no block after it. `cleanup` reads `true` in both, as it
@@ -234,7 +240,7 @@ Captured from a verbose on-board build:
   `bela::runtime` documents; the render thread reads the flag perfectly
   well, and libbela acts on it before the application is called. It is
   why `bela::stop_requested` documents itself as unusable from a
-  callback for anything but a self-requested stop (issue #133).
+  callback for anything but a self-requested stop (#133).
 
 - **A failed initialisation poisons its process, and only its
   process.** Returning `false` from `setup` fails `Bela_initAudio` with

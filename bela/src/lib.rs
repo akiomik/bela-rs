@@ -207,21 +207,24 @@ pub fn request_stop() {
 ///
 /// Unlike the rest of the audio system this exists on every target.
 /// Off-device it is always `false`: there is no audio system, so
-/// nothing has asked it to stop. That keeps code that winds down with
-/// the audio system — a thread of the program's own, an
-/// [`AuxiliaryTask`] deciding it has nothing left to report — one
-/// piece of code that compiles, lints and unit-tests on a development
-/// machine and runs on the board, rather than one guarded by a `cfg`
-/// and so absent from the build its tests run in.
+/// nothing has asked it to stop. That keeps a loop of the program's
+/// own that winds down with the audio system one piece of code that
+/// compiles, lints and unit-tests on a development machine and runs on
+/// the board, rather than one guarded by a `cfg` and so absent from
+/// the build its tests run in.
 ///
-/// ```no_run
+/// ```
 /// use std::sync::mpsc::Receiver;
+/// use std::time::Duration;
 ///
-/// /// Prints peaks a render callback published, until the audio
-/// /// system is asked to stop.
+/// /// Prints peaks a render callback published, on a thread of the
+/// /// program's own, until the audio system is asked to stop.
 /// fn report(peaks: &Receiver<f32>) {
+///     // Bounded, so that the flag is read whether or not peaks are
+///     // still arriving: a `recv` with nothing to return would either
+///     // block past the stop or, once the sender is gone, spin.
 ///     while !bela::stop_requested() {
-///         if let Ok(peak) = peaks.recv() {
+///         if let Ok(peak) = peaks.recv_timeout(Duration::from_millis(100)) {
 ///             println!("peak {peak:.3}");
 ///         }
 ///     }
