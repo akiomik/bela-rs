@@ -59,6 +59,16 @@ can break a build without a single signature changing. What counts:
   under [possibly-breaking](https://doc.rust-lang.org/cargo/reference/semver.html)
   rather than never-breaking. What decides it is whether a plausible
   caller stops compiling, not whether anything was taken away.
+
+  That plausible caller is not in this repository, so searching this
+  one cannot answer the question — it can only ever find nothing, which
+  reads like a check that passed. Ask instead whether a downstream
+  crate *could* already have written the item being added: a gap named
+  in an open issue, or one whose workaround this crate documents
+  (`ResolvedSettings::as_sys`, `Settings::apply_to`, the raw `bela-sys`
+  fields), is a gap somebody had a reason to fill. `0.6.0`'s
+  `Settings::audio_sample_rate` and `0.7.0`'s `Settings::enable_led`
+  are both that shape.
 - **What a device build links or needs.** A library added to the link
   line, a compiler the toolchain did not have to include, an
   environment variable a build now depends on. `0.4.0` is the worked
