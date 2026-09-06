@@ -62,6 +62,21 @@ mod imp {
     /// not how accurate it is.
     const EPSILON: f32 = 1e-3;
 
+    /// Why there is no plan to ask with.
+    ///
+    /// Told apart because the probe's whole contract is that a
+    /// non-zero exit means it could not ask: "NE10 refused this
+    /// length" is an answer about the board, and "that is not a length
+    /// worth asking about" is an answer about the command line.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum NoPlan {
+        /// Outside what the allocator's contract covers, so it was
+        /// never called.
+        NotAsked,
+        /// NE10 was asked and returned null.
+        Refused,
+    }
+
     /// An NE10 plan, freed on the way out.
     ///
     /// The transforms take `&mut self` because the scratch buffer they
@@ -73,21 +88,24 @@ mod imp {
     }
 
     impl Plan {
-        fn new(length: usize) -> Option<Self> {
+        fn new(length: usize) -> Result<Self, NoPlan> {
             // The allocator's contract, checked here rather than
             // assumed of a command line: a power of two from 2 to
             // 65536. Not 8, which is where *transforming* becomes
             // safe — allocating at 2 and 4 is fine, and asking what
             // they do is the point of this program.
             if !length.is_power_of_two() || !(2..=65536).contains(&length) {
-                return None;
+                return Err(NoPlan::NotAsked);
             }
-            let nfft = i32::try_from(length).ok()?;
+            let nfft = i32::try_from(length).map_err(|_| NoPlan::NotAsked)?;
             // Safety: `nfft` is a power of two in that range, which is
             // what the declaration asks of the allocator; a null
             // result is handled.
             let cfg = unsafe { ne10_fft_alloc_r2c_float32(nfft) };
-            (!cfg.is_null()).then_some(Self { cfg, length })
+            if cfg.is_null() {
+                return Err(NoPlan::Refused);
+            }
+            Ok(Self { cfg, length })
         }
 
         /// `signal` (`length` samples) into `spectrum`
@@ -248,9 +266,12 @@ mod imp {
         );
         println!("run it with a length for question 4: ne10_probe <length>");
 
-        let Some(mut plan) = Plan::new(N) else {
-            eprintln!("could not allocate a plan of {N} points; nothing can be asked");
-            process::exit(1);
+        let mut plan = match Plan::new(N) {
+            Ok(plan) => plan,
+            Err(why) => {
+                eprintln!("no plan of {N} points ({why:?}); nothing can be asked");
+                process::exit(1);
+            }
         };
 
         let reference = scratch_use(&mut plan);
@@ -374,17 +395,34 @@ mod imp {
         );
     }
 
+    /// Reports a length there is no plan for, and gives the exit
+    /// status that says which kind of "no": 2 when the board refused,
+    /// 3 when this program did.
+    fn no_plan(length: usize, why: NoPlan) -> i32 {
+        match why {
+            NoPlan::Refused => {
+                println!("{length}: no plan; NE10 was asked and returned null");
+                2
+            }
+            NoPlan::NotAsked => {
+                println!("{length}: not a power of two in 2..=65536, so NE10 was not asked");
+                3
+            }
+        }
+    }
+
     /// Question 4 without the transforms: does a plan of this length
     /// survive being allocated and freed?
     ///
-    /// Returns the process's exit status, 0 for yes and 2 for a length
-    /// that would not plan. A length whose plan cannot be freed takes
-    /// the process with it and prints nothing after the first line.
+    /// Returns the process's exit status: 0 for yes, and what
+    /// [`no_plan`] gives for a length there is no plan for. A length
+    /// whose plan cannot be freed takes the process with it and prints
+    /// nothing after the first line.
     fn one_length_plan_only(length: usize) -> i32 {
         println!("{length}: allocating");
-        let Some(plan) = Plan::new(length) else {
-            println!("{length}: no plan");
-            return 2;
+        let plan = match Plan::new(length) {
+            Ok(plan) => plan,
+            Err(why) => return no_plan(length, why),
         };
         println!("{length}: allocated, freeing");
         drop(plan);
@@ -398,8 +436,8 @@ mod imp {
     /// is what turns a `free(): invalid pointer` abort into a number.
     ///
     /// Returns the process's exit status: 0 when nothing was written
-    /// past either buffer, 1 when something was, 2 for a length that
-    /// would not plan.
+    /// outside either buffer, and what [`no_plan`] gives for a length
+    /// there is no plan for.
     fn one_length_overrun(length: usize) -> i32 {
         // Wide enough to hold any plausible overrun on either side: a
         // whole extra transform's worth, and never less than a page.
@@ -408,9 +446,9 @@ mod imp {
         // the chunk header the allocator reads back at `free`.
         let slack = (length * 4).max(1024);
 
-        let Some(mut plan) = Plan::new(length) else {
-            println!("{length}: no plan");
-            return 2;
+        let mut plan = match Plan::new(length) {
+            Ok(plan) => plan,
+            Err(why) => return no_plan(length, why),
         };
 
         let mut signal = vec![CANARY; slack + length + slack];
@@ -486,13 +524,14 @@ mod imp {
     /// was given?
     ///
     /// Returns the process's exit status: 0 for a length that works, 1
-    /// for one that does not, 2 for one that would not plan. A length
-    /// that corrupts the heap takes the process with it, which is the
-    /// answer this is run one process at a time to get.
+    /// for one that does not, and what [`no_plan`] gives for one there
+    /// is no plan for. A length that corrupts the heap takes the
+    /// process with it, which is the answer this is run one process at
+    /// a time to get.
     fn one_length(length: usize) -> i32 {
-        let Some(mut plan) = Plan::new(length) else {
-            println!("{length}: no plan");
-            return 2;
+        let mut plan = match Plan::new(length) {
+            Ok(plan) => plan,
+            Err(why) => return no_plan(length, why),
         };
         let wrong = check_length(&mut plan, length);
         if wrong.is_empty() {
