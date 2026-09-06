@@ -235,11 +235,16 @@ period, so the block deadline is 1.45 ms:
 
 | Length | One render thread | Of one block | Four render threads, each transforming |
 |---|---|---|---|
-| 256 | 2.9 µs | 0.2 % | 7.9 µs |
-| 512 | 5.2 µs | 0.4 % | 11.2 µs |
-| 1024 | 10.6 µs | 0.7 % | 19.0 µs |
-| 2048 | 22.2 µs | 1.5 % | 42.9 µs |
-| 4096 | 51.5 µs | 3.5 % | 96.5 µs |
+| 256 | 2.7 µs | 0.2 % | 6.0 µs |
+| 512 | 5.1 µs | 0.4 % | 11.4 µs |
+| 1024 | 10.4 µs | 0.7 % | 20.4 µs |
+| 2048 | 22.4 µs | 1.5 % | 44.7 µs |
+| 4096 | 51.5 µs | 3.5 % | 89.6 µs |
+
+One run of each, 15 seconds apiece, about 2000 transforms per length.
+Repeats land within a few percent, and the shortest lengths vary most:
+a 256-point transform is a couple of microseconds, which is close
+enough to the clock and the cache to move around.
 
 On one thread it is roughly `N log N`, as it should be, and cheap
 enough that the length is chosen by what the analysis needs rather
@@ -256,7 +261,14 @@ sharing anything of this crate's — each thread has its own plan and
 its own buffers — so what they contend for is memory bandwidth and
 cache. Worth knowing before budgeting: splitting a block four ways
 does not buy four times the FFT. The whole audio thread read 20.0 %
-there against 5.9 % on one thread.
+there against 5.8 % on one thread.
+
+The whole-block analysis in the same example shows it from the other
+side: the *same* 1024-point transform, run alone in `render_post`
+after the render threads have finished, takes 11.0 µs in the
+one-thread run and 19.1 µs in the four-thread one. Nothing about that
+transform changed — what changed is what went through the caches
+just before it.
 
 A 1024-point analysis of real input in the same run averaged 10.7 µs
 against the 10.6 µs of the fixed cosine, so the data makes no

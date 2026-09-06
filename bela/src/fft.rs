@@ -169,6 +169,22 @@ pub struct FftBin {
     pub im: f32,
 }
 
+// What `forward_raw` and `inverse_raw` cast a slice of these on: the
+// assertions in `bela-sys/abi/ne10_abi.c` pin NE10's own struct
+// against the board's header, and these pin ours against NE10's. Both
+// halves are needed — that one says what C means by a bin, and this
+// one says the cast is between two types that agree.
+const _: () = {
+    assert!(
+        size_of::<FftBin>() == size_of::<bela_sys::ne10_fft_cpx_float32_t>(),
+        "a bin has to be the size NE10 reads and writes"
+    );
+    assert!(
+        align_of::<FftBin>() == align_of::<bela_sys::ne10_fft_cpx_float32_t>(),
+        "a bin has to be aligned as NE10 expects"
+    );
+};
+
 impl FftBin {
     /// The origin: both parts zero.
     ///
@@ -483,7 +499,9 @@ impl RealFft {
         // in and `length / 2 + 1` bins out. `FftBin` is `#[repr(C)]`
         // with NE10's layout, asserted in `bela-sys/abi/ne10_abi.c`,
         // and the two slices cannot overlap: they are different types
-        // reached through separate `&mut`s.
+        // reached through separate `&mut`s. `FftBin` and NE10's own
+        // bin agree on size and alignment, asserted above this
+        // module's items.
         unsafe {
             bela_sys::ne10_fft_r2c_1d_float32_neon(
                 spectrum.as_mut_ptr().cast(),
@@ -644,6 +662,16 @@ mod tests {
     fn a_bin_is_two_floats_laid_out_as_ne10_lays_them() {
         assert_eq!(size_of::<FftBin>(), size_of::<f32>() * 2);
         assert_eq!(align_of::<FftBin>(), align_of::<f32>());
+        // Against NE10's own type rather than against two floats: what
+        // the transforms cast is one to the other.
+        assert_eq!(
+            size_of::<FftBin>(),
+            size_of::<bela_sys::ne10_fft_cpx_float32_t>()
+        );
+        assert_eq!(
+            align_of::<FftBin>(),
+            align_of::<bela_sys::ne10_fft_cpx_float32_t>()
+        );
         assert_eq!(FftBin::ZERO, FftBin::default());
         assert_eq!(FftBin::from((1.0, 2.0)), FftBin::new(1.0, 2.0));
         assert_eq!(FftBin::from([1.0, 2.0]), FftBin::new(1.0, 2.0));

@@ -95,7 +95,7 @@
 //! [`forward`](RealFft::forward) writes [`FftBin`]s a render callback
 //! can read, and [`inverse`](RealFft::inverse) takes them back to
 //! samples with the scaling already applied. On a Bela Gem a
-//! 1024-point transform costs about 11 µs, which `docs/fft.md`
+//! 1024-point transform costs about 10 µs, which `docs/fft.md`
 //! measures alongside why the shortest length this crate offers is 8.
 //!
 //! Debugging output from the audio thread goes through

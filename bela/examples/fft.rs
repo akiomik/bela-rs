@@ -1,13 +1,25 @@
 //! Analyses the audio input with an FFT, and measures what the
 //! transform costs the audio thread.
 //!
-//! Two things at once, because they answer each other. The analysis is
-//! the ordinary use of [`RealFft`](bela::RealFft): fill a window from
-//! the input, transform it, report the loudest bin. The measurement is
-//! the question a program has to answer before it puts an FFT in
-//! `render` at all — how much of the block deadline one costs — and it
-//! is taken at several lengths, one per block in rotation, with a
-//! `CpuTimer` around each.
+//! Two things at once, because they answer each other, and they run in
+//! different callbacks for a reason.
+//!
+//! The **analysis** is the ordinary use of [`RealFft`](bela::RealFft):
+//! fill a window from the input, transform it, report the loudest bin.
+//! It happens in `render_post`, which sees the whole block. `render`
+//! would be the wrong place: it is called on every render thread with
+//! that thread's share of the block, so with more than one thread each
+//! window would hold every fourth quarter of the signal spliced
+//! together, and the frequency that came out of it would be a fiction.
+//! Whole-block work belongs where the whole block is.
+//!
+//! The **measurement** is the question a program has to answer before
+//! it puts an FFT in `render` at all — how much of the block deadline
+//! one costs — and that one belongs per thread, in `render`, where the
+//! cost is actually paid. It is taken at several lengths, one per
+//! block in rotation, with a `CpuTimer` around each. Running with four
+//! render threads (`fft 4`) measures four transforms happening at
+//! once, which is not four times cheaper.
 //!
 //! The plans are built in `setup`, one per render thread, because that
 //! is the only callback that can refuse the run: `create_render_state`
@@ -103,9 +115,10 @@ struct Cost {
     timer: CpuTimer,
 }
 
-/// Everything one render thread transforms with.
+/// What one render thread measures with: the cost plans and where the
+/// rotation is up to. The analysis is not here — it is the
+/// application's, because it is whole-block work.
 struct Plans {
-    analysis: Analysis,
     costs: Vec<Cost>,
     /// Which of `costs` the next block measures.
     next: usize,
@@ -114,6 +127,9 @@ struct Plans {
 struct Analyser {
     published: Arc<Published>,
     task: Option<AuxiliaryTask>,
+    /// The whole-block analysis, used from `render_post` and so held
+    /// by the application rather than by a render state.
+    analysis: Option<Analysis>,
     /// Built in `setup`, one per render thread, taken in
     /// `create_render_state`.
     plans: Vec<Plans>,
@@ -127,6 +143,7 @@ impl Analyser {
         Self {
             published: Arc::new(Published::default()),
             task: None,
+            analysis: None,
             plans: Vec::new(),
             sample_rate: 0.0,
             blocks: 0,
@@ -160,18 +177,21 @@ fn plan_of(length: usize) -> Result<(RealFft, Vec<f32>, Vec<FftBin>), bela::Erro
     Ok((fft, signal, spectrum))
 }
 
-/// Everything one render thread needs, built where a failure can still
-/// be reported.
-fn plans_for_one_thread() -> Result<Plans, bela::Error> {
+/// The whole-block analysis, built where a failure can still be
+/// reported.
+fn analysis_plan() -> Result<Analysis, bela::Error> {
     let (fft, window, spectrum) = plan_of(ANALYSIS_LENGTH)?;
-    let analysis = Analysis {
+    Ok(Analysis {
         fft,
         window,
         spectrum,
         filled: 0,
         timer: CpuTimer::new(cycle()),
-    };
+    })
+}
 
+/// What one render thread measures with, built in the same place.
+fn plans_for_one_thread() -> Result<Plans, bela::Error> {
     let mut costs = Vec::with_capacity(MEASURED_LENGTHS.len());
     for length in MEASURED_LENGTHS {
         let (fft, mut signal, spectrum) = plan_of(length)?;
@@ -194,11 +214,7 @@ fn plans_for_one_thread() -> Result<Plans, bela::Error> {
         });
     }
 
-    Ok(Plans {
-        analysis,
-        costs,
-        next: 0,
-    })
+    Ok(Plans { costs, next: 0 })
 }
 
 /// The mean time one measured section took, in microseconds, or 0
@@ -249,6 +265,71 @@ fn round_trip_error() -> Result<f32, bela::Error> {
         .fold(0.0_f32, f32::max))
 }
 
+impl Analyser {
+    /// Fills the analysis window from the whole block, and transforms
+    /// it whenever it comes up full.
+    ///
+    /// Called from `render_post`, which sees every frame of the block
+    /// in order. Doing this in `render` would see only one thread's
+    /// share of it, and a window spliced together from every fourth
+    /// quarter of the signal reports a frequency that is not there.
+    fn analyse(&mut self, context: &BlockContext) {
+        let Some(analysis) = &mut self.analysis else {
+            return;
+        };
+        if context.audio_in_channels() == 0 {
+            return;
+        }
+
+        for frame in 0..context.audio_frames() {
+            analysis.window[analysis.filled] = context.audio_read(frame, 0);
+            analysis.filled += 1;
+            if analysis.filled < analysis.window.len() {
+                continue;
+            }
+            analysis.filled = 0;
+
+            let transformed = {
+                let _section = analysis.timer.measure();
+                analysis
+                    .fft
+                    .forward(&mut analysis.window, &mut analysis.spectrum)
+            };
+            if transformed.is_err() {
+                // Both buffers came from the plan, so their lengths
+                // agree by construction; saying so beats going quiet
+                // if a later edit changes one. Once per window rather
+                // than once per block, which is why this one prints
+                // where the measurement below does not.
+                rt_println!("render_post: the analysis buffers no longer fit the plan");
+                continue;
+            }
+
+            // The loudest bin, skipping DC — which a little offset on
+            // the input would otherwise win every time.
+            let peak = analysis
+                .spectrum
+                .iter()
+                .enumerate()
+                .skip(1)
+                .max_by(|(_, a), (_, b)| a.magnitude_squared().total_cmp(&b.magnitude_squared()));
+            if let Some((bin, value)) = peak {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a bin index is far below f32's exact integer range"
+                )]
+                let hz = self.sample_rate * bin as f32 / analysis_length_as_float();
+                self.published
+                    .peak_hz
+                    .store(hz.to_bits(), Ordering::Relaxed);
+                self.published
+                    .peak_magnitude
+                    .store(value.magnitude().to_bits(), Ordering::Relaxed);
+            }
+        }
+    }
+}
+
 impl BelaApplication for Analyser {
     type RenderState = Option<Plans>;
 
@@ -265,6 +346,13 @@ impl BelaApplication for Analyser {
         // The one place a plan that could not be built can be
         // reported: returning false here refuses the run before audio
         // starts, where a panic in a later callback would abort.
+        match analysis_plan() {
+            Ok(analysis) => self.analysis = Some(analysis),
+            Err(error) => {
+                rt_println!("setup: no analysis plan: {error}");
+                return false;
+            }
+        }
         for thread in 0..context.thread_count() {
             match plans_for_one_thread() {
                 Ok(plans) => self.plans.push(plans),
@@ -328,12 +416,13 @@ impl BelaApplication for Analyser {
         self.plans.pop()
     }
 
-    // Real-time safe: copies, arithmetic, two transforms that allocate
-    // nothing, and atomic stores.
+    // Real-time safe: copies, arithmetic, one transform that allocates
+    // nothing, and a clock read through the CPU timer.
     fn render(&self, state: &mut Option<Plans>, context: &mut RenderContext) {
         let Some(state) = state else { return };
 
-        // Passthrough, so what is analysed can be heard.
+        // Passthrough, so what is analysed can be heard. This thread's
+        // share of the block, which is what `render` is handed.
         let channels = context
             .audio_in_channels()
             .min(context.audio_out_channels());
@@ -343,68 +432,30 @@ impl BelaApplication for Analyser {
             }
         }
 
-        // Fill the analysis window from the first input channel, and
-        // transform it whenever it comes up full.
-        let analysis = &mut state.analysis;
-        for frame in context.audio_frame_range() {
-            analysis.window[analysis.filled] = context.audio_read(frame, 0);
-            analysis.filled += 1;
-            if analysis.filled < analysis.window.len() {
-                continue;
-            }
-            analysis.filled = 0;
-
-            let transformed = {
-                let _section = analysis.timer.measure();
-                analysis
-                    .fft
-                    .forward(&mut analysis.window, &mut analysis.spectrum)
-            };
-            if transformed.is_err() {
-                // Both buffers came from the plan, so their lengths
-                // agree by construction; saying so beats going quiet
-                // if a later edit changes one.
-                rt_println!("render: the analysis buffers no longer fit the plan");
-                continue;
-            }
-
-            // The loudest bin, skipping DC — which a little offset on
-            // the input would otherwise win every time.
-            let peak = analysis
-                .spectrum
-                .iter()
-                .enumerate()
-                .skip(1)
-                .max_by(|(_, a), (_, b)| a.magnitude_squared().total_cmp(&b.magnitude_squared()));
-            if let Some((bin, value)) = peak {
-                #[allow(
-                    clippy::cast_precision_loss,
-                    reason = "a bin index is far below f32's exact integer range"
-                )]
-                let hz = self.sample_rate * bin as f32 / analysis.window.len() as f32;
-                self.published
-                    .peak_hz
-                    .store(hz.to_bits(), Ordering::Relaxed);
-                self.published
-                    .peak_magnitude
-                    .store(value.magnitude().to_bits(), Ordering::Relaxed);
-            }
-        }
-
         // One measured transform per block, at the next length in
-        // turn: the analysis above is what an application does, and
-        // this is what it costs at other sizes.
+        // turn. Per thread on purpose: what a transform costs when
+        // four of them run at once is the number worth having, and the
+        // analysis in `render_post` is the one that has to see whole
+        // blocks.
         let index = state.next;
         state.next = (index + 1) % state.costs.len();
         if let Some(cost) = state.costs.get_mut(index) {
             let _section = cost.timer.measure();
+            // Deliberately dropped, where the analysis reports the
+            // same impossible error: this runs every block on every
+            // thread, and a buffer that stopped fitting would print
+            // thousands of times a second. The lengths are the plan's
+            // own, and `cleanup` shows the transform count they
+            // produced.
             let _ = cost.fft.forward(&mut cost.signal, &mut cost.spectrum);
         }
     }
 
-    // Real-time safe: reads of this thread's counters, atomic stores
-    // and a schedule.
+    // Real-time safe: copies, arithmetic, a transform that allocates
+    // nothing, atomic stores and a schedule.
     fn render_post(&mut self, states: &mut [Option<Plans>], context: &mut BlockContext) {
+        self.analyse(context);
+
         self.blocks += 1;
         if self.blocks % self.blocks_per_report != 0 {
             return;
@@ -425,12 +476,14 @@ impl BelaApplication for Analyser {
         if let Some(usage) = context.cpu_usage() {
             rt_println!("cleanup: audio thread {usage}");
         }
-        if let Some(Some(plans)) = states.first() {
+        if let Some(analysis) = &self.analysis {
             rt_println!(
-                "cleanup: {} analysis transforms at {:.1} us each",
-                plans.analysis.timer.usage().measurements_taken(),
-                mean_micros(&plans.analysis.timer)
+                "cleanup: {} whole-block analysis transforms at {:.1} us each",
+                analysis.timer.usage().measurements_taken(),
+                mean_micros(&analysis.timer)
             );
+        }
+        if let Some(Some(plans)) = states.first() {
             for (length, cost) in MEASURED_LENGTHS.iter().zip(&plans.costs) {
                 rt_println!(
                     "cleanup: {length:>5} points: {:.1} us per transform over {} of them",

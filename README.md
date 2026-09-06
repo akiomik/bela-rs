@@ -28,9 +28,10 @@ compiles — see [MIDI](docs/midi.md).
 
 The FFT is reached differently again: `bela-sys` declares NE10's
 real-to-complex transform (`libNE10.so.10`, the library Bela's own
-`Fft` class calls) and calls it directly, with no shim and no C++, and
-`bela` wraps that as `RealFft` — see [FFT](docs/fft.md). Bela's C++ libraries themselves (Scope, Trill,
-Fft, Gui) are out of scope for now and may be added incrementally.
+`Fft` class calls) and calls it directly, with no shim and no C++;
+`bela` wraps that as `RealFft` — see [FFT](docs/fft.md). Bela's C++
+libraries themselves (Scope, Trill, Fft, Gui) are out of scope for now
+and may be added incrementally.
 
 One corner of the core API is left out on purpose: the Multiplexer
 Capelet accessors. The Capelet is an accessory for the original Bela

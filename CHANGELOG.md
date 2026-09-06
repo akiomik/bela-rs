@@ -28,7 +28,7 @@ and this project adheres to
     refuses them — which also makes `FftLength::rounded_up` part
     company with Bela's `Fft::roundUpToPowerOfTwo`, that one answering
     2.
-  - **A transform of 1024 points costs about 11 µs** on a Bela Gem, or
+  - **A transform of 1024 points costs about 10 µs** on a Bela Gem, or
     0.7 % of a 64-frame block at 44.1 kHz; 4096 points cost 51 µs. Four
     render threads transforming at once cost about twice that each,
     which is memory bandwidth rather than anything this crate shares.
