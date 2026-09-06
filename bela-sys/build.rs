@@ -61,11 +61,26 @@ const SHIM_SOURCES: &[&str] = &["shim/midi.cpp", "shim/midi.h"];
 // symbols: it defines none, and building it is the check.
 const ABI_SOURCE: &str = "abi/ne10_abi.c";
 
-// The header that says whether NE10 is present to check against. Both
-// spellings of a build reach it through the same string: a cross build
-// prefixes the sysroot, and a native build on the board leaves the
-// prefix empty, which is where the board keeps it.
-const ABI_PROBE: &str = "/usr/include/ne10/NE10_dsp.h";
+// The NE10 headers abi/ne10_abi.c asserts against: its whole include
+// closure other than the C library's own, which is also what
+// `vendor/ne10` mirrors. Both are watched, and the first also says
+// whether NE10 is there to check against at all.
+//
+// Watching all of them is the point rather than tidiness. The
+// typedefs, the struct layout and the field types the assertions are
+// mostly about live in NE10_types.h, so a sysroot refresh that touched
+// only that file would leave cargo with no reason to rerun this script
+// — and the archive compiled against the old header would be reused,
+// with the drift the assertions exist to catch going unremarked until
+// something unrelated forced a rebuild.
+//
+// Both spellings of a build reach them through the same strings: a
+// cross build prefixes the sysroot, and a native build on the board
+// leaves the prefix empty, which is where the board keeps them.
+const ABI_HEADERS: &[&str] = &[
+    "/usr/include/ne10/NE10_dsp.h",
+    "/usr/include/ne10/NE10_types.h",
+];
 
 // What the shim includes, relative to the sysroot. The first is where
 // `Bela.h` and the real-time headers are; the second is what makes
@@ -267,9 +282,17 @@ fn build_shim(sysroot: &str) {
 // missing ABI check costs nothing until an image changes.
 fn check_ne10_abi(sysroot: &str) {
     println!("cargo::rerun-if-changed={ABI_SOURCE}");
-    let probe = format!("{sysroot}{ABI_PROBE}");
-    println!("cargo::rerun-if-changed={probe}");
-    if !Path::new(&probe).exists() {
+    let headers: Vec<String> = ABI_HEADERS
+        .iter()
+        .map(|header| format!("{sysroot}{header}"))
+        .collect();
+    for header in &headers {
+        println!("cargo::rerun-if-changed={header}");
+    }
+    // Every one of them has to be there: a partial sysroot would fail
+    // the compile below on a missing include, where nothing to check
+    // against is meant to skip.
+    if !headers.iter().all(|header| Path::new(header).exists()) {
         return;
     }
 

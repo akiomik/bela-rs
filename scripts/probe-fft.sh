@@ -65,14 +65,32 @@ ssh -o ConnectTimeout=10 "$HOST" \
 # Question 4 runs one process per length, because a length that
 # corrupts the heap ends the process it runs in — which is itself an
 # answer, and one a single sweeping process could only give once.
+#
+# A probe that dies is a result; ssh failing to reach the board is not,
+# and the two arrive the same way. ssh reports its own failures as 255
+# and otherwise passes the remote command's status through, and the
+# probe exits 0 to 3 or dies of a signal (134 for the abort a corrupt
+# heap causes), so 255 is the transport and nothing else. Losing that
+# distinction would print a transport failure as a DIED result and
+# call a half-finished sweep a measurement.
 echo
 echo "4. which lengths plan and transform correctly? (one process each)"
 echo
+sweep_failed=0
 length=2
 while [ "$length" -le 65536 ]; do
+  remote_status=0
   # shellcheck disable=SC2029 # the remote path and length expand here
   output="$(ssh -o ConnectTimeout=10 "$HOST" \
-    "timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe $length 2>&1" || true)"
+    "timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe $length 2>&1")" ||
+    remote_status=$?
+  if [ "$remote_status" -eq 255 ]; then
+    # ssh has already printed why on this side; $output holds what the
+    # board said, which for a connection that never opened is nothing.
+    printf '  %-7s ssh failed (status 255); its reason is above\n' "$length" >&2
+    sweep_failed="$length"
+    break
+  fi
   case "$output" in
   *"$length: ok"*) printf '  %-7s ok\n' "$length" ;;
   *"$length: "*) printf '  %-7s %s\n' "$length" "${output#*"$length": }" ;;
@@ -85,11 +103,15 @@ while [ "$length" -le 65536 ]; do
 done
 
 echo
-if [ "$status" -eq 0 ]; then
-  echo "The board answered. Record the findings in docs/fft.md, with the"
-  echo "libNE10 build id from bela-sys/vendor/ne10/SOURCE beside them."
-else
-  echo "The first run exited $status: it could not ask, rather than getting"
+if [ "$status" -ne 0 ]; then
+  echo "The first run exited $status: it could not ask, rather than getting" >&2
   echo "a surprising answer. Read the output above." >&2
+  exit "$status"
 fi
-exit "$status"
+if [ "$sweep_failed" -ne 0 ]; then
+  echo "The board stopped answering at $sweep_failed points: every length from" >&2
+  echo "there on is unmeasured, and the answers above are a partial sweep." >&2
+  exit 1
+fi
+echo "The board answered. Record the findings in docs/fft.md, with the"
+echo "libNE10 build id from bela-sys/vendor/ne10/SOURCE beside them."
