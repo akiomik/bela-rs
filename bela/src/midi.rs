@@ -1650,6 +1650,7 @@ mod tests {
     #[cfg(not(bela_device))]
     use core::time::Duration;
 
+    #[cfg(not(bela_device))]
     use crate::context::tests::Fixture;
     #[cfg(not(bela_device))]
     use crate::task::test_handle;
@@ -2293,11 +2294,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(bela_device))]
     fn no_port_can_be_opened_for_output_off_device() {
         // The same error the input side gives, and for the same
         // reason: there is no library to create a `Midi` object in.
         // The queues and the senders behind it are built and tested
         // off-device all the same; see `output`.
+        //
+        // The fixture is not scenery. `open` takes a `SetupContext`,
+        // and the two render threads this one reports are what says
+        // the port is reached first: had the failure moved back to the
+        // drain's task, `thread_count` would have been read and two
+        // queues built before anything failed.
         let mut fixture = Fixture::with_threads(2);
         assert_eq!(
             MidiOutput::open("hw:0,0,0", fixture.setup(), 8).unwrap_err(),
@@ -2334,6 +2342,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(bela_device))]
     fn no_port_can_be_opened_off_device() {
         assert_eq!(
             MidiInput::open("hw:0,0,0").unwrap_err(),
