@@ -524,6 +524,20 @@ impl RealFft {
     fn inverse_raw(&mut self, _spectrum: &mut [FftBin], _signal: &mut [f32]) {}
 }
 
+#[cfg(all(test, not(bela_device)))]
+impl RealFft {
+    /// A plan for the host tests below.
+    ///
+    /// Off the device target a `RealFft` holds nothing but its length
+    /// — there is no plan, which is why [`new`](Self::new) refuses —
+    /// so everything except the transform itself can be exercised
+    /// here: the buffer sizes, the length checks, the order they are
+    /// made in, and what an error carries.
+    const fn for_test(length: FftLength) -> Self {
+        Self { length }
+    }
+}
+
 impl fmt::Debug for RealFft {
     /// The length, rather than the pointer: one plan is like another,
     /// and the address says nothing a reader wants.
@@ -652,5 +666,123 @@ mod tests {
     fn a_plan_needs_a_board() {
         let length = FftLength::new(64).expect("64 is supported");
         assert_eq!(RealFft::new(length).unwrap_err(), Error::FftUnavailable);
+    }
+
+    /// Off the device target every plan fails the same way, which is
+    /// what makes the rest of an application compile and test on the
+    /// host.
+    #[cfg(not(bela_device))]
+    mod host {
+        use super::*;
+
+        fn plan() -> RealFft {
+            RealFft::for_test(FftLength::new(64).expect("64 is supported"))
+        }
+
+        #[test]
+        fn a_plan_reports_what_it_transforms() {
+            let fft = plan();
+            assert_eq!(fft.length().get(), 64);
+            assert_eq!(fft.spectrum_len(), 33);
+            assert!(
+                format!("{fft:?}").contains("64"),
+                "the Debug names the length"
+            );
+        }
+
+        #[test]
+        fn the_buffers_a_plan_makes_are_the_ones_it_takes() {
+            let fft = plan();
+            let mut signal = fft.new_signal();
+            let mut spectrum = fft.new_spectrum();
+
+            assert_eq!(signal.len(), fft.length().get());
+            assert_eq!(spectrum.len(), fft.spectrum_len());
+            assert!(signal.iter().all(|sample| *sample == 0.0));
+            assert!(spectrum.iter().all(|bin| *bin == FftBin::ZERO));
+
+            let mut fft = fft;
+            assert_eq!(fft.forward(&mut signal, &mut spectrum), Ok(()));
+            assert_eq!(fft.inverse(&mut spectrum, &mut signal), Ok(()));
+        }
+
+        #[test]
+        fn a_buffer_of_the_wrong_length_is_refused_and_says_which() {
+            let mut fft = plan();
+            let mut signal = fft.new_signal();
+            let mut spectrum = fft.new_spectrum();
+
+            assert_eq!(
+                fft.forward(&mut signal[..63], &mut spectrum),
+                Err(Error::FftSignalLen {
+                    expected: 64,
+                    actual: 63
+                })
+            );
+            assert_eq!(
+                fft.forward(&mut signal, &mut spectrum[..32]),
+                Err(Error::FftSpectrumLen {
+                    expected: 33,
+                    actual: 32
+                })
+            );
+            assert_eq!(
+                fft.inverse(&mut spectrum[..32], &mut signal),
+                Err(Error::FftSpectrumLen {
+                    expected: 33,
+                    actual: 32
+                })
+            );
+            assert_eq!(
+                fft.inverse(&mut spectrum, &mut signal[..63]),
+                Err(Error::FftSignalLen {
+                    expected: 64,
+                    actual: 63
+                })
+            );
+        }
+
+        /// A longer buffer is refused too: a caller who sized one
+        /// differently meant something by it, and transforming into
+        /// the front of it would go along with the misunderstanding.
+        #[test]
+        fn a_longer_buffer_is_refused_as_well() {
+            let mut fft = plan();
+            let mut signal = vec![0.0; 65];
+            let mut spectrum = vec![FftBin::ZERO; 34];
+
+            assert!(matches!(
+                fft.forward(&mut signal, &mut spectrum),
+                Err(Error::FftSignalLen { actual: 65, .. })
+            ));
+            assert!(matches!(
+                fft.inverse(&mut spectrum, &mut signal),
+                Err(Error::FftSpectrumLen { actual: 34, .. })
+            ));
+        }
+
+        /// The documented order, which is what makes a call with two
+        /// wrong buffers report the same thing every time.
+        #[test]
+        fn the_check_order_follows_the_argument_order() {
+            let mut fft = plan();
+            let mut signal = vec![0.0; 8];
+            let mut spectrum = vec![FftBin::ZERO; 8];
+
+            assert!(
+                matches!(
+                    fft.forward(&mut signal, &mut spectrum),
+                    Err(Error::FftSignalLen { .. })
+                ),
+                "forward takes the signal first"
+            );
+            assert!(
+                matches!(
+                    fft.inverse(&mut spectrum, &mut signal),
+                    Err(Error::FftSpectrumLen { .. })
+                ),
+                "inverse takes the spectrum first"
+            );
+        }
     }
 }
