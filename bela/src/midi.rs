@@ -187,13 +187,15 @@ impl MidiInput {
     /// # Errors
     ///
     /// [`Error::MidiPortName`] when `port` contains a NUL byte,
-    /// [`Error::MidiCreate`] when the object could not be created —
-    /// a board refusing this program a `Midi` object, which is not
-    /// what a build with no `libbelaextra` in it says
-    /// ([`Error::MidiUnavailable`] is) — and [`Error::MidiOpen`] when
+    /// [`Error::MidiCreate`] when the object could not be created — a
+    /// board refusing this program one — and [`Error::MidiOpen`] when
     /// the port itself could not be opened, carrying what the shim
     /// reported: [`bela_sys::BELA_MIDI_NO_SUCH_PORT`] for a name no
     /// port has, or an ALSA failure as a negative `errno`.
+    ///
+    /// Off the device target it is [`Error::MidiUnavailable`] instead,
+    /// ahead of all of them and before `port` is looked at: a build
+    /// with no `libbelaextra` has nothing to open a port with.
     ///
     /// A port that something else already holds is one of those:
     /// measured on the board, a second reader of the same port gets
@@ -2321,6 +2323,10 @@ mod tests {
         // off-device, which leaves everything between the two — the
         // queues, the weak reference the task holds, the scratch
         // buffer and the name — exercised from here or not at all.
+        //
+        // `TaskCreate` is the same conflation this change took out of
+        // MIDI, still in place for tasks: see issue #146, which would
+        // make this `TaskUnavailable`.
         assert_eq!(
             MidiOutput::assemble(MidiHandle {}, 2, 8).unwrap_err(),
             Error::TaskCreate,
@@ -2328,16 +2334,25 @@ mod tests {
         );
     }
 
+    /// `Error`'s `Display` rather than anything a port does, so it is
+    /// one of the tests here that hold on either target.
     #[test]
     fn a_missing_library_and_a_refused_object_do_not_read_alike() {
         // What splitting the two variants is for: a program that
         // prints the error tells its reader which of them happened.
+        // Both sides are asserted, since `assert_ne!` alone would
+        // still pass if `MidiCreate` were reworded to name the
+        // library it is not about.
         let unavailable = Error::MidiUnavailable.to_string();
         let refused = Error::MidiCreate.to_string();
         assert_ne!(unavailable, refused);
         assert!(
             unavailable.contains("libbelaextra"),
             "a build with no library should name the library: {unavailable}"
+        );
+        assert!(
+            !refused.contains("libbelaextra"),
+            "a board refusing an object should not read like a missing library: {refused}"
         );
     }
 
