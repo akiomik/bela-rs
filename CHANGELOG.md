@@ -49,18 +49,17 @@ and this project adheres to
   these same calls, and wrapping it would cost a second C++ shim, an
   LGPL 3.0 condition where NE10 is BSD-3-Clause, and four defects of
   its own. The reasoning, and what the class does wrong, is in
-  [docs/fft.md](docs/fft.md). The safe API on top of this (`FftLength`,
-  `FftBin`, `RealFft`) is not here yet: what the transforms do to their
-  arguments has to be measured on a board first, which is what
-  `bela-sys/examples/ne10_probe.rs` and `scripts/probe-fft.sh` are for
-  — and they have now been run: [docs/fft.md](docs/fft.md) records
-  what this board's NE10 does. The finding that shapes the API is that
-  **transforms of 2 and 4 points write outside every buffer they are
-  given**, three bins either side of the spectrum and up to 26 floats
-  past the signal, so a program using them dies in the allocator
-  rather than getting a wrong answer. 8 to 65536 points are exact on
-  both sides, in both directions, so 8 is where the safe API's
-  supported range will start. Bela's `Fft` class accepts 2 and 4 and
+  [docs/fft.md](docs/fft.md).
+
+  What the transforms do to their arguments is in none of the headers,
+  so `bela-sys/examples/ne10_probe.rs` and `scripts/probe-fft.sh` ask
+  a board, and `docs/fft.md` records the answers. The finding that
+  shaped `RealFft` above is that **transforms of 2 and 4 points write
+  outside every buffer they are given**, three bins either side of the
+  spectrum and up to 26 floats past the signal, so a program using
+  them dies in the allocator rather than getting a wrong answer. 8 to
+  65536 points are exact on both sides, in both directions, which is
+  the range `FftLength` holds. Bela's `Fft` class accepts 2 and 4 and
   says nothing.
 
 - Hand-written FFI needs a drift check the build cannot do for itself,
