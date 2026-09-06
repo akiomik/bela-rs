@@ -227,6 +227,11 @@ class as well as through NE10: `Fft f; f.setup(2); f.fft(ones);
 f.ifft();` returns wrong values from `fdr(0)` and `td(0)`, then aborts
 in the destructor's `cleanup()` with `free(): invalid size`.
 
+Reported upstream as
+[BelaPlatform/Bela#737](https://github.com/BelaPlatform/Bela/issues/737),
+with the class's own failure reporting as
+[#738](https://github.com/BelaPlatform/Bela/issues/738).
+
 **So the safe API's `FftLength::MIN` is 8**, and it is a hard floor
 rather than a preference: 2 and 4 are lengths where a wrapper cannot
 make the call safe, because the damage is outside every buffer the
