@@ -2324,12 +2324,13 @@ mod tests {
         // queues, the weak reference the task holds, the scratch
         // buffer and the name — exercised from here or not at all.
         //
-        // `TaskCreate` is the same conflation this change took out of
-        // MIDI, still in place for tasks: see issue #146, which would
-        // make this `TaskUnavailable`.
+        // `TaskUnavailable` for the same reason the port above is
+        // `MidiUnavailable`: a host build has no audio system to
+        // create the drain's task in, which is not a board refusing
+        // one.
         assert_eq!(
             MidiOutput::assemble(MidiHandle {}, 2, 8).unwrap_err(),
-            Error::TaskCreate,
+            Error::TaskUnavailable,
             "off-device there is no audio system to create the drain task in"
         );
     }
