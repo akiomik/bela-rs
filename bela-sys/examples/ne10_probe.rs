@@ -63,6 +63,10 @@ mod imp {
     const EPSILON: f32 = 1e-3;
 
     /// An NE10 plan, freed on the way out.
+    ///
+    /// The transforms take `&mut self` because the scratch buffer they
+    /// write through lives in the plan, which is the same reason the
+    /// safe API in #138 will: one plan has one user at a time.
     struct Plan {
         cfg: *mut ne10_fft_r2c_state_float32_t,
         length: usize,
@@ -70,17 +74,25 @@ mod imp {
 
     impl Plan {
         fn new(length: usize) -> Option<Self> {
+            // The allocator's contract, checked here rather than
+            // assumed of a command line: a power of two from 2 to
+            // 65536. Not 8, which is where *transforming* becomes
+            // safe — allocating at 2 and 4 is fine, and asking what
+            // they do is the point of this program.
+            if !length.is_power_of_two() || !(2..=65536).contains(&length) {
+                return None;
+            }
             let nfft = i32::try_from(length).ok()?;
-            // Safety: `nfft` is a power of two in the range the sweep
-            // below establishes, which is what the declaration asks
-            // for; a null result is handled.
+            // Safety: `nfft` is a power of two in that range, which is
+            // what the declaration asks of the allocator; a null
+            // result is handled.
             let cfg = unsafe { ne10_fft_alloc_r2c_float32(nfft) };
             (!cfg.is_null()).then_some(Self { cfg, length })
         }
 
         /// `signal` (`length` samples) into `spectrum`
         /// (`length / 2 + 1` bins).
-        fn forward(&self, signal: &mut [f32], spectrum: &mut [ne10_fft_cpx_float32_t]) {
+        fn forward(&mut self, signal: &mut [f32], spectrum: &mut [ne10_fft_cpx_float32_t]) {
             assert!(
                 signal.len() >= self.length,
                 "the signal holds the plan's length, and may hold canaries past it"
@@ -99,7 +111,7 @@ mod imp {
         }
 
         /// `spectrum` back into `signal`.
-        fn inverse(&self, spectrum: &mut [ne10_fft_cpx_float32_t], signal: &mut [f32]) {
+        fn inverse(&mut self, spectrum: &mut [ne10_fft_cpx_float32_t], signal: &mut [f32]) {
             assert!(
                 signal.len() >= self.length,
                 "the signal holds the plan's length, and may hold canaries past it"
@@ -236,15 +248,15 @@ mod imp {
         );
         println!("run it with a length for question 4: ne10_probe <length>");
 
-        let Some(plan) = Plan::new(N) else {
+        let Some(mut plan) = Plan::new(N) else {
             eprintln!("could not allocate a plan of {N} points; nothing can be asked");
             process::exit(1);
         };
 
-        let reference = scratch_use(&plan);
-        inverse_scaling(&plan);
+        let reference = scratch_use(&mut plan);
+        inverse_scaling(&mut plan);
         bins_written(&reference);
-        alignment(&plan, &reference);
+        alignment(&mut plan, &reference);
 
         println!();
         println!("done");
@@ -253,7 +265,7 @@ mod imp {
     /// Questions 1 and 2: does either transform write into the buffer
     /// it reads? Answers with the spectrum of a known signal, which
     /// the questions after this one compare against.
-    fn scratch_use(plan: &Plan) -> Vec<ne10_fft_cpx_float32_t> {
+    fn scratch_use(plan: &mut Plan) -> Vec<ne10_fft_cpx_float32_t> {
         println!();
         println!("1/2. does a transform write into its input? (N = {N})");
 
@@ -297,7 +309,7 @@ mod imp {
     }
 
     /// Question 3: does the inverse apply the `1/N`, or must a caller?
-    fn inverse_scaling(plan: &Plan) {
+    fn inverse_scaling(plan: &mut Plan) {
         println!();
         println!("3. is the inverse scaled? (round trip of a unit cosine)");
 
@@ -340,7 +352,7 @@ mod imp {
 
     /// Question 5: does a buffer aligned only as a `f32` transform the
     /// same as one `malloc` handed out?
-    fn alignment(plan: &Plan, reference: &[ne10_fft_cpx_float32_t]) {
+    fn alignment(plan: &mut Plan, reference: &[ne10_fft_cpx_float32_t]) {
         println!();
         println!("5. does the caller's alignment matter?");
 
@@ -396,7 +408,7 @@ mod imp {
         // the chunk header the allocator reads back at `free`.
         let slack = (length * 4).max(1024);
 
-        let Some(plan) = Plan::new(length) else {
+        let Some(mut plan) = Plan::new(length) else {
             println!("{length}: no plan");
             return 2;
         };
@@ -419,12 +431,12 @@ mod imp {
         println!(
             "{length}: forward wrote {} f32 before and {} past its {length}-sample input",
             written_before(&signal[..slack], is_written),
-            written_past(&signal[slack + length..], 0, is_written),
+            written_past(&signal[slack + length..], is_written),
         );
         println!(
             "{length}: forward wrote {} bin(s) before bin 0 and {} past bin {}",
             written_before(&spectrum[..slack], bin_is_written),
-            written_past(&spectrum[slack + length / 2 + 1..], 0, bin_is_written),
+            written_past(&spectrum[slack + length / 2 + 1..], bin_is_written),
             length / 2,
         );
 
@@ -433,7 +445,7 @@ mod imp {
         println!(
             "{length}: inverse wrote {} f32 before and {} past its {length}-sample output",
             written_before(&restored[..slack], is_written),
-            written_past(&restored[slack + length..], 0, is_written),
+            written_past(&restored[slack + length..], is_written),
         );
 
         // Which allocation the damage is in, if the run ends here: the
@@ -461,14 +473,12 @@ mod imp {
             .map_or(0, |index| before.len() - index)
     }
 
-    /// How many elements past `used` were changed, counted to the last
-    /// one that was: a transform that skips an element and writes the
-    /// next has still written that far.
-    fn written_past<T>(buffer: &[T], used: usize, changed: impl Fn(&T) -> bool) -> usize {
-        buffer[used..]
-            .iter()
-            .rposition(changed)
-            .map_or(0, |index| index + 1)
+    /// How far into `after` — the canary past what a transform was
+    /// given — anything was changed, counted to the last element that
+    /// was: a transform that skips one and writes the next has still
+    /// written that far.
+    fn written_past<T>(after: &[T], changed: impl Fn(&T) -> bool) -> usize {
+        after.iter().rposition(changed).map_or(0, |index| index + 1)
     }
 
     /// Question 4, for one length: does it plan, does it transform
@@ -480,11 +490,11 @@ mod imp {
     /// that corrupts the heap takes the process with it, which is the
     /// answer this is run one process at a time to get.
     fn one_length(length: usize) -> i32 {
-        let Some(plan) = Plan::new(length) else {
+        let Some(mut plan) = Plan::new(length) else {
             println!("{length}: no plan");
             return 2;
         };
-        let wrong = check_length(&plan, length);
+        let wrong = check_length(&mut plan, length);
         if wrong.is_empty() {
             println!("{length}: ok");
             0
@@ -501,7 +511,7 @@ mod imp {
     /// Every buffer carries canaries past its end, so a transform that
     /// writes outside what it was given is reported here rather than
     /// showing up later as an allocator failure somewhere else.
-    fn check_length(plan: &Plan, length: usize) -> Vec<String> {
+    fn check_length(plan: &mut Plan, length: usize) -> Vec<String> {
         let mut wrong = Vec::new();
         let mut spectrum = spectrum_with_canary(length);
         let expected = as_float(length);

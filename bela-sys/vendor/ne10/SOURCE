@@ -1,4 +1,4 @@
-board root@bela.local: NE10 0.9.10 (Debian Bookworm image 2026-03-25)
+board root@bela.local: NE10 0.9.10
 library: /usr/lib/aarch64-linux-gnu/libNE10.so.10
 build-id: 2abed00810b18c216f992a4a79c5228605e58b1a
 sha256: 186da1ff9a854d996e19546000681bb65b083903ef3b6f01c4898e03ec69f6e9

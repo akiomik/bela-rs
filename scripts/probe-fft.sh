@@ -32,8 +32,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-probe-fft"
-# Long enough for the length sweep, which allocates and transforms
-# every power of two up to 65536; short enough that a board that
+# Per run, and question 4 is one run per length: long enough for the
+# longest transform the sweep asks for, short enough that a board that
 # stopped answering is noticed rather than waited on.
 RUN_TIMEOUT=120
 
@@ -54,10 +54,13 @@ ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/ne10_probe"
 
 echo "Asking questions 1, 2, 3, 5 and 6..."
 echo
+# Not `status=$?` on the line after: `set -e` would end the script on a
+# failing ssh before the assignment ran, and the report at the bottom
+# would be unreachable code.
+status=0
 # shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" \
-  "timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe 2>&1"
-status=$?
+  "timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe 2>&1" || status=$?
 
 # Question 4 runs one process per length, because a length that
 # corrupts the heap ends the process it runs in — which is itself an

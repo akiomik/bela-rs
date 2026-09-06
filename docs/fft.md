@@ -164,10 +164,12 @@ a board what the headers cannot say. It creates no audio system — NE10
 is a plain C library — so the length sweep fits in one run per length
 and a failure leaves nothing holding the audio device.
 
-**Measured 2026-09-07** on a Bela Gem Stereo (Bela 1.18.0, image
-2026-03-25) against `libNE10.so.10` build id
-`2abed00810b18c216f992a4a79c5228605e58b1a`, which is the one
-`bela-sys/vendor/ne10/SOURCE` records. A different build can answer
+**Measured 2026-09-07** on a Bela Gem Stereo (Bela 1.18.0, Debian
+Bookworm image 2026-03-25, NE10 0.9.10) against `libNE10.so.10` build
+id `2abed00810b18c216f992a4a79c5228605e58b1a`, which is the one
+`bela-sys/vendor/ne10/SOURCE` records — `cargo xtask check-vendor
+--board` reported both headers and both identity values matching on
+the same day. A different build can answer
 differently: `cargo xtask check-vendor --board` is what notices, and
 then this section has to be measured again.
 

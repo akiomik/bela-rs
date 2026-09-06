@@ -287,7 +287,16 @@ fn check_ne10_abi(sysroot: &str) {
     };
 
     let mut build = cc::Build::new();
-    build.file(ABI_SOURCE).compiler(&compiler);
+    build
+        .file(ABI_SOURCE)
+        // Pinned for the same reason the shim pins C++14, and with
+        // more riding on it: `_Static_assert` and `_Alignof` are C11,
+        // so a toolchain defaulting to gnu89 would fail the build
+        // rather than skip the check — which is the opposite of what
+        // this is meant to cost. (`__builtin_types_compatible_p` and
+        // `__typeof__` are GNU extensions, which `gnu11` keeps.)
+        .std("gnu11")
+        .compiler(&compiler);
     if !AR_ENV.iter().any(|name| env::var_os(name).is_some()) {
         if let Some(archiver) = abi_archiver(&compiler) {
             build.archiver(archiver);

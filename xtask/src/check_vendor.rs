@@ -104,6 +104,7 @@ pub(crate) fn check(root: &Path, host: &str) -> ! {
     let scratch = scratch_dir();
     let mut drifted = 0;
     let mut missing = 0;
+    let mut libraries_rebuilt = 0;
     for tree in TREES {
         let Tree {
             name,
@@ -170,20 +171,30 @@ pub(crate) fn check(root: &Path, host: &str) -> ! {
         // Headers that cannot say which build of a library they
         // describe: same soname, any implementation.
         if let Some(library) = library {
-            drifted += check_library_identity(host, library, &source);
+            let rebuilt = check_library_identity(host, library, &source);
+            libraries_rebuilt += rebuilt;
+            drifted += rebuilt;
         }
     }
     let _ = fs::remove_dir_all(&scratch);
 
     println!();
     if drifted == 0 {
-        println!("the vendored headers match {host}");
+        println!("the vendored headers and libraries match {host}");
         process::exit(0);
     }
-    println!("{drifted} vendored file(s) differ from {host}");
+    println!("{drifted} vendored item(s) differ from {host}");
     println!("Re-pin them with:");
     println!("  scripts/update-vendor.sh --board {host}");
     println!("  cargo xtask bindgen --sysroot <dir>");
+    if libraries_rebuilt > 0 {
+        println!();
+        println!("A library was rebuilt, which the headers cannot show. What it does");
+        println!("to its arguments was measured against the old one, so re-measure:");
+        println!("  scripts/probe-fft.sh {host}");
+        println!("and update the answers in docs/fft.md, which name the build id they");
+        println!("were taken against.");
+    }
     if missing > 0 {
         println!();
         println!("The update script only copies what the board has, so a file the");

@@ -71,9 +71,12 @@ unsafe extern "C" {
     /// established to be harmless — NE10 sizes the allocation from
     /// `nfft` in signed arithmetic, and neither the header nor this
     /// repository's measurements say what a negative or absurd one
-    /// does on the way to giving up. That range is what
-    /// `bela::FftLength` holds, and `bela::RealFft` is the caller
-    /// this exists for.
+    /// does on the way to giving up.
+    ///
+    /// Allocating is safe at 2 and 4; **transforming is not**, so the
+    /// range a plan may usefully be built over is 8 to 65536. That
+    /// narrower range is what `bela::FftLength` holds. See the two
+    /// transforms below and `docs/fft.md`.
     ///
     /// The result may be null and has to be checked. A non-null
     /// result is owned by the caller and freed with
@@ -97,6 +100,12 @@ unsafe extern "C" {
     ///
     /// All of:
     ///
+    /// - **The plan's `nfft` is at least 8.** At 2 and 4 the NEON
+    ///   kernels write outside the buffers they are given, on both
+    ///   sides and in both directions — three bins before bin 0 of the
+    ///   spectrum at 2, twenty-six floats past the signal on the way
+    ///   back — so no buffer a caller can allocate makes the call
+    ///   sound. Measured on a board; `docs/fft.md` has the numbers.
     /// - `cfg` is a live plan from [`ne10_fft_alloc_r2c_float32`] and
     ///   this call has exclusive use of it for its duration: the
     ///   scratch buffer the transform writes through lives in the
@@ -126,6 +135,11 @@ unsafe extern "C" {
     /// The contract of [`ne10_fft_r2c_1d_float32_neon`] with the
     /// roles swapped: `fin` is valid for reads and writes of
     /// `nfft / 2 + 1` bins, `fout` for writes of `nfft` `f32`s.
+    ///
+    /// The floor of 8 on the plan's `nfft` is the same and for the
+    /// same reason, measured in this direction too: at 4 points this
+    /// writes twenty-four floats past the output it was given, and at
+    /// 2 it writes two floats before it as well.
     pub fn ne10_fft_c2r_1d_float32_neon(
         fout: *mut f32,
         fin: *mut ne10_fft_cpx_float32_t,

@@ -62,9 +62,14 @@ case "${1:-}" in
   # NE10 comes from the board too, and only from the board: it is
   # Debian's package rather than anything Bela publishes, so there is
   # no upstream ref to vendor from.
-  mkdir -p "$NE10_DEST/include"
+  # Flat, with no `include/` of its own, because `check-vendor` maps a
+  # vendored path straight onto the board and NE10's headers sit
+  # directly in /usr/include/ne10 — where Bela's are one level down, in
+  # /root/Bela/include. `each_tree_mirrors_the_board_directory_it_came_from`
+  # in xtask/src/check_vendor.rs is that asymmetry written as a test.
+  mkdir -p "$NE10_DEST"
   for h in $NE10_HEADERS; do
-    scp -q "$HOST:$NE10_INCLUDE_DIR/$h" "$NE10_DEST/include/"
+    scp -q "$HOST:$NE10_INCLUDE_DIR/$h" "$NE10_DEST/"
   done
   # The library's own identity, which the headers do not carry: a
   # rebuilt libNE10 with unchanged headers is exactly the case where
