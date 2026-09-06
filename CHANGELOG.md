@@ -86,6 +86,29 @@ and this project adheres to
 
 ### Changed
 
+- Breaking: `Error::MidiUnavailable` is what a build with no
+  `libbelaextra` in it now says, and `Error::MidiCreate` has gone back
+  to meaning only what it says — a board declining to give this program
+  a `Midi` object. The two were one variant, so a caller matching
+  `Err(Error::MidiCreate)` could not tell a board that refused from a
+  host build that never had MIDI in it, and the two are recovered from
+  differently: the first is worth reporting to whoever is holding the
+  board, the second is what every host build says and usually wants
+  ignoring. The FFT already split the same pair, as `FftUnavailable`
+  and `FftCreate`.
+
+  Nothing on a board changed. Off the device target `MidiInput::open`
+  returns `MidiUnavailable` where it returned `MidiCreate`, and
+  `MidiOutput::open` returns it too — where it used to get as far as
+  the drain's auxiliary task and report `Error::TaskCreate`, which said
+  `Bela_createAuxiliaryTask failed` about a call no host build makes.
+  Both MIDI constructors now say the same thing about the same build.
+  Code matching either of those to detect "no MIDI on this target"
+  stops matching, on the host, silently. Adding the variant is
+  additive on a `#[non_exhaustive]` enum; this entry is about the
+  behaviour, which is a minor bump either way. See "Minor or patch: the
+  drop-in test" in docs/release.md.
+
 - Breaking: a device build links `libNE10` as well as the libraries it
   already named. Nothing in the Rust API changed shape, and nothing
   new has to be installed: `libNE10.so.10` is on every board image and

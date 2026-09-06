@@ -171,8 +171,20 @@ pub enum Error {
     MuteSpeakers(i32),
     /// A MIDI port name contained a NUL byte.
     MidiPortName,
-    /// A `Midi` object could not be created, or the crate was built for
-    /// a target with no `libbelaextra` to create one in.
+    /// This build has no `libbelaextra`, so no MIDI port can be opened.
+    ///
+    /// Off the device target only, where the library is not linked.
+    /// Says nothing about the port or the board: a device build never
+    /// sees it.
+    MidiUnavailable,
+    /// A `Midi` object could not be created.
+    ///
+    /// The shim's allocation failed, which is a board reporting that it
+    /// would not give this program a `Midi` object — told apart from
+    /// [`MidiUnavailable`](Self::MidiUnavailable) because the two are
+    /// recovered from differently: this one is worth reporting to
+    /// whoever is holding the board, and that one is what every host
+    /// build says.
     MidiCreate,
     /// A MIDI port could not be opened, with what the shim reported.
     ///
@@ -378,6 +390,10 @@ impl fmt::Display for Error {
             }
             Self::MuteSpeakers(code) => write!(f, "Bela_muteSpeakers failed with code {code}"),
             Self::MidiPortName => write!(f, "the MIDI port name contains a NUL byte"),
+            Self::MidiUnavailable => write!(
+                f,
+                "this build has no libbelaextra to open a MIDI port with; it is on the board"
+            ),
             Self::MidiCreate => write!(f, "a Bela Midi object could not be created"),
             Self::MidiOpen(code) if *code == bela_sys::BELA_MIDI_NO_SUCH_PORT => write!(
                 f,

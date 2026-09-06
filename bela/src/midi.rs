@@ -188,11 +188,12 @@ impl MidiInput {
     ///
     /// [`Error::MidiPortName`] when `port` contains a NUL byte,
     /// [`Error::MidiCreate`] when the object could not be created —
-    /// which is also what happens off the device target, where there
-    /// is no `libbelaextra` — and [`Error::MidiOpen`] when the port
-    /// itself could not be opened, carrying what the shim reported:
-    /// [`bela_sys::BELA_MIDI_NO_SUCH_PORT`] for a name no port has, or
-    /// an ALSA failure as a negative `errno`.
+    /// a board refusing this program a `Midi` object, which is not
+    /// what a build with no `libbelaextra` in it says
+    /// ([`Error::MidiUnavailable`] is) — and [`Error::MidiOpen`] when
+    /// the port itself could not be opened, carrying what the shim
+    /// reported: [`bela_sys::BELA_MIDI_NO_SUCH_PORT`] for a name no
+    /// port has, or an ALSA failure as a negative `errno`.
     ///
     /// A port that something else already holds is one of those:
     /// measured on the board, a second reader of the same port gets
@@ -218,15 +219,17 @@ impl MidiInput {
     ///
     /// # Errors
     ///
-    /// Always [`Error::MidiCreate`] off the device target: there is no
-    /// `libbelaextra` to open a port with.
+    /// Always [`Error::MidiUnavailable`] off the device target: there
+    /// is no `libbelaextra` to open a port with. Told apart from
+    /// [`Error::MidiCreate`], which is a board refusing an object it
+    /// could have given.
     #[cfg(not(bela_device))]
     #[allow(
         clippy::missing_const_for_fn,
         reason = "mirrors the device signature, which is not const"
     )]
     pub fn open(_port: &str) -> Result<Self, Error> {
-        Err(Error::MidiCreate)
+        Err(Error::MidiUnavailable)
     }
 
     /// How many parsed messages are waiting.
@@ -1014,13 +1017,12 @@ impl MidiOutput {
     /// # Errors
     ///
     /// [`Error::MidiPortName`] when `port` contains a NUL byte,
-    /// [`Error::MidiCreate`] when the object could not be created —
-    /// which is also what happens off the device target —
-    /// [`Error::MidiOpen`] when the port could not be opened, and
-    /// whatever [`AuxiliaryTask::new`] reports when the task behind the
-    /// queue could not be created — [`Error::TaskCreate`] off the
-    /// device target, where there is no audio system to create it in
-    /// and so no output either.
+    /// [`Error::MidiUnavailable`] off the device target, where there is
+    /// no `libbelaextra` to open a port with, [`Error::MidiCreate`]
+    /// when the object could not be created — a board refusing this
+    /// program one — [`Error::MidiOpen`] when the port could not be
+    /// opened, and whatever [`AuxiliaryTask::new`] reports when the
+    /// task behind the queue could not be created.
     pub fn open(port: &str, context: &SetupContext, capacity: usize) -> Result<Self, Error> {
         let handle = MidiHandle::open(port)?;
         let output = Self::assemble(handle, context.thread_count(), capacity)?;
@@ -1460,21 +1462,23 @@ impl MidiHandle {
         Ok(handle)
     }
 
-    /// A handle to nothing, off the device target.
+    /// Always [`Error::MidiUnavailable`] off the device target: there
+    /// is no `libbelaextra` to create a `Midi` object in.
     ///
-    /// Succeeding here rather than failing keeps everything after it
-    /// — the queues, the senders, the drain — compiled and testable on
-    /// the host. Opening still fails: the drain is an
-    /// [`AuxiliaryTask`], and there is no audio system to create one
-    /// in.
+    /// Failing here rather than further along, at the
+    /// [`AuxiliaryTask`] the drain needs — which no off-device audio
+    /// system can create either — is what makes both MIDI constructors
+    /// say the same thing about the same build. Everything behind it,
+    /// the queues and the senders and the drain, is still compiled and
+    /// tested on the host: those tests build the handle themselves,
+    /// which off-device holds nothing.
     #[cfg(not(bela_device))]
     #[allow(
         clippy::missing_const_for_fn,
-        clippy::unnecessary_wraps,
-        reason = "mirrors the device signature, which opens a device and can fail"
+        reason = "mirrors the device signature, which opens a device"
     )]
     fn open(_port: &str) -> Result<Self, Error> {
-        Ok(Self {})
+        Err(Error::MidiUnavailable)
     }
 }
 
@@ -2040,9 +2044,10 @@ mod tests {
     fn output(threads: usize, capacity: usize) -> MidiOutput {
         // The same two steps `assemble` takes, with a task standing in
         // for the one no off-device audio system can create — so the
-        // queues and the handle are built by the code under test
-        // rather than beside it.
-        let handle = MidiHandle::open("nowhere").expect("no port is opened off-device");
+        // queues are built by the code under test rather than beside
+        // it. The handle is built here because no port can be opened
+        // off-device; there is nothing in one to build.
+        let handle = MidiHandle {};
         let shared = MidiOutput::shared(handle, threads, capacity);
         MidiOutput::with_task(shared, test_handle())
     }
@@ -2284,13 +2289,42 @@ mod tests {
 
     #[test]
     fn no_port_can_be_opened_for_output_off_device() {
-        // The queues and the senders are built off-device; what cannot
-        // exist is the task that drains them.
+        // The same error the input side gives, and for the same
+        // reason: there is no library to create a `Midi` object in.
+        // The queues and the senders behind it are built and tested
+        // off-device all the same; see `output`.
         let mut fixture = Fixture::with_threads(2);
         assert_eq!(
             MidiOutput::open("hw:0,0,0", fixture.setup(), 8).unwrap_err(),
+            Error::MidiUnavailable,
+            "off-device there is no libbelaextra to open a port with"
+        );
+    }
+
+    #[test]
+    #[cfg(not(bela_device))]
+    fn the_drain_task_is_the_second_thing_a_host_build_cannot_have() {
+        // `MidiOutput::open` stops at the port and never reaches this
+        // off-device, which leaves everything between the two — the
+        // queues, the weak reference the task holds, the scratch
+        // buffer and the name — exercised from here or not at all.
+        assert_eq!(
+            MidiOutput::assemble(MidiHandle {}, 2, 8).unwrap_err(),
             Error::TaskCreate,
             "off-device there is no audio system to create the drain task in"
+        );
+    }
+
+    #[test]
+    fn a_missing_library_and_a_refused_object_do_not_read_alike() {
+        // What splitting the two variants is for: a program that
+        // prints the error tells its reader which of them happened.
+        let unavailable = Error::MidiUnavailable.to_string();
+        let refused = Error::MidiCreate.to_string();
+        assert_ne!(unavailable, refused);
+        assert!(
+            unavailable.contains("libbelaextra"),
+            "a build with no library should name the library: {unavailable}"
         );
     }
 
@@ -2298,7 +2332,7 @@ mod tests {
     fn no_port_can_be_opened_off_device() {
         assert_eq!(
             MidiInput::open("hw:0,0,0").unwrap_err(),
-            Error::MidiCreate,
+            Error::MidiUnavailable,
             "off-device there is no libbelaextra to open a port with"
         );
         assert!(
