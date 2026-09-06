@@ -1,8 +1,8 @@
 # FFT
 
 What this workspace wraps to do an FFT on a Bela Gem, why it is NE10
-rather than Bela's `Fft` class, and what about NE10 has to be measured
-on a board rather than read.
+rather than Bela's `Fft` class, and what a board had to be asked
+because no header answers it.
 
 Everything about Bela and NE10 here is **read from the sources and
 binaries on the board** (Bela 1.18.0, Debian Bookworm image
@@ -24,9 +24,10 @@ rather than anything Bela publishes.
   ABI](#pinning-the-abi) is how it is kept honest.
 - What the transforms do to their arguments — whether they write into
   their inputs, whether the inverse scales, which lengths work — is
-  **not settled by the headers**. `scripts/probe-fft.sh` asks a board;
-  see [What the board has to
-  answer](#what-the-board-has-to-answer).
+  **not settled by the headers**. `scripts/probe-fft.sh` asked a
+  board, and [the answers](#what-the-board-says-the-transforms-do)
+  are why the safe API will start at 8 points: at 2 and 4 the NEON
+  kernels write outside every buffer they are given.
 
 ## NE10 rather than Bela's `Fft` class
 
@@ -113,8 +114,8 @@ text symbol. Bela calls the `_neon` symbols directly (`Fft.cpp:120`,
 ARMv8 with NEON, so there is nothing to dispatch.
 
 `NE10_MALLOC` is plain `malloc` (`NE10_macros.h:53`), so NE10's own
-buffers are aligned only as `malloc` aligns them — which is the reason
-probe 5 below is worth asking rather than assuming.
+buffers are aligned only as `malloc` aligns them — which is why
+question 5 below was worth asking rather than assuming.
 
 ## Pinning the ABI
 
@@ -156,55 +157,83 @@ different things:
 Neither layer can say what a transform *does*. That is the next
 section.
 
-## What the board has to answer
+## What the board says the transforms do
 
 `bela-sys/examples/ne10_probe.rs`, run by `scripts/probe-fft.sh`, asks
-a board six questions. It creates no audio system — NE10 is a plain C
-library — so the whole length sweep fits in one process and a failure
-leaves nothing holding the audio device.
+a board what the headers cannot say. It creates no audio system — NE10
+is a plain C library — so the length sweep fits in one run per length
+and a failure leaves nothing holding the audio device.
 
-Each question has an expected answer, read from upstream NE10 or from
-Bela's use of it. **Upstream is a hint about mechanism; the board is
-the authority** (`board-facts.md`), and none of these has been
-measured yet.
+**Measured 2026-09-07** on a Bela Gem Stereo (Bela 1.18.0, image
+2026-03-25) against `libNE10.so.10` build id
+`2abed00810b18c216f992a4a79c5228605e58b1a`, which is the one
+`bela-sys/vendor/ne10/SOURCE` records. A different build can answer
+differently: `cargo xtask check-vendor --board` is what notices, and
+then this section has to be measured again.
 
-1. **Does the inverse write into its input?** Upstream's
-   `NE10_rfft_float32.neonintrinsic.c` assigns to `fin[0]`, while
-   NE10's header documentation calls the transforms out-of-place. If
-   it does, the safe API takes the spectrum by `&mut`.
-2. **Does the forward write into its input?** The parameter is not
-   `const`, which is why the API assumes the worst until this is
-   answered.
-3. **Is the inverse scaled?** Upstream applies `0.25 / nfft` in the
-   c2r butterflies and nothing in the r2c; Bela's own (dead, `#if 0`)
-   test asserts that a round trip returns the input. The published
-   contract is fixed either way — an unscaled forward, an inverse that
-   restores the original amplitudes — so this decides only whether the
-   crate multiplies the factor in itself.
-4. **Which lengths plan *and* transform correctly?** Upstream says
-   `2^N, N > 0` and special-cases 2, 4 and 8, so a null check on the
-   plan is not enough: the probe transforms known signals at every
-   power of two from 2 to 65536. At `N = 2` there are only bins 0 and
-   1, so the cases there are DC, Nyquist and an impulse, and a
-   single-bin cosine starts at `N = 4`. The answer *bounds* the
-   supported range; what the crate promises is chosen inside it.
-5. **Does alignment matter?** AArch64's `vld1` has no alignment
-   requirement, so this should be a non-question — but NE10's own
-   buffers come from `malloc` and a Rust `Vec<f32>` is aligned to 4,
-   and "should be" is how a crash on someone else's board starts. The
-   probe transforms out of a window offset by one `f32`.
-6. **Does the forward write exactly `N / 2 + 1` bins?** Bela
-   over-allocates `N` complex values (`Fft.cpp:77`), which would hide
-   an overrun; the probe leaves a canary past the last bin.
+| Question | Answer |
+|---|---|
+| 1. Does the inverse write into its spectrum? | No, it is preserved — at 16 and at every supported length |
+| 2. Does the forward write into its signal? | No, likewise |
+| 3. Is the inverse scaled? | Yes: a unit cosine comes back at 1.000000, so NE10 applies the `1/N` itself |
+| 4. Which lengths work? | **8 to 65536.** 2 and 4 corrupt the heap — see below |
+| 5. Does alignment matter? | No: a window offset by one `f32` gives the same spectrum |
+| 6. How many bins does the forward write? | Exactly `N / 2 + 1`; the canary past the last bin survives |
 
-A seventh question — what a transform costs on the audio thread — is
-not this probe's: it has to be measured inside `render`, with
-`CpuSection`, and it lands with the safe API.
+Both inputs being preserved is the useful surprise. Upstream's
+`NE10_rfft_float32.neonintrinsic.c` assigns to `fin[0]` and NE10's
+parameters are not `const`, so the safe API was designed expecting to
+take both by `&mut`; on this build it does not have to. The sweep
+checks it at every length rather than at one, because the code path
+changes with the length — which question 4 is the proof of.
+
+### Below 8 points, the transforms write outside every buffer
+
+At 2 and 4 points the NEON kernels write past *and before* the buffers
+they are given. Measured with each buffer placed in the middle of a
+much larger allocation, so that the overrun lands in canaries instead
+of in the allocator's bookkeeping:
+
+| Length | Forward, into the spectrum | Inverse, into the signal |
+|---|---|---|
+| 2 | 3 bins before bin 0, 3 bins past bin 1 | 2 floats before, 26 past |
+| 4 | 2 bins before bin 0, 2 bins past bin 2 | 24 floats past |
+| 8 | nothing outside | nothing outside |
+| 1024 | nothing outside | nothing outside |
+
+With ordinary buffers the process dies rather than returning a wrong
+answer: `free(): invalid pointer` on the spectrum, which is glibc
+finding the chunk header before the buffer overwritten, and once a `Fatal
+glibc error: malloc assertion failure in sysmalloc`. The input
+buffers are untouched in every case; it is the output side that
+overruns, in both directions.
+
+Neither the headers nor Bela's `Fft` class says anything about this.
+`Fft::setup` accepts any power of two (`Fft.cpp:66-71`), and its
+frequency-domain buffer is `length` complex values rather than
+`length / 2 + 1` (`Fft.cpp:77`), which is four times the room needed at
+`length = 2` — so a program using the class survives the same overrun
+by accident, on the output side, and its `ifft()` writes into a
+`length`-float buffer that the inverse overruns by 26 floats at that
+size.
+
+**So the safe API's `FftLength::MIN` is 8**, and it is a hard floor
+rather than a preference: 2 and 4 are lengths where a wrapper cannot
+make the call safe, because the damage is outside every buffer the
+caller owns. 65536 is the top of what was swept and what
+`FftLength::MAX` will be set from; both are decisions recorded against
+this measurement rather than limits NE10 states.
+
+### Still to measure
+
+What a transform costs on the audio thread, per length, with
+`CpuSection` from inside `render`. That one needs an audio system, so
+it belongs with the safe API rather than with this probe.
 
 ## Status
 
 The safe API (`FftLength`, `FftBin`, `RealFft`) is issue #138. This
-document and the `bela-sys` layer are the first step of it: the
-declarations, the ABI checks and the probe. **No measurement has been
-made yet** — this file records what has to be asked, and gains the
-answers when a board has been asked.
+document and the `bela-sys` layer are its first step: the declarations,
+the ABI checks, the probe — and now the answers the probe gave, which
+are what the API is shaped against. `FftLength::MIN` is 8 because of
+them.

@@ -21,7 +21,16 @@ and this project adheres to
   [docs/fft.md](docs/fft.md). The safe API on top of this (`FftLength`,
   `FftBin`, `RealFft`) is not here yet: what the transforms do to their
   arguments has to be measured on a board first, which is what
-  `bela-sys/examples/ne10_probe.rs` and `scripts/probe-fft.sh` are for.
+  `bela-sys/examples/ne10_probe.rs` and `scripts/probe-fft.sh` are for
+  — and they have now been run: [docs/fft.md](docs/fft.md) records
+  what this board's NE10 does. The finding that shapes the API is that
+  **transforms of 2 and 4 points write outside every buffer they are
+  given**, three bins either side of the spectrum and up to 26 floats
+  past the signal, so a program using them dies in the allocator
+  rather than getting a wrong answer. 8 to 65536 points are exact on
+  both sides, in both directions, so 8 is where the safe API's
+  supported range will start. Bela's `Fft` class accepts 2 and 4 and
+  says nothing.
 
 - Hand-written FFI needs a drift check the build cannot do for itself,
   so it has two. `bela-sys/abi/ne10_abi.c` asserts at build time that

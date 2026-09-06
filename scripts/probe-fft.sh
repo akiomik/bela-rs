@@ -49,18 +49,44 @@ echo "Copying it to $HOST..."
 ssh -o ConnectTimeout=10 "$HOST" "mkdir -p $REMOTE_DIR"
 scp -q -o ConnectTimeout=10 "$BIN_DIR/ne10_probe" "$HOST:$REMOTE_DIR/ne10_probe"
 
-echo "Running it..."
+# shellcheck disable=SC2029 # the remote path is meant to expand here
+ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/ne10_probe"
+
+echo "Asking questions 1, 2, 3, 5 and 6..."
 echo
+# shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" \
-  "chmod +x $REMOTE_DIR/ne10_probe && timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe 2>&1"
+  "timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe 2>&1"
 status=$?
+
+# Question 4 runs one process per length, because a length that
+# corrupts the heap ends the process it runs in — which is itself an
+# answer, and one a single sweeping process could only give once.
+echo
+echo "4. which lengths plan and transform correctly? (one process each)"
+echo
+length=2
+while [ "$length" -le 65536 ]; do
+  # shellcheck disable=SC2029 # the remote path and length expand here
+  output="$(ssh -o ConnectTimeout=10 "$HOST" \
+    "timeout -s INT -k 5 $RUN_TIMEOUT $REMOTE_DIR/ne10_probe $length 2>&1" || true)"
+  case "$output" in
+  *"$length: ok"*) printf '  %-7s ok\n' "$length" ;;
+  *"$length: "*) printf '  %-7s %s\n' "$length" "${output#*"$length": }" ;;
+  *)
+    # No line of its own: the process died before printing one.
+    printf '  %-7s DIED: %s\n' "$length" "$(echo "$output" | tr '\n' ' ')"
+    ;;
+  esac
+  length=$((length * 2))
+done
 
 echo
 if [ "$status" -eq 0 ]; then
   echo "The board answered. Record the findings in docs/fft.md, with the"
   echo "libNE10 build id from bela-sys/vendor/ne10/SOURCE beside them."
 else
-  echo "The probe exited $status: it could not ask, rather than getting a"
-  echo "surprising answer. Read the output above." >&2
+  echo "The first run exited $status: it could not ask, rather than getting"
+  echo "a surprising answer. Read the output above." >&2
 fi
 exit "$status"
