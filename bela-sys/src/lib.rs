@@ -7,12 +7,24 @@
 //! upstream commit) with `cargo xtask bindgen`; see the crate README
 //! for how to regenerate them.
 //!
-//! One thing here is not the core API and not generated: the
-//! [`bela_midi_*`](bela_midi_new) functions, a C surface this crate
-//! compiles (`shim/midi.cpp`) over Bela's `Midi` class in
-//! `libbelaextra`. MIDI is what a Bela program reaches for first after
-//! audio, and the class is C++ with only half a C surface of its own.
-//! The other higher-level C++ libraries (Scope, Trill, Fft, Gui)
+//! Two things here are neither the core API nor generated, and they
+//! are two different kinds of thing:
+//!
+//! - The [`bela_midi_*`](bela_midi_new) functions are a C surface this
+//!   crate compiles (`shim/midi.cpp`) over Bela's `Midi` class in
+//!   `libbelaextra`. MIDI is what a Bela program reaches for first
+//!   after audio, and the class is C++ with only half a C surface of
+//!   its own.
+//! - The [`ne10_fft_*`](ne10_fft_alloc_r2c_float32) functions are
+//!   plain C on the board, in `libNE10.so.10`, declared here by hand.
+//!   They are the real-to-complex FFT, reached directly rather than
+//!   through Bela's `Fft` class, which wraps these same calls and
+//!   little else; `docs/fft.md` in the repository records why. Nothing
+//!   is compiled for them — the library is already on the board — but
+//!   `abi/ne10_abi.c` asserts at build time that its headers still
+//!   describe what is declared here.
+//!
+//! Bela's own higher-level C++ libraries (Scope, Trill, Fft, Gui)
 //! remain out of scope.
 //!
 //! The `setup` / `render` / `cleanup` callbacks are not bound: they are
@@ -40,12 +52,17 @@
 )]
 mod bindings;
 mod midi;
+mod ne10;
 
 pub use bindings::*;
 pub use midi::{
     BELA_MIDI_ALREADY_OPEN, BELA_MIDI_MESSAGE_MAX, BELA_MIDI_NO_SUCH_PORT, BelaMidi,
     bela_midi_available_messages, bela_midi_delete, bela_midi_get_message, bela_midi_list_ports,
     bela_midi_new, bela_midi_read_from, bela_midi_write_output, bela_midi_write_to,
+};
+pub use ne10::{
+    ne10_fft_alloc_r2c_float32, ne10_fft_c2r_1d_float32_neon, ne10_fft_cpx_float32_t,
+    ne10_fft_destroy_r2c_float32, ne10_fft_r2c_1d_float32_neon, ne10_fft_r2c_state_float32_t,
 };
 
 // The build script's toolchain logic, tested where a build script
@@ -152,6 +169,73 @@ mod shim_compiler {
             shim_compiler_from("", "scripts/aarch64-bela-linker.sh", ""),
             Ok(DEFAULT_CXX.to_owned()),
             "and with BELA_CC unset too, the tap default"
+        );
+    }
+
+    #[test]
+    fn the_abi_check_takes_the_c_compiler_as_it_stands() {
+        // BELA_CC already names a C compiler, and the assertions in
+        // abi/ne10_abi.c are C: nothing to derive.
+        assert_eq!(
+            abi_compiler_from("aarch64-linux-gnu-gcc", "", "clang++"),
+            Some("aarch64-linux-gnu-gcc".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_abi_check_follows_the_resolved_linker() {
+        // The direct-linker path: what Cargo resolved is a compiler
+        // driver, which is what should read the headers.
+        assert_eq!(
+            abi_compiler_from("", "aarch64-unknown-linux-gnu-gcc", ""),
+            Some("aarch64-unknown-linux-gnu-gcc".to_owned())
+        );
+        assert_eq!(
+            abi_compiler_from("gcc", "scripts/aarch64-bela-linker.sh", ""),
+            Some("gcc".to_owned()),
+            "the wrapper names no compiler of its own, so BELA_CC answers"
+        );
+    }
+
+    #[test]
+    fn the_abi_check_derives_a_c_compiler_from_a_cxx_one() {
+        // Only BELA_CXX is set, which is the shim's variable: the C
+        // compiler beside it reads the same headers with the same
+        // defines.
+        assert_eq!(
+            abi_compiler_from("", "", "aarch64-linux-gnu-g++"),
+            Some("aarch64-linux-gnu-gcc".to_owned())
+        );
+        assert_eq!(
+            abi_compiler_from("", "", "clang++"),
+            Some("clang".to_owned())
+        );
+        assert_eq!(
+            abi_compiler_from("", "", ""),
+            Some("aarch64-unknown-linux-gnu-gcc".to_owned()),
+            "with nothing set, the tap's C compiler beside DEFAULT_CXX"
+        );
+    }
+
+    #[test]
+    fn a_cxx_compiler_nothing_follows_from_skips_the_abi_check() {
+        // No error: the check is a guard against a board image moving
+        // NE10, and a build that cannot run it links exactly as it did
+        // before the check existed. build.rs warns instead.
+        assert_eq!(abi_compiler_from("", "", "my-cross-compiler"), None);
+    }
+
+    #[test]
+    fn the_abi_archiver_follows_a_gcc_name() {
+        assert_eq!(
+            abi_archiver("aarch64-linux-gnu-gcc"),
+            Some("aarch64-linux-gnu-ar".to_owned())
+        );
+        assert_eq!(abi_archiver("gcc"), Some("ar".to_owned()));
+        assert_eq!(
+            abi_archiver("clang"),
+            None,
+            "clang wants llvm-ar, not an ar beside it; cc resolves that"
         );
     }
 

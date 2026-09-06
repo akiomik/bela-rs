@@ -196,6 +196,23 @@ linking with another is also how a binary ends up asking the board for
 `libstdc++` or `libgcc_s` symbols it does not have, which is a failure
 that waits until the program runs.
 
+### The NE10 ABI check's compiler
+
+`bela-sys` also compiles `abi/ne10_abi.c` when the sysroot carries
+NE10's headers, which is a **C** file and not part of any binary: it
+holds `_Static_assert`s that the headers still describe what
+`src/ne10.rs` declares by hand (see [fft.md](fft.md)). Building it is
+the check.
+
+The compiler is chosen the same way, with the languages swapped:
+`BELA_CC`, then the resolved linker, then the C compiler beside
+`BELA_CXX` (`aarch64-linux-gnu-g++` gives `aarch64-linux-gnu-gcc`,
+`clang++` gives `clang`), then the tap's `aarch64-unknown-linux-gnu-gcc`.
+Unlike the shim, a name nothing follows from **warns and skips** rather
+than failing the build: no binary depends on this file, so a build that
+cannot run the check links exactly as it did before the check existed.
+Set `BELA_CC` to get it back.
+
 ## 3. Sysroot
 
 Linking needs a copy of the board's filesystem — `libbela` plus the EVL

@@ -36,11 +36,51 @@ const LIB_DIRS: &[&str] = &[
 // `asound` is for the shim itself, which opens a port non-blocking to
 // find out whether it is free — see shim/midi.cpp. It resolves in the
 // multiarch directory, and `libbelaextra` needs it anyway.
-const LIBS: &[&str] = &["belaextra", "bela", "asound", "seasocks", "evl", "stdc++"];
+//
+// `NE10` is the FFT: src/ne10.rs calls it directly rather than through
+// Bela's `Fft` class (docs/fft.md). `libbelaextra` already depends on
+// it, so this adds no library to the board, only a name to the link
+// line — and order does not matter for it the way it does for the two
+// Bela libraries, since nothing depends on it without saying so.
+const LIBS: &[&str] = &[
+    "belaextra",
+    "bela",
+    "asound",
+    "seasocks",
+    "evl",
+    "stdc++",
+    "NE10",
+];
 
 // The C surface this crate compiles over Bela's `Midi` class. See
 // shim/midi.h for what it exports and docs/midi.md for why.
 const SHIM_SOURCES: &[&str] = &["shim/midi.cpp", "shim/midi.h"];
+
+// Compile-time assertions that the board's NE10 headers still describe
+// what src/ne10.rs declares. Compiled, never linked against for its
+// symbols: it defines none, and building it is the check.
+const ABI_SOURCE: &str = "abi/ne10_abi.c";
+
+// The NE10 headers abi/ne10_abi.c asserts against: its whole include
+// closure other than the C library's own, which is also what
+// `vendor/ne10` mirrors. Both are watched, and the first also says
+// whether NE10 is there to check against at all.
+//
+// Watching all of them is the point rather than tidiness. The
+// typedefs, the struct layout and the field types the assertions are
+// mostly about live in NE10_types.h, so a sysroot refresh that touched
+// only that file would leave cargo with no reason to rerun this script
+// — and the archive compiled against the old header would be reused,
+// with the drift the assertions exist to catch going unremarked until
+// something unrelated forced a rebuild.
+//
+// Both spellings of a build reach them through the same strings: a
+// cross build prefixes the sysroot, and a native build on the board
+// leaves the prefix empty, which is where the board keeps them.
+const ABI_HEADERS: &[&str] = &[
+    "/usr/include/ne10/NE10_dsp.h",
+    "/usr/include/ne10/NE10_types.h",
+];
 
 // What the shim includes, relative to the sysroot. The first is where
 // `Bela.h` and the real-time headers are; the second is what makes
@@ -110,6 +150,7 @@ fn main() {
     // archive calling into `libbelaextra`, and a static archive has to
     // reach the linker before whatever resolves it.
     build_shim(&sysroot);
+    check_ne10_abi(&sysroot);
     for lib in LIBS {
         println!("cargo::rustc-link-lib=dylib={lib}");
     }
@@ -221,6 +262,78 @@ fn build_shim(sysroot: &str) {
         build.include(format!("{sysroot}/usr/include/aarch64-linux-gnu"));
     }
     build.compile("bela_midi_shim");
+}
+
+// Compiles the NE10 ABI assertions, when NE10's headers are there to
+// assert against.
+//
+// src/ne10.rs is written by hand, so no build regenerates it when a
+// board image moves NE10: a changed typedef or parameter type would
+// link, run and go wrong. `cargo xtask check-vendor --board` catches a
+// changed header by diffing it, and needs a board; this catches the
+// same drift wherever the headers are, which includes CI with a synced
+// sysroot and a native build on the board itself.
+//
+// Skipped rather than fatal when there is nothing to check against —
+// the same reasoning as the shim, and for the same builds: `cargo
+// check` and `clippy` for the device target never link and CI has no
+// sysroot to sync. Quieter than the shim, though: a missing shim
+// breaks a link with an unhelpful message, so it warns, while a
+// missing ABI check costs nothing until an image changes.
+fn check_ne10_abi(sysroot: &str) {
+    println!("cargo::rerun-if-changed={ABI_SOURCE}");
+    let headers: Vec<String> = ABI_HEADERS
+        .iter()
+        .map(|header| format!("{sysroot}{header}"))
+        .collect();
+    for header in &headers {
+        println!("cargo::rerun-if-changed={header}");
+    }
+    // Every one of them has to be there: a partial sysroot would fail
+    // the compile below on a missing include, where nothing to check
+    // against is meant to skip.
+    if !headers.iter().all(|header| Path::new(header).exists()) {
+        return;
+    }
+
+    let Some(compiler) = abi_compiler_from(
+        &env::var("BELA_CC").unwrap_or_default(),
+        &env::var("RUSTC_LINKER").unwrap_or_default(),
+        &env::var("BELA_CXX").unwrap_or_default(),
+    ) else {
+        println!(
+            "cargo::warning=NE10 ABI assertions not compiled: no C compiler follows from \
+             BELA_CXX; set BELA_CC to the matching C compiler. src/ne10.rs is unchecked \
+             against this sysroot's headers"
+        );
+        return;
+    };
+
+    let mut build = cc::Build::new();
+    build
+        .file(ABI_SOURCE)
+        // Pinned for the same reason the shim pins C++14, and with
+        // more riding on it: `_Static_assert` and `_Alignof` are C11,
+        // so a toolchain defaulting to gnu89 would fail the build
+        // rather than skip the check — which is the opposite of what
+        // this is meant to cost. (`__builtin_types_compatible_p` and
+        // `__typeof__` are GNU extensions, which `gnu11` keeps.)
+        .std("gnu11")
+        .compiler(&compiler);
+    if !AR_ENV.iter().any(|name| env::var_os(name).is_some()) {
+        if let Some(archiver) = abi_archiver(&compiler) {
+            build.archiver(archiver);
+        }
+    }
+    if !sysroot.is_empty() {
+        build.flag(format!("--sysroot={sysroot}"));
+        // Same as the shim: Debian's architecture-specific headers,
+        // which NE10's includes of the C library reach through.
+        build.include(format!("{sysroot}/usr/include/aarch64-linux-gnu"));
+    }
+    // The archive holds one object defining nothing. Compiling it is
+    // the point; linking it is how the compile gets run.
+    build.compile("bela_ne10_abi");
 }
 
 // Debian ships the `libstdc++.so` linker symlink under a

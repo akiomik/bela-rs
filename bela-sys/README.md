@@ -11,6 +11,20 @@ provenance is recorded in `vendor/bela/SOURCE`. These files are LGPL
 3.0 (see `vendor/bela/LICENSE`); the rest of the crate is MIT OR
 Apache-2.0.
 
+`vendor/ne10/` is a second tree and a different kind of thing: it
+holds `NE10_dsp.h` and `NE10_types.h` from the board, and **nothing
+generates from them**. `src/ne10.rs` declares NE10's four FFT
+functions by hand, so those two headers are only the baseline `cargo
+xtask check-vendor --board` diffs a board against, together with the
+library identity in `vendor/ne10/SOURCE` — a build id and a hash,
+because every build of the library calls itself `libNE10.so.10`.
+Wiring them into a bindgen run later would be a change of purpose
+rather than a tidy-up. `abi/ne10_abi.c` is the same check from the
+other side, at build time and without a board: it asserts that the
+headers still describe what `src/ne10.rs` declares. NE10 is
+BSD-3-Clause, whose notice is at the top of each of those headers.
+See [docs/fft.md](../docs/fft.md).
+
 The headers are taken **from the board**, not from
 [BelaPlatform/Bela]: the Bela Gem image ships Bela 1.18.0, which is
 newer than any published branch (see
