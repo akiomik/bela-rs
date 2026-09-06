@@ -219,10 +219,11 @@ impl MidiInput {
     ///
     /// # Errors
     ///
-    /// Always [`Error::MidiUnavailable`] off the device target: there
-    /// is no `libbelaextra` to open a port with. Told apart from
-    /// [`Error::MidiCreate`], which is a board refusing an object it
-    /// could have given.
+    /// Always [`Error::MidiUnavailable`] off the device target, and
+    /// answered before `port` is looked at: there is no `libbelaextra`
+    /// to open a port with, and so nothing for a NUL byte in the name
+    /// to be reported to. Told apart from [`Error::MidiCreate`], which
+    /// is a board refusing an object it could have given.
     #[cfg(not(bela_device))]
     #[allow(
         clippy::missing_const_for_fn,
@@ -1017,12 +1018,16 @@ impl MidiOutput {
     /// # Errors
     ///
     /// [`Error::MidiPortName`] when `port` contains a NUL byte,
-    /// [`Error::MidiUnavailable`] off the device target, where there is
-    /// no `libbelaextra` to open a port with, [`Error::MidiCreate`]
-    /// when the object could not be created — a board refusing this
-    /// program one — [`Error::MidiOpen`] when the port could not be
-    /// opened, and whatever [`AuxiliaryTask::new`] reports when the
-    /// task behind the queue could not be created.
+    /// [`Error::MidiCreate`] when the object could not be created — a
+    /// board refusing this program one — [`Error::MidiOpen`] when the
+    /// port could not be opened, and whatever [`AuxiliaryTask::new`]
+    /// reports when the task behind the queue could not be created.
+    /// They are listed in the order they are reached.
+    ///
+    /// Off the device target it is [`Error::MidiUnavailable`] and
+    /// nothing else, ahead of all of them: there is no `libbelaextra`
+    /// to open a port with, so neither a NUL byte in the name nor the
+    /// drain's missing task is ever reached to be reported.
     pub fn open(port: &str, context: &SetupContext, capacity: usize) -> Result<Self, Error> {
         let handle = MidiHandle::open(port)?;
         let output = Self::assemble(handle, context.thread_count(), capacity)?;
