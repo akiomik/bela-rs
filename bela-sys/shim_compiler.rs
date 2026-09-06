@@ -73,6 +73,59 @@ fn shim_compiler_from(bela_cxx: &str, rustc_linker: &str, bela_cc: &str) -> Resu
     ))
 }
 
+/// The C compiler to check NE10's headers with (`abi/ne10_abi.c`), or
+/// [`None`] when nothing follows from what is set.
+///
+/// A C compiler and not the shim's, because the assertions there are
+/// `_Static_assert` over `__builtin_types_compatible_p`, which is C.
+/// The order mirrors [`shim_compiler_from`] with the roles of the two
+/// languages swapped:
+///
+/// 1. `BELA_CC`, which already names a C compiler.
+/// 2. Otherwise `RUSTC_LINKER`, the driver Cargo resolved, unless it
+///    is the wrapper — which names one only through `BELA_CC`.
+/// 3. Otherwise `BELA_CXX`, mapped back to the C compiler beside it.
+/// 4. With none of the three set, the tap's name.
+///
+/// [`None`] rather than `Err`: an unrecognised name means the check is
+/// skipped with a warning, not that the build fails. It is a guard
+/// against a board image moving NE10 underneath the hand-written
+/// declarations, and a build that cannot run it is no worse off than
+/// one from before it existed — while failing here would break builds
+/// that link perfectly well.
+fn abi_compiler_from(bela_cc: &str, rustc_linker: &str, bela_cxx: &str) -> Option<String> {
+    if !bela_cc.is_empty() {
+        return Some(bela_cc.to_owned());
+    }
+    if !rustc_linker.is_empty() && !is_wrapper_linker(rustc_linker) {
+        return Some(rustc_linker.to_owned());
+    }
+    if bela_cxx.is_empty() {
+        return Some(c_compiler_beside(DEFAULT_CXX).unwrap_or_else(|| DEFAULT_CXX.to_owned()));
+    }
+    c_compiler_beside(bela_cxx)
+}
+
+/// The archiver that belongs to a C compiler, the way
+/// [`shim_archiver`] derives one for a C++ compiler and for the same
+/// reason: `cc` resolves it from the target triple rather than from
+/// the compiler it was handed.
+fn abi_archiver(compiler: &str) -> Option<String> {
+    let prefix = gnu_prefix(compiler, "gcc")?;
+    Some(format!("{prefix}ar"))
+}
+
+/// The C compiler that belongs beside `cxx` — `aarch64-linux-gnu-gcc`
+/// for `aarch64-linux-gnu-g++`, `clang` for `clang++` — or [`None`]
+/// for a name neither suffix fits.
+fn c_compiler_beside(cxx: &str) -> Option<String> {
+    if let Some(prefix) = gnu_prefix(cxx, "g++") {
+        return Some(format!("{prefix}gcc"));
+    }
+    let prefix = gnu_prefix(cxx, "clang++")?;
+    Some(format!("{prefix}clang"))
+}
+
 /// Whether `rustc_linker` names the compatibility wrapper rather than
 /// a compiler driver, checked against the last path segment so an
 /// absolute path (Cargo resolves config-file linker paths against the

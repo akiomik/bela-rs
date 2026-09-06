@@ -8,6 +8,54 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `bela-sys` declares NE10's real-to-complex FFT: the four
+  `ne10_fft_*_float32` functions and `ne10_fft_cpx_float32_t`, in
+  `src/ne10.rs`. This is the library Bela's own `Fft` class calls,
+  reached directly rather than through it — that class contributes two
+  `malloc`s, a power-of-two check and four unchecked accessors over
+  these same calls, and wrapping it would cost a second C++ shim, an
+  LGPL 3.0 condition where NE10 is BSD-3-Clause, and four defects of
+  its own. The reasoning, and what the class does wrong, is in
+  [docs/fft.md](docs/fft.md). The safe API on top of this (`FftLength`,
+  `FftBin`, `RealFft`) is not here yet: what the transforms do to their
+  arguments has to be measured on a board first, which is what
+  `bela-sys/examples/ne10_probe.rs` and `scripts/probe-fft.sh` are for.
+
+- Hand-written FFI needs a drift check the build cannot do for itself,
+  so it has two. `bela-sys/abi/ne10_abi.c` asserts at build time that
+  the board's NE10 headers still describe what `src/ne10.rs` declares
+  — the typedefs, the complex struct's size, alignment, offsets and
+  field types, and all four function signatures — written in C
+  primitives rather than NE10's own typedefs, so that a moved typedef
+  cannot pass by moving both sides of the comparison. It needs no
+  board, so it runs wherever the headers are: a cross build against
+  `BELA_SYSROOT` and a native build on the board alike. It adds
+  nothing to what a build requires: a toolchain no C compiler can be
+  derived for warns and skips rather than failing a build that would
+  otherwise link.
+
+  `cargo xtask check-vendor --board` is the other half, and now covers
+  two vendored trees rather than one: `vendor/bela`, as before, and
+  `vendor/ne10`, which holds the two headers as a baseline and
+  generates nothing. It also compares the library's own identity — the
+  GNU build id and a SHA-256 recorded in `vendor/ne10/SOURCE` —
+  because the soname cannot tell two builds apart, and a rebuilt
+  `libNE10` with unchanged headers is exactly the case where what the
+  FFT does to its arguments has to be measured again.
+
+### Changed
+
+- Breaking: a device build links `libNE10` as well as the libraries it
+  already named. Nothing in the Rust API changed shape, and nothing
+  new has to be installed: `libNE10.so.10` is on every board image and
+  in every sysroot `scripts/sync-sysroot.sh` has made, because
+  `libbelaextra.so` already depends on it — but a sysroot assembled by
+  hand without it builds every earlier release and not this one. A
+  link that does not use the FFT drops the library again under
+  `--as-needed`.
+
 ### Fixed
 
 - `stop_requested` was documented with a render callback reacting to a

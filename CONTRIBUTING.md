@@ -143,16 +143,22 @@ There are also probes, which are not checks:
 ```sh
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-init-failure.sh [user@host] [probe...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-io.sh [user@host] [run...]
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-fft.sh [user@host]
 ```
 
 The first measures what a failed `Bela_initAudio` leaves behind by
 producing the crash on purpose. The second measures how a board
 configures its analog and digital I/O, by bringing an audio system up
 one configuration per process and reporting the `BelaContext` each one
-produces. Nothing about either passes or fails — they answer questions,
-and the answers belong in
-[docs/board-facts.md](docs/board-facts.md), which is why they are
-separate from the smoke test. Run one when a claim in that file needs
+produces. The third measures what NE10's FFT does to its arguments —
+whether a transform writes into its input, whether the inverse scales,
+which lengths work — which no header answers; alone among the three it
+creates no audio system, so it leaves `bela_daemon` running and needs
+no board state put back. Nothing about any of them passes or fails —
+they answer questions, and the answers belong in
+[docs/board-facts.md](docs/board-facts.md), or in
+[docs/fft.md](docs/fft.md) for the FFT, which is why they are separate
+from the smoke test. Run one when a claim in those files needs
 checking against a board, not as part of the routine before pushing.
 
 After updating a board image, also check that the vendored headers
