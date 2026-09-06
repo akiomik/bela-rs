@@ -228,10 +228,10 @@ this measurement rather than limits NE10 states.
 
 ### What a transform costs
 
-Measured 2026-09-07 by `bela/examples/fft.rs`, which times each
-transform inside `render` with a `CpuTimer` and rotates through the
-lengths one per block. A Bela Gem Stereo at 44.1 kHz with a 64-frame
-period, so the block deadline is 1.45 ms:
+Measured 2026-09-07 by `bela/examples/fft.rs`, which times a transform
+inside `render` with a `CpuTimer`, rotating through the lengths one
+per block. A Bela Gem Stereo at 44.1 kHz with a 64-frame period, so
+the block deadline is 1.45 ms:
 
 | Length | One render thread | Of one block | Four render threads, each transforming |
 |---|---|---|---|
@@ -241,38 +241,38 @@ period, so the block deadline is 1.45 ms:
 | 2048 | 22.4 µs | 1.5 % | 44.7 µs |
 | 4096 | 51.5 µs | 3.5 % | 89.6 µs |
 
-One run of each, 15 seconds apiece, about 2000 transforms per length.
-Repeats land within a few percent, and the shortest lengths vary most:
-a 256-point transform is a couple of microseconds, which is close
-enough to the clock and the cache to move around.
+One run of each, 15 seconds apiece, about 2000 transforms per length,
+on a fixed cosine. Repeats land within a few percent, and the shortest
+lengths vary most: a 256-point transform is a couple of microseconds,
+which is close enough to the clock and the cache to move around.
 
 On one thread it is roughly `N log N`, as it should be, and cheap
 enough that the length is chosen by what the analysis needs rather
 than by what the deadline allows: even 4096 points every block leaves
 96 % of it. For scale, that run's whole audio thread — passthrough,
 the rotating measurement and a 1024-point analysis of the input —
-reads 5.9 % on Bela's own monitoring.
+reads 5.8 % on Bela's own monitoring.
 
 **Four threads transforming at once cost about twice as much each**,
-not the same each: 1024 points goes from 10.6 µs to 19.0 µs, and 4096
-from 51.5 µs to 96.5 µs (`examples/fft.rs 4`, where every render
+not the same each: 1024 points goes from 10.4 µs to 20.4 µs, and 4096
+from 51.5 µs to 89.6 µs (`examples/fft.rs 4`, where every render
 thread runs the same rotation simultaneously). The transforms are not
 sharing anything of this crate's — each thread has its own plan and
 its own buffers — so what they contend for is memory bandwidth and
 cache. Worth knowing before budgeting: splitting a block four ways
-does not buy four times the FFT. The whole audio thread read 20.0 %
+does not buy four times the FFT. The whole audio thread read 20.1 %
 there against 5.8 % on one thread.
 
-The whole-block analysis in the same example shows it from the other
-side: the *same* 1024-point transform, run alone in `render_post`
-after the render threads have finished, takes 11.0 µs in the
-one-thread run and 19.1 µs in the four-thread one. Nothing about that
-transform changed — what changed is what went through the caches
-just before it.
-
-A 1024-point analysis of real input in the same run averaged 10.7 µs
-against the 10.6 µs of the fixed cosine, so the data makes no
-difference worth reporting.
+The example's own analysis shows the same thing from the other side,
+and on real input rather than a fixed cosine. It is a 1024-point
+transform of the audio input, run alone in `render_post` after the
+render threads have finished: **11.0 µs after a one-thread block, and
+19.1 µs after a four-thread one**. Nothing about that transform
+changed between the two — not its length, not its data, not what else
+was running at the time, since the render threads are done — so what
+the difference measures is what went through the caches just before
+it. Against the 10.4 µs the table reports for the same length on one
+thread, real input costs no more than the cosine does.
 
 ### The round trip
 
