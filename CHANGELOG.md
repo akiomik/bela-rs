@@ -10,6 +10,37 @@ and this project adheres to
 
 ### Added
 
+- `RealFft`, `FftLength` and `FftBin`: a real-to-complex FFT and its
+  inverse, over the NE10 declarations added below. A plan is built in
+  `setup` — the callback that can still refuse a run — and moved into
+  the render state, one per render thread, because the scratch buffer
+  a transform writes through lives inside the plan. `forward` and
+  `inverse` allocate nothing, take exact-length buffers (`new_signal`
+  and `new_spectrum` make ones that fit), and leave both buffers
+  untouched when they refuse one. `bela/examples/fft.rs` analyses the
+  input and measures what the transform costs.
+
+  Two things about it are measurements rather than choices, and
+  [docs/fft.md](docs/fft.md) records them:
+
+  - **The shortest length is 8, not 2.** NE10 plans for 2 and 4 points
+    and then writes outside every buffer it is given, so `FftLength`
+    refuses them — which also makes `FftLength::rounded_up` part
+    company with Bela's `Fft::roundUpToPowerOfTwo`, that one answering
+    2.
+  - **A transform of 1024 points costs about 11 µs** on a Bela Gem, or
+    0.7 % of a 64-frame block at 44.1 kHz; 4096 points cost 51 µs. Four
+    render threads transforming at once cost about twice that each,
+    which is memory bandwidth rather than anything this crate shares.
+
+  `forward` and `inverse` take their inputs by `&mut` even though both
+  were measured to leave them alone: NE10's parameters are not
+  `const`, and soundness should not rest on the behaviour of a library
+  a board image can rebuild. The scaling is this crate's contract
+  rather than the backend's — an unscaled forward, an inverse that
+  restores the original amplitudes — which NE10 already does, so it
+  costs nothing to promise.
+
 - `bela-sys` declares NE10's real-to-complex FFT: the four
   `ne10_fft_*_float32` functions and `ne10_fft_cpx_float32_t`, in
   `src/ne10.rs`. This is the library Bela's own `Fft` class calls,

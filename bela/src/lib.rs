@@ -89,6 +89,15 @@
 //! [`MidiOutput::send`](MidiOutput::send) from
 //! [`cleanup`](BelaApplication::cleanup).
 //!
+//! Spectra come from [`RealFft`], a plan of one [`FftLength`] built in
+//! `setup` — where a failure can still be reported — and moved into
+//! the render state, one per thread. Transforming allocates nothing:
+//! [`forward`](RealFft::forward) writes [`FftBin`]s a render callback
+//! can read, and [`inverse`](RealFft::inverse) takes them back to
+//! samples with the scaling already applied. On a Bela Gem a
+//! 1024-point transform costs about 11 µs, which `docs/fft.md`
+//! measures alongside why the shortest length this crate offers is 8.
+//!
 //! Debugging output from the audio thread goes through
 //! [`rt_println!`], which formats into a fixed-size stack buffer and
 //! hands it to Bela's real-time print function — `println!` allocates
@@ -159,6 +168,7 @@ mod cmdline;
 mod context;
 mod cpu;
 mod error;
+mod fft;
 mod hardware;
 mod level;
 mod midi;
@@ -179,6 +189,7 @@ pub use context::{
 };
 pub use cpu::{CpuSection, CpuTimer, CpuUsage, MAX_MONITORED_PERIOD_SIZE};
 pub use error::Error;
+pub use fft::{FftBin, FftLength, RealFft};
 pub use hardware::{Board, DetectMode, Version};
 pub use level::{Channel, MAX_DECIBELS};
 pub use midi::{

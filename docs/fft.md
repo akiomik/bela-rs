@@ -226,16 +226,86 @@ caller owns. 65536 is the top of what was swept and what
 `FftLength::MAX` will be set from; both are decisions recorded against
 this measurement rather than limits NE10 states.
 
-### Still to measure
+### What a transform costs
 
-What a transform costs on the audio thread, per length, with
-`CpuSection` from inside `render`. That one needs an audio system, so
-it belongs with the safe API rather than with this probe.
+Measured 2026-09-07 by `bela/examples/fft.rs`, which times each
+transform inside `render` with a `CpuTimer` and rotates through the
+lengths one per block. A Bela Gem Stereo at 44.1 kHz with a 64-frame
+period, so the block deadline is 1.45 ms:
+
+| Length | One render thread | Of one block | Four render threads, each transforming |
+|---|---|---|---|
+| 256 | 2.9 µs | 0.2 % | 7.9 µs |
+| 512 | 5.2 µs | 0.4 % | 11.2 µs |
+| 1024 | 10.6 µs | 0.7 % | 19.0 µs |
+| 2048 | 22.2 µs | 1.5 % | 42.9 µs |
+| 4096 | 51.5 µs | 3.5 % | 96.5 µs |
+
+On one thread it is roughly `N log N`, as it should be, and cheap
+enough that the length is chosen by what the analysis needs rather
+than by what the deadline allows: even 4096 points every block leaves
+96 % of it. For scale, that run's whole audio thread — passthrough,
+the rotating measurement and a 1024-point analysis of the input —
+reads 5.9 % on Bela's own monitoring.
+
+**Four threads transforming at once cost about twice as much each**,
+not the same each: 1024 points goes from 10.6 µs to 19.0 µs, and 4096
+from 51.5 µs to 96.5 µs (`examples/fft.rs 4`, where every render
+thread runs the same rotation simultaneously). The transforms are not
+sharing anything of this crate's — each thread has its own plan and
+its own buffers — so what they contend for is memory bandwidth and
+cache. Worth knowing before budgeting: splitting a block four ways
+does not buy four times the FFT. The whole audio thread read 20.0 %
+there against 5.9 % on one thread.
+
+A 1024-point analysis of real input in the same run averaged 10.7 µs
+against the 10.6 µs of the fixed cosine, so the data makes no
+difference worth reporting.
+
+### The round trip
+
+The same example transforms a cosine and transforms it back in
+`setup`, and reports the worst difference: **2.98e-7**, which is
+rounding. That is the scaling contract holding on the board — an
+unscaled forward, an inverse that restores the original amplitudes —
+without this crate applying a factor of its own.
+
+## The safe API
+
+`bela` wraps the above as three types, each shaped by an answer:
+
+- **`FftLength`** holds a power of two from 8 to 65536. The floor is
+  the measurement: 2 and 4 are powers of two NE10 will plan for and
+  cannot transform without writing outside the caller's buffers.
+  `FftLength::rounded_up` therefore parts company with Bela's
+  `Fft::roundUpToPowerOfTwo`, which answers 2.
+- **`FftBin`** is `#[repr(C)] { re: f32, im: f32 }`, NE10's own layout,
+  so a spectrum is handed to the transform as it stands.
+- **`RealFft`** is one plan: `new` allocates and can fail, `forward`
+  and `inverse` allocate nothing and take `&mut self`, because the
+  scratch buffer they write through lives in the plan. One per render
+  thread, built in `setup` — the only callback that can refuse a run —
+  and moved into the render state.
+
+Two things the measurements did *not* change:
+
+- **The transforms take their inputs by `&mut`.** Both were measured
+  to leave the input alone, so the API could have taken `&[f32]` and
+  `&[FftBin]`. It does not, because that would make soundness rest on
+  the behaviour of a library that can be rebuilt under a new board
+  image: NE10's parameters are not `const`, and a transform is
+  entitled to use its input as scratch. What the measurement buys is
+  the documentation — a caller is told the values do survive on this
+  build — rather than the signature.
+- **The scaling is the crate's contract, not NE10's.** `forward` is
+  unscaled and `inverse` restores the original amplitudes. NE10
+  already applies the `1/N`, so this costs nothing here; if a future
+  build stopped, `inverse` would apply it and callers would see no
+  difference.
 
 ## Status
 
-The safe API (`FftLength`, `FftBin`, `RealFft`) is issue #138. This
-document and the `bela-sys` layer are its first step: the declarations,
-the ABI checks, the probe — and now the answers the probe gave, which
-are what the API is shaped against. `FftLength::MIN` is 8 because of
-them.
+Complete for the real transform: `bela-sys` declares it, `bela` wraps
+it, and every question in this document has been answered on a board.
+Complex-to-complex transforms, the fixed-point ones, and windowing
+remain out of scope — a wrapper crate rather than a DSP library.

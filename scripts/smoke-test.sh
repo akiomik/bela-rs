@@ -31,7 +31,7 @@ REMOTE_DIR="/tmp/bela-rs-smoke"
 # run and exits, so it is driven separately below rather than run for
 # the duration. Neither is `parallel`, which is run once per thread
 # count.
-EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line levels midi"
+EXAMPLES="print sine passthrough aux_task task_lifecycle cpu command_line levels midi fft"
 # Thread counts `parallel` is run at, lowest first: the last one has to
 # spread the same work over more cores than the first.
 THREAD_COUNTS="1 2 4"

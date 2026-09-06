@@ -226,6 +226,58 @@ pub enum Error {
     /// leaves the output stream misaligned for the rest of the run, so
     /// it is refused instead.
     MidiThread,
+    /// This build has no NE10, so no FFT can be planned.
+    ///
+    /// Off the device target only, where the library is not linked.
+    /// Says nothing about the length or the board: a device build
+    /// never sees it.
+    FftUnavailable,
+    /// NE10 declined to build a plan of the contained length.
+    ///
+    /// An allocation failure, since the length reaching it is already
+    /// one it takes — [`FftLength`](crate::FftLength) is what rules
+    /// the rest out. The length is carried because `?` is where it
+    /// would otherwise be lost.
+    FftCreate {
+        /// The transform length that was asked for.
+        length: usize,
+    },
+    /// A transform was given a signal buffer of the wrong length.
+    ///
+    /// Exact, not "at least": a longer buffer is refused too, because
+    /// a caller who sized one differently meant something by it. The
+    /// call did nothing, and both buffers are as they were.
+    FftSignalLen {
+        /// What the plan transforms:
+        /// [`RealFft::length`](crate::RealFft::length).
+        expected: usize,
+        /// What arrived.
+        actual: usize,
+    },
+    /// A transform was given a spectrum buffer of the wrong length.
+    ///
+    /// Told apart from [`FftSignalLen`](Self::FftSignalLen) because
+    /// the two are recovered from differently — one resizes a window,
+    /// the other a spectrum — and a caller that wants to tell them
+    /// apart should not have to compare strings to do it.
+    FftSpectrumLen {
+        /// What the plan produces:
+        /// [`RealFft::spectrum_len`](crate::RealFft::spectrum_len).
+        expected: usize,
+        /// What arrived.
+        actual: usize,
+    },
+    /// A transform length that is not one this crate supports.
+    ///
+    /// What [`FftLength::try_from`](crate::FftLength) answers with;
+    /// [`FftLength::new`](crate::FftLength::new) says the same thing
+    /// with [`None`]. A power of two from 8 to 65536 is the range, and
+    /// the bottom of it is where NE10 stops writing inside the buffers
+    /// it is given rather than a matter of taste.
+    FftLength {
+        /// What was given.
+        value: usize,
+    },
     /// A level or gain was not a number of decibels libbela can convert
     /// into register values: not finite, or larger in magnitude than
     /// [`MAX_DECIBELS`](crate::MAX_DECIBELS).
@@ -351,6 +403,27 @@ impl fmt::Display for Error {
                 f,
                 "MIDI can only be sent from the thread that opened the port; a write from any \
                  other thread is lost and misaligns the output stream"
+            ),
+            Self::FftUnavailable => write!(
+                f,
+                "this build has no NE10 to plan an FFT with; it is on the board"
+            ),
+            Self::FftCreate { length } => {
+                write!(f, "NE10 could not allocate a plan of {length} points")
+            }
+            Self::FftSignalLen { expected, actual } => write!(
+                f,
+                "the signal is {actual} samples, and this plan transforms {expected}"
+            ),
+            Self::FftSpectrumLen { expected, actual } => write!(
+                f,
+                "the spectrum is {actual} bins, and this plan produces {expected}"
+            ),
+            Self::FftLength { value } => write!(
+                f,
+                "{value} is not a transform length; it has to be a power of two from {min} to {max}",
+                min = crate::FftLength::MIN,
+                max = crate::FftLength::MAX
             ),
             Self::Decibels => write!(
                 f,
