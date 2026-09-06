@@ -271,8 +271,16 @@ render threads have finished: **11.0 µs after a one-thread block, and
 changed between the two — not its length, not its data, not what else
 was running at the time, since the render threads are done — so what
 the difference measures is what went through the caches just before
-it. Against the 10.4 µs the table reports for the same length on one
-thread, real input costs no more than the cosine does.
+it.
+
+Which is also why this one is not a measurement of what real input
+costs. It is 11.0 µs against the table's 10.4 µs for the same length
+on one thread, but the two run at different points in the block and
+the paragraph above is about exactly that difference, so the 6 %
+between them cannot be put down to the data. What can be said is the
+direction: real input shows no sign of costing more than the fixed
+cosine, and a transform's cost should not depend on its input in any
+case.
 
 ### The round trip
 
