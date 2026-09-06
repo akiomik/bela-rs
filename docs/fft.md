@@ -75,13 +75,19 @@ cost:
   either exposes one-sample-at-a-time accessors or copies in and out
   of every transform. Calling NE10 lets a transform read the caller's
   own window where it already is.
-- **Four defects to guard.** `Fft()` (`Fft.cpp:55`) leaves `length`
+- **Three defects to guard.** `Fft()` (`Fft.cpp:55`) leaves `length`
   uninitialised (`Fft.h:66`) while `td`/`fdr` are unchecked;
   `setup` sets `length` before allocating and, on failure, leaves it
-  non-zero with null buffers (`Fft.cpp:74`, `:89-93`); `Fft(size_t)`
+  non-zero with null buffers (`Fft.cpp:74`, `:89-93`); and `Fft(size_t)`
   (`Fft.cpp:56-58`) discards `setup`'s `-1`, so `Fft x(3);` yields an
-  object with a null plan and no way to know; and `ifft()` runs the
-  inverse over the object's own spectrum, which NE10 writes into.
+  object with a null plan and no way to know.
+
+  A fourth was listed here before the probe ran: that `ifft()` corrupts
+  the object's own spectrum, because upstream's c2r assigns to
+  `fin[0]`. The board says otherwise — the inverse leaves its input
+  alone (see [the answers](#what-the-board-says-the-transforms-do)) —
+  so the claim was wrong and is withdrawn. Reading upstream is how it
+  got here; measuring is what settled it.
 
 ## What is on the board
 
@@ -214,10 +220,12 @@ Neither the headers nor Bela's `Fft` class says anything about this.
 `Fft::setup` accepts any power of two (`Fft.cpp:66-71`), and its
 frequency-domain buffer is `length` complex values rather than
 `length / 2 + 1` (`Fft.cpp:77`), which is four times the room needed at
-`length = 2` — so a program using the class survives the same overrun
-by accident, on the output side, and its `ifft()` writes into a
-`length`-float buffer that the inverse overruns by 26 floats at that
-size.
+`length = 2`. That extra room absorbs the forward transform's overrun
+at those sizes; nothing absorbs the inverse's, which writes past a
+`length`-float buffer by 26 floats at 2 points. Measured through the
+class as well as through NE10: `Fft f; f.setup(2); f.fft(ones);
+f.ifft();` returns wrong values from `fdr(0)` and `td(0)`, then aborts
+in the destructor's `cleanup()` with `free(): invalid size`.
 
 **So the safe API's `FftLength::MIN` is 8**, and it is a hard floor
 rather than a preference: 2 and 4 are lengths where a wrapper cannot

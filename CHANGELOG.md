@@ -47,7 +47,7 @@ and this project adheres to
   reached directly rather than through it — that class contributes two
   `malloc`s, a power-of-two check and four unchecked accessors over
   these same calls, and wrapping it would cost a second C++ shim, an
-  LGPL 3.0 condition where NE10 is BSD-3-Clause, and four defects of
+  LGPL 3.0 condition where NE10 is BSD-3-Clause, and three defects of
   its own. The reasoning, and what the class does wrong, is in
   [docs/fft.md](docs/fft.md).
 
