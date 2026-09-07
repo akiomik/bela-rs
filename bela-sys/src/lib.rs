@@ -7,6 +7,28 @@
 //! upstream commit) with `cargo xtask bindgen`; see the crate README
 //! for how to regenerate them.
 //!
+//! It also exposes the sysfs GPIO and LED family that `Bela.h`
+//! includes from `GPIOcontrol.h`: the twelve [`gpio_*`](gpio_setup)
+//! functions and [`led_set_trigger`], with [`PIN_DIRECTION`] and
+//! [`PIN_VALUE`] for the arguments they take. It is a different
+//! mechanism from the digital channels of a [`BelaContext`] rather
+//! than a second spelling of them, and the only path here to a pin
+//! that is not one of those sixteen, or to any pin outside a render
+//! callback. It is also file I/O under `/sys/class/gpio` and
+//! `/sys/class/leds`, with a `perror` on every failure path, so it
+//! belongs in `setup`, in `cleanup` or on a thread of the program's
+//! own and never in a callback. libbela claims some of these pins
+//! for itself while a run is up; `docs/board-facts.md` in the
+//! repository records which, and `docs/scope.md` records what a safe
+//! wrapper over these is still waiting on.
+//!
+//! Two things in the family are easy to read wrong.
+//! `gpio_fd_open`'s `writeFlag` is the second argument of `open(2)`
+//! rather than a boolean — `gpio_setup` passes `O_RDWR` for it — and
+//! the two functions that open a descriptor, `gpio_fd_open` and
+//! `gpio_setup`, return it, where the rest of the family returns `0`
+//! for success and a negative value for failure.
+//!
 //! Two things here are neither the core API nor generated, and they
 //! are two different kinds of thing:
 //!

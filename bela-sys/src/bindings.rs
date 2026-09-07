@@ -107,6 +107,74 @@ pub const BelaHwDetectMode_User: BelaHwDetectMode = 3;
 pub const BelaHwDetectMode_UserOnly: BelaHwDetectMode = 4;
 #[doc = " Arguments to be passed to Bela_detectHw()"]
 pub type BelaHwDetectMode = ::core::ffi::c_uint;
+pub const INPUT_PIN: PIN_DIRECTION = 0;
+pub const OUTPUT_PIN: PIN_DIRECTION = 1;
+pub type PIN_DIRECTION = ::core::ffi::c_uint;
+pub const LOW: PIN_VALUE = 0;
+pub const HIGH: PIN_VALUE = 1;
+pub type PIN_VALUE = ::core::ffi::c_uint;
+unsafe extern "C" {
+    #[doc = " gpio_functions"]
+    pub fn gpio_setup(
+        gpio: ::core::ffi::c_uint,
+        out_flag: ::core::ffi::c_int,
+    ) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_export(gpio: ::core::ffi::c_uint) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_unexport(gpio: ::core::ffi::c_uint) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_set_dir(
+        gpio: ::core::ffi::c_uint,
+        out_flag: ::core::ffi::c_int,
+    ) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_set_value(
+        gpio: ::core::ffi::c_uint,
+        value: ::core::ffi::c_int,
+    ) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_get_value(
+        gpio: ::core::ffi::c_uint,
+        value: *mut ::core::ffi::c_uint,
+    ) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_set_edge(
+        gpio: ::core::ffi::c_uint,
+        edge: *mut ::core::ffi::c_char,
+    ) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_fd_open(
+        gpio: ::core::ffi::c_uint,
+        writeFlag: ::core::ffi::c_int,
+    ) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_fd_close(fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_write(fd: ::core::ffi::c_int, value: ::core::ffi::c_int) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_read(fd: ::core::ffi::c_int, value: *mut ::core::ffi::c_uint)
+    -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn gpio_dismiss(fd: ::core::ffi::c_int, gpio: ::core::ffi::c_uint) -> ::core::ffi::c_int;
+}
+unsafe extern "C" {
+    pub fn led_set_trigger(
+        lednum: ::core::ffi::c_uint,
+        trigger: *const ::core::ffi::c_char,
+    ) -> ::core::ffi::c_int;
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct option {

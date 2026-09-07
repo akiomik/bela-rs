@@ -86,13 +86,12 @@ for the libc headers `Bela.h` includes.
 
 The bindgen options live in `xtask/src/generate.rs`, and two of them
 decide what `bindings.rs` holds. The allowlist takes the functions
-named `Bela_*` and `rt_*` and nothing else, so what the headers declare
-under another name is absent — the `gpio_*` family `Bela.h` pulls in
-from `GPIOcontrol.h` among it
-([#156](https://github.com/akiomik/bela-rs/issues/156)). A blocklist
-then removes six the allowlist had taken: the `FILE*` and `va_list`
-printf variants, which would drag glibc internals into the bindings and
-are not usable from Rust anyway.
+named `Bela_*` and `rt_*`, and the sysfs GPIO and LED family —
+`gpio_*` and `led_set_trigger`, which `Bela.h` pulls in from
+`GPIOcontrol.h` — so what the headers declare under any other name is
+absent. A blocklist then removes six the allowlist had taken: the
+`FILE*` and `va_list` printf variants, which would drag glibc
+internals into the bindings and are not usable from Rust anyway.
 [docs/scope.md](../docs/scope.md) lists the rest.
 
 ## The MIDI shim
