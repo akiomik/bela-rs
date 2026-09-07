@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-07
+
 ### Added
 
 - `RealFft`, `FftLength` and `FftBin`: a real-to-complex FFT and its
@@ -1058,7 +1060,8 @@ and this project adheres to
 - Dual MIT / Apache-2.0 licensing
 - A draft of the cross-compilation setup in `docs/cross-compile.md`
 
-[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/akiomik/bela-rs/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/akiomik/bela-rs/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/akiomik/bela-rs/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/akiomik/bela-rs/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/akiomik/bela-rs/compare/v0.5.0...v0.5.1
