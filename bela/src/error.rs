@@ -255,6 +255,11 @@ pub enum Error {
     /// Off the device target only, where the library is not linked.
     /// Says nothing about the length or the board: a device build
     /// never sees it.
+    ///
+    /// Meeting this while trying to test DSP on a laptop is expected,
+    /// and [`RealFft`](crate::RealFft) documents the way around it: a
+    /// trait the program owns, with a host implementation beside the
+    /// device one.
     FftUnavailable,
     /// NE10 declined to build a plan of the contained length.
     ///
