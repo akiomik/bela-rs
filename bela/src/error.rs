@@ -36,12 +36,12 @@ pub enum Error {
     CallbackFaults(u32),
     /// An auxiliary task name contained a NUL byte.
     TaskName,
-    /// This build has no audio system, so no auxiliary task can be
+    /// This build has no `libbela`, so no auxiliary task can be
     /// created.
     ///
-    /// Off the device target only, where there is no libbela to hand
-    /// the task to. Says nothing about the name or the board: a device
-    /// build never sees it.
+    /// Off the device target only, where the library is not linked.
+    /// Says nothing about the name or the board: a device build never
+    /// sees it.
     TaskUnavailable,
     /// `Bela_createAuxiliaryTask` failed.
     ///
@@ -330,8 +330,7 @@ impl fmt::Display for Error {
             Self::TaskName => write!(f, "the auxiliary task name contains a NUL byte"),
             Self::TaskUnavailable => write!(
                 f,
-                "this build has no audio system to create an auxiliary task in; \
-                 it is on the board"
+                "this build has no libbela to create an auxiliary task in; it is on the board"
             ),
             Self::TaskCreate => write!(f, "Bela_createAuxiliaryTask failed"),
             Self::TaskCreateWhileStopping => write!(

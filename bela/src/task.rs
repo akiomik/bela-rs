@@ -255,11 +255,11 @@ impl AuxiliaryTask {
     /// inside that teardown — and [`Error::TaskCreate`] when Bela
     /// declined to create the task.
     ///
-    /// Off the device target the last of those is
-    /// [`Error::TaskUnavailable`] instead: there is no libbela to hand
-    /// a task to, which is not a board refusing one. The two checks
-    /// ahead of it still run, so a NUL byte in `name` and a teardown
-    /// under way are reported there as they are on a board.
+    /// Off the device target [`Error::TaskUnavailable`] takes the place
+    /// of [`Error::TaskCreate`]: there is no libbela to hand a task to,
+    /// which is not a board refusing one. The two checks ahead of it
+    /// still run, so a NUL byte in `name` and a teardown under way are
+    /// reported there as they are on a board.
     pub fn new<F>(name: &str, priority: Priority, callback: F) -> Result<Self, Error>
     where
         F: FnMut() + Send + 'static,
@@ -566,7 +566,7 @@ mod tests {
     /// `Error`'s `Display` rather than anything a task does, so it
     /// holds on either target.
     #[test]
-    fn a_missing_audio_system_and_a_refused_task_do_not_read_alike() {
+    fn a_missing_library_and_a_refused_task_do_not_read_alike() {
         // What splitting the two variants is for: a program that
         // prints the error tells its reader which of them happened.
         // Both sides are asserted, since `assert_ne!` alone would
@@ -576,12 +576,12 @@ mod tests {
         let refused = Error::TaskCreate.to_string();
         assert_ne!(unavailable, refused);
         assert!(
-            unavailable.contains("no audio system"),
-            "a build without one should say so: {unavailable}"
+            unavailable.contains("libbela"),
+            "a build with no library should name the library: {unavailable}"
         );
         assert!(
-            !refused.contains("no audio system"),
-            "a board refusing a task should not read like a missing audio system: {refused}"
+            !refused.contains("libbela"),
+            "a board refusing a task should not read like a missing library: {refused}"
         );
     }
 

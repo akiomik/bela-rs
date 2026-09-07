@@ -99,24 +99,25 @@ and this project adheres to
 
   Nothing on a board changed. Off the device target `MidiInput::open`
   returns `MidiUnavailable` where it returned `MidiCreate`, and
-  `MidiOutput::open` returns it too — where it used to get as far as
-  the drain's auxiliary task and report `Error::TaskCreate`, which said
-  `Bela_createAuxiliaryTask failed` about a call no host build makes.
-  Both MIDI constructors now say the same thing about the same build.
-  Code matching either of those to detect "no MIDI on this target"
-  stops matching, on the host, silently. Adding the variant is
-  additive on a `#[non_exhaustive]` enum; this entry is about the
-  behaviour, which is a minor bump either way. See "Minor or patch: the
-  drop-in test" in docs/release.md.
+  `MidiOutput::open` returns it too — where it used to get as far as the
+  drain's auxiliary task and report `Error::TaskCreate`, which said
+  `Bela_createAuxiliaryTask failed` about a call no host build makes —
+  the same conflation the entry below takes out of tasks, where that
+  answer is now `Error::TaskUnavailable`. Both MIDI constructors now say
+  the same thing about the same build. Code matching either of those to
+  detect "no MIDI on this target" stops matching, on the host, silently.
+  Adding the variant is additive on a `#[non_exhaustive]` enum; this
+  entry is about the behaviour, which is a minor bump either way. See
+  "Minor or patch: the drop-in test" in docs/release.md.
 
-- Breaking: `Error::TaskUnavailable` is what a build with no audio
-  system in it now says when a task cannot be created, and
-  `Error::TaskCreate` is left meaning only what its message says —
-  `Bela_createAuxiliaryTask failed`, a board declining one. The two
-  were one variant, so a caller matching `Err(Error::TaskCreate)` could
-  not tell a board that refused from a host build with nothing to ask,
-  and off the device target the message named a call that build never
-  makes. `AuxiliaryTask::new` is where it shows; the name check and the
+- Breaking: `Error::TaskUnavailable` is what a build with no libbela in
+  it now says when a task cannot be created, and `Error::TaskCreate` is
+  left meaning only what its message says — a board declining one with
+  `Bela_createAuxiliaryTask failed`. The two were one variant, so a
+  caller matching `Err(Error::TaskCreate)` could not tell a board that
+  refused from a host build with nothing to ask, and off the device
+  target the message named a call that build never makes.
+  `AuxiliaryTask::new` is where it shows; the name check and the
   teardown check ahead of it are unchanged, so a NUL byte in the name
   and an audio system already stopping are reported off the device
   target as they are on a board.
