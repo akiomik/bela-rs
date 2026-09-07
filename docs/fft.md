@@ -343,6 +343,89 @@ Two things the measurements did *not* change:
   build stopped, `inverse` would apply it and callers would see no
   difference.
 
+## Testing DSP off the board
+
+`RealFft::new` returns `Error::FftUnavailable` off the device target,
+because NE10 is on the board and nowhere else. So the one part of a
+Bela program that is pure arithmetic — the analysis built on the
+transform, its bin selection, its thresholds, its spectral gain —
+cannot be reached by `cargo test` on a laptop through this crate
+alone.
+
+There is no `fft-host` feature to fix that, and the omission is
+deliberate. A second backend inside this crate would verify nothing
+that has gone wrong on this path: not the length floor, which exists
+because NE10 writes outside its buffers below 8 points; not `FftBin`'s
+layout against `ne10_fft_cpx_float32_t`; not the plan owning the
+scratch the transforms write through; not where the `1/N` is applied.
+It would verify a program's own arithmetic, which a program can verify
+for itself — and it would put this crate's name on numbers that are
+not the board's, which is how a golden-value test against a laptop
+gets written.
+
+What works instead is a trait the program owns, with one
+implementation per backend. **The trait belongs in the program**, and
+that is the only arrangement that does not break down: in `bela` it
+would be public API owed a contract over those same numbers, and in a
+host-side crate it would put a device build's user code behind a
+host-side dependency.
+
+[`bela/tests/off_board_fft.rs`](../bela/tests/off_board_fft.rs) is a
+worked version — the trait, a device implementation over `RealFft`, a
+host implementation over [`realfft`](https://crates.io/crates/realfft),
+and tests that run against whichever backend the target has. It is a
+test rather than a snippet on purpose: `clippy-aarch64` builds
+`--all-targets` for the device target, so the device half is
+type-checked on every push. The way a two-implementation trait rots is
+that the host side is edited and the device side drifts out of
+signature, and nothing but a compiler catches that.
+
+### What the two implementations have to agree on
+
+- **The scaling, which is the program's contract rather than either
+  backend's.** `forward` unscaled, `inverse` restoring the original
+  amplitudes. NE10 applies the `1/N` itself; `realfft` "does not
+  normalize the output of either forward or inverse FFT", so the host
+  side applies it by hand. That disagreement is the reason to build
+  the example on `realfft` rather than on fifteen lines of DFT: an
+  implementation whose author picks the convention cannot demonstrate
+  the convention being kept.
+- **The length range.** `FftLength` already refuses what NE10 cannot
+  transform safely, and the host side has no reason of its own to
+  refuse 2 and 4 points — it should refuse them anyway. A program that
+  runs on a laptop and then fails on the board is worse than one that
+  refuses the same lengths everywhere.
+- **What a refusal does.** `RealFft::forward` and `inverse` check the
+  lengths in argument order and leave both buffers untouched when they
+  refuse. An adapter that checks later, or that writes before
+  refusing, is a different contract on each target.
+- **The endpoint bins.** `realfft`'s inverse answers a spectrum whose
+  DC or Nyquist bin has a non-zero imaginary part with
+  `FftError::InputValues` — *after* transforming it and writing the
+  output, to say the result may not be right. NE10 says nothing at
+  all. Neither is something a program can act on, so the worked
+  version checks those two bins up front on **both** backends and
+  refuses before transforming. The divergence disappears and the
+  promise above survives.
+- **That both transforms may consume their input.** The board's build
+  leaves them alone and that is measured rather than promised (see
+  [the answers](#what-the-board-says-the-transforms-do)); an adapter
+  must not rely on it either, on either side.
+
+### What they cannot agree on
+
+**The results will not match bit for bit.** Different algorithms,
+different rounding, and NE10 runs `-ffast-math` code. So this is for
+exercising the DSP around the transform, not for predicting what the
+board will compute.
+
+Concretely: **do not write a golden-value test against the host
+backend.** A recorded spectrum from `realfft` is an assertion about
+`realfft`'s arithmetic wearing this crate's name. Test what the DSP
+means — a round trip within a tolerance, a bin that should be empty
+being empty, a partial that should survive a filter surviving it —
+and leave the board's exact numbers to the board.
+
 ## Status
 
 Complete for the real transform: `bela-sys` declares it, `bela` wraps

@@ -8,6 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Documentation for testing DSP built on `RealFft` without a board.
+  `RealFft::new` refuses off the device target, so the spectral
+  arithmetic a program builds on it could not be reached by `cargo
+  test` on a laptop, and there is deliberately no host FFT backend in
+  this crate: one would verify a program's own arithmetic while
+  putting this crate's name on numbers that are not the board's.
+
+  What works instead is a trait the program owns, with one
+  implementation over `RealFft` and another over a host FFT crate.
+  `bela/tests/off_board_fft.rs` is a worked version that compiles and
+  runs — the device half is type-checked by the aarch64 Clippy job, so
+  the two implementations cannot drift apart unnoticed — and
+  [docs/fft.md](docs/fft.md#testing-dsp-off-the-board) records what the
+  two backends have to agree on: the scaling, which is the program's
+  contract rather than either backend's; the length range; what a
+  refusal does to the buffers; and the endpoint bins, where `realfft`
+  reports a problem after transforming and NE10 reports nothing.
+
+  It also records the one thing they cannot agree on. The results do
+  not match bit for bit, so a host test asserts what the DSP means
+  within a tolerance and never a recorded value.
+
+  `RealFft` and `Error::FftUnavailable` point at the guide. No API,
+  behaviour or build requirement changes.
+
 ## [0.8.0] - 2026-09-07
 
 ### Added

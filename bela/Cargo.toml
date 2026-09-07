@@ -36,3 +36,16 @@ bela-sys = { path = "../bela-sys", version = "0.8.0" }
 # Same condition as the `bela_device` cfg emitted by build.rs.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
 libc = "0.2"
+
+# The negation of that condition, for the same reason it is spelled out
+# rather than shared: a `[target.'cfg(...)']` table cannot see a cfg a
+# build script emits.
+#
+# `tests/off_board_fft.rs` needs a transform where NE10 is not, and a
+# device build must not acquire one — the board has NE10, and a
+# dependency that unified into a device build would be a second FFT
+# nobody asked for. A dev-dependency also keeps this out of the public
+# contract: it constrains no dependent's resolution, and the committed
+# `Cargo.lock` with Dependabot is what governs it here.
+[target.'cfg(not(all(target_arch = "aarch64", target_os = "linux")))'.dev-dependencies]
+realfft = "3.5"

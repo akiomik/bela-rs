@@ -256,6 +256,39 @@ impl From<[f32; 2]> for FftBin {
 /// Dropping one frees; like creating one, that is not work for the
 /// audio thread.
 ///
+/// # Testing DSP off the board
+///
+/// [`new`](Self::new) refuses off the device target, so the spectral
+/// arithmetic a program builds on this type cannot be reached by
+/// `cargo test` on a laptop through this type alone. There is no host
+/// backend here, deliberately: one would verify a program's own
+/// arithmetic — which the program can verify for itself — while
+/// putting this crate's name on numbers that are not the board's.
+///
+/// What works is a trait the program owns, with one implementation
+/// over this type and another over a host FFT crate. Two things that
+/// trait has to carry, because no backend carries them:
+///
+/// - **The scaling is the program's contract.** [`forward`] is
+///   unscaled and [`inverse`] restores the original amplitudes,
+///   whoever applies the `1 / length`. NE10 applies it itself, and a
+///   host crate may well not, in which case the host implementation
+///   applies it by hand.
+/// - **The results will not match bit for bit** — different
+///   algorithms, different rounding, and NE10 runs `-ffast-math`
+///   code. Host tests are for exercising the DSP around the
+///   transform, not for predicting the board's output, so they assert
+///   what the DSP means within a tolerance and never a recorded
+///   value.
+///
+/// [`bela/tests/off_board_fft.rs`][worked] is a worked version, and
+/// [docs/fft.md][guide] explains why it is shaped that way.
+///
+/// [`forward`]: Self::forward
+/// [`inverse`]: Self::inverse
+/// [worked]: https://github.com/akiomik/bela-rs/blob/main/bela/tests/off_board_fft.rs
+/// [guide]: https://github.com/akiomik/bela-rs/blob/main/docs/fft.md#testing-dsp-off-the-board
+///
 /// # Example
 ///
 /// ```no_run

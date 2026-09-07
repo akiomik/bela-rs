@@ -105,6 +105,29 @@ See [`examples/`](examples) for runnable versions and the
 [repository README](../README.md) for project status and
 cross-compilation instructions.
 
+## Testing DSP off the board
+
+`RealFft::new` returns `Error::FftUnavailable` off the device target,
+because NE10 is on the board and nowhere else. This crate ships no host
+FFT backend, deliberately — one would verify a program's own arithmetic
+while putting this crate's name on numbers that are not the board's.
+
+What works is a trait the program owns, with one implementation over
+`RealFft` and another over a host FFT crate. Two things that trait has
+to carry, because no backend carries them: `forward` is **unscaled**
+and `inverse` restores the original amplitudes, whoever applies the
+`1 / length`; and the two backends **will not agree bit for bit**, so
+host tests assert what the DSP means within a tolerance rather than
+recorded values.
+
+[`tests/off_board_fft.rs`](https://github.com/akiomik/bela-rs/blob/main/bela/tests/off_board_fft.rs)
+is a worked version — the trait, both implementations, and tests that
+run against whichever backend the target has.
+[docs/fft.md](https://github.com/akiomik/bela-rs/blob/main/docs/fft.md#testing-dsp-off-the-board)
+explains why it is shaped that way. Both links are absolute because
+this file is read on crates.io, where the repository around it is not
+there.
+
 ## Downstream setup
 
 Building a device binary needs three compiler-driver arguments derived
