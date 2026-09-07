@@ -6,6 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use bindgen::callbacks::ParseCallbacks;
+
 const TARGET: &str = "aarch64-unknown-linux-gnu";
 
 /// The package the generated file belongs to, and so the one whose
@@ -27,6 +29,23 @@ const BELA_DEFINES: &[&str] = &[
     "-DBELA_EVL",
     "-DNDEBUG",
 ];
+
+/// Drops one comment bindgen would otherwise attach to a function.
+///
+/// `GPIOcontrol.h` puts a banner over the block of `gpio_*`
+/// declarations — a heading for the thirteen, not a description of the
+/// first of them — and bindgen lifts it onto `gpio_setup`, which then
+/// carries `gpio_functions` as its summary line on docs.rs while its
+/// twelve neighbours carry nothing. Every other comment is passed
+/// through untouched.
+#[derive(Debug)]
+struct DropFamilyBanner;
+
+impl ParseCallbacks for DropFamilyBanner {
+    fn process_comment(&self, comment: &str) -> Option<String> {
+        comment.trim().eq("gpio_functions").then(String::new)
+    }
+}
 
 pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     let vendor = root.join("bela-sys/vendor/bela");
@@ -73,6 +92,7 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
         .blocklist_type("^__gnuc_va_list$")
         .blocklist_type("^__BindgenOpaqueArray$")
         .derive_default(true)
+        .parse_callbacks(Box::new(DropFamilyBanner))
         // Formatting is left to `cargo fmt`; see `format`.
         .formatter(bindgen::Formatter::None)
         .raw_line(format!(

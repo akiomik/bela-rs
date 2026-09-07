@@ -32,10 +32,13 @@
 //!   `gpio_set_dir(pin, OUTPUT_PIN as c_int)` is the spelling that
 //!   compiles, and so is `gpio_write(fd, HIGH as c_int)`.
 //! - **`writeFlag` is not a flag.** `gpio_fd_open`'s second argument
-//!   is the second argument of `open(2)` — `gpio_setup` passes
-//!   `O_RDWR` for it — and it and `gpio_setup` return a descriptor,
-//!   where the rest of the family returns `0` for success and a
-//!   negative value for failure.
+//!   is the second argument of `open(2)`; `gpio_setup` passes
+//!   `O_RDWR`, which is `2` on this board and on Linux generally.
+//!   This crate is `no_std` and depends on no `libc`, so the constant
+//!   is the caller's to bring — `libc::O_RDWR`, or the literal. Both
+//!   `gpio_fd_open` and `gpio_setup` return a descriptor, where the
+//!   rest of the family returns `0` for success and a negative value
+//!   for failure.
 //! - **`gpio_read` needs the descriptor rewound, and `gpio_write`
 //!   moves it.** The two share one file offset and neither resets it,
 //!   and a sysfs `value` file is two bytes — `"0\n"` or `"1\n"`. On a
