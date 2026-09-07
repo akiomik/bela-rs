@@ -52,11 +52,11 @@
 //!   writing a pin and reading it back on the descriptor `gpio_setup`
 //!   gave you does not work at all. Measured through these functions
 //!   rather than reasoned from the source — the reading it fails to
-//!   make is not a wrong one, it is none. Either way the remedy is the caller's, an `lseek`
-//!   back to 0 before each read. Both measured on a board;
-//!   `docs/board-facts.md` in the repository has the transcripts.
-//!   `gpio_get_value` has neither problem, opening and closing the
-//!   file around each reading.
+//!   make is not a wrong one, it is none. Either way the remedy is
+//!   the caller's, an `lseek` back to 0 before each read. Both are
+//!   measured on a board, and `docs/board-facts.md` in the repository
+//!   has the transcripts. `gpio_get_value` has neither problem,
+//!   opening and closing the file around each reading.
 //! - **A reading is written only on success.** `gpio_get_value` and
 //!   `gpio_read` leave their `*mut c_uint` untouched on every failure
 //!   path, so it is not sound to hand either an uninitialised
@@ -101,6 +101,17 @@
 //!   the right one on the hardware the path names — reaches no file
 //!   and comes back `-1` with a `perror`. Measured;
 //!   `docs/board-facts.md` has the inventory.
+//!
+//! All of that describes a `libbela` built with `BELA_HAS_GPIO`,
+//! which is what a Bela Gem image ships and what every measurement
+//! behind this page was taken against. Built without it,
+//! `core/GPIOcontrol.cpp:348-363` compiles all thirteen as
+//! `{ return 0; }`, and the contracts above invert rather than
+//! weaken: `gpio_setup` hands back `0`, which no caller can tell from
+//! a valid descriptor, and `gpio_read` reports the success that the
+//! rule above says means a reading was written — having written
+//! nothing. `GPIOcontrol.h` gives no sign of which of the two a
+//! program is linked against.
 //!
 //! Nor does a failure always announce itself. `gpio_setup` prints to
 //! stdout, and every function that cannot open its sysfs file calls
