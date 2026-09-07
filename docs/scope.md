@@ -13,6 +13,15 @@ listed here may be missing from [BelaPlatform/Bela] and the other way
 round. [board-facts.md](board-facts.md) records how that was
 established.
 
+Line numbers follow from that. A citation naming a file under
+`libraries/`, `include/` or `core/` is into the board's tree as
+`scripts/sync-sysroot.sh` copies it, which is git-ignored — so checking
+one takes a board and that script rather than a click, and it will not
+land on the same line in [BelaPlatform/Bela]. Citations naming a `.rs`
+file, or `Bela.h`, `Utilities.h` or `GPIOcontrol.h`, are into this
+repository; the three headers are vendored and byte-identical to the
+board's.
+
 This file follows `main`, not a release. What it calls wrapped is
 wrapped on `main` — at least what the newest published version has, and
 possibly more. [CHANGELOG.md](../CHANGELOG.md) is where a particular
@@ -60,7 +69,7 @@ Three of the 38 directories under `libraries/` are answered:
 |---|---|
 | `Midi` | Wrapped, through a C++ shim this workspace compiles. [midi.md](midi.md) records what part of it the crate uses and why output leaves `render` through a queue of the crate's own. |
 | `Fft` | Not wrapped, and will not be: the class is a C++ wrapper over NE10, and `bela-sys` declares NE10's transform directly. `RealFft` is what a program uses instead. [fft.md](fft.md). |
-| `ne10` | The real-to-complex pair only (`ne10_fft_r2c_1d_float32_neon` and its inverse, with the alloc/destroy calls around them). The forty-six others that `NE10_dsp.h` declares — the same transforms for `int16` and `int32`, complex-to-complex, the `_c` fallbacks beside the `_neon` versions, and FIR and IIR — are not, and fall under the rule above rather than under a plan. NE10's vector maths is in `NE10_math.h`, which is not vendored at all. |
+| `ne10` | The real-to-complex pair only (`ne10_fft_r2c_1d_float32_neon` and its inverse, with the alloc/destroy calls around them). The forty-six other plain declarations in `NE10_dsp.h` — the same transforms for `int16` and `int32`, complex-to-complex, the `_c` fallbacks beside the `_neon` versions, and FIR and IIR — are not, nor are the seventeen runtime-dispatch function pointers the header declares beside them, which `bela-sys` bypasses by naming the `_neon` implementations directly. All of it falls under the rule above rather than under a plan. NE10's vector maths is in `NE10_math.h`, which is not vendored at all. |
 
 ## Not written yet
 
@@ -164,7 +173,7 @@ it is the core API, and none of it changes the grouping.
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
 | `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has, and no others: `digitalRead` and `pinMode` in all four of the digital ones, `digitalWriteOnce` in `ShiftRegister`, `analogRead` in `SteppedPot`, which touches no digital pin at all — and `digitalWrite` in none of them. Those, over frame and channel counts a `RenderContext` reports, are the whole of what they ask Bela for. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
 | `UdpClient`, `UdpServer`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
-| `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. The one thing any of them takes from Bela is `WriteFile`'s overrun warning, an `rt_fprintf` on a thread that is not the audio thread — where an `eprintln!` says the same thing. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
+| `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. The one thing any of them takes from Bela is `WriteFile`'s overrun warning, an `rt_fprintf` inside `log()` (`WriteFile.cpp:277-292`) — which is to say on the audio thread, that being the method a render callback calls, and which is why it is `rt_fprintf` and not `fprintf`. A Rust program has `rt_println!` for exactly that, so this is a line the crate already covers rather than one it lacks. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
 
 The utility headers under `include/` go the same way:
@@ -283,17 +292,28 @@ The remaining 25 of the struct's 45 fields start at whatever
 Not exposed is not the same as unreachable, and the gap is wider than
 it looks. Bela's own command line is a layer above `Settings` and wins
 over it (`cmdline.rs:11-23`), so `Bela::run_with_args` and
-`Bela::new_with_args` hand it straight through — and nine of libbela's
-long options write into this list: `--mux-channels`, `--pru-number`,
-`--pru-file`, `--board`, `--codec-mode`, `--audio-expander-inputs`,
-`--audio-expander-outputs`, `--disabled-digital-channels` and
-`--line-out-level`. The crate validates two of them on the way past
+`Bela::new_with_args` hand it straight through — and eleven of the
+options libbela's own usage text lists, the text
+[`print_usage`](../bela/src/cmdline.rs) prints, write into this list:
+`--mux-channels`, `--pru-number`, `--pru-file`, `--board`,
+`--codec-mode`, `--audio-expander-inputs`, `--audio-expander-outputs`,
+`--disabled-digital-channels`, and the three that fill the gain arrays,
+`--line-out-level`, `--hp-level` and `--audio-input-gain`
+(`RTAudioCommandLine.cpp:306-320,505-521`). `--adc-level` and the two
+`--pga-gain-*` are accepted and discarded with a deprecation warning,
+which is the command line agreeing with the table above about which
+spellings are legacy. The crate validates two of them on the way past
 (`settings.rs:895-916`) precisely because a program cannot have set
-them itself; the other seven arrive unexamined. What arriving amounts
-to varies — [board-facts.md](board-facts.md) measured `--board
-BelaMini` on a Gem being logged as requested and then ignored in favour
-of the board libbela detected — but that is libbela's doing, not this
-crate's. What is missing for the rest is a way for the program to
+them itself; the other nine arrive unexamined. What arriving amounts
+to varies, and five of the nine have been run on a board:
+[board-facts.md](board-facts.md) records `--board BelaMini` being
+logged as requested and then ignored in favour of the board libbela
+detected, `--codec-mode garbage` and `--disabled-digital-channels
+65535` doing nothing visible, and `--pru-number 5` and `--pru-file
+/nonexistent` failing in `Bela_initAudio` and `Bela_startAudio`. That
+range — silently ignored, silently accepted, or fatal — is libbela's
+doing rather than this crate's, which is the other half of why the two
+the crate does check are checked. What is missing for the rest is a way for the program to
 state a value, not a way for one to arrive. The escape hatch for that
 is `Settings::apply_to` on a `BelaInitSettings` of the caller's own,
 with `Bela_initAudio` driven by hand:
@@ -305,10 +325,13 @@ with `Bela_initAudio` driven by hand:
   `dacLevel`, `adcLevel`, `headphoneLevel` and `pgaGain`. That the
   arrays are absent is argued rather than overlooked, in `level.rs`'s
   own documentation and measured in
-  [board-facts.md](board-facts.md): `Bela_initAudio` applies each array
-  by calling the very functions `Bela::set_line_out_level` and its
-  siblings wrap, and the codec writes its registers only once audio
-  starts, so a call between `Bela::new` and `Bela::start` reaches the
+  [board-facts.md](board-facts.md): `Bela_initAudio` applies three of the four
+  arrays by calling the very functions `Bela::set_line_out_level` and
+  its siblings wrap, and the fourth, `adcGains`, by calling
+  `Bela_setAdcLevel`, which the table above lists as unwrapped and
+  which ends in the same `setInputGain` anyway
+  (`RTAudio.cpp:737-746`). The codec writes its registers only once
+  audio starts, so a call between `Bela::new` and `Bela::start` reaches the
   hardware in the same state and at the same moment. There is nothing
   left for a setting to carry but a second way to say it.
 - `interleave` — which the accessors nonetheless assume the value of,
