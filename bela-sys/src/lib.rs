@@ -24,7 +24,7 @@
 //! which, and `docs/scope.md` records what a safe wrapper over these
 //! is still waiting on.
 //!
-//! Eight things about the family are easy to get wrong:
+//! Nine things about the family are easy to get wrong:
 //!
 //! - **The constants are the wrong integer type.** [`PIN_DIRECTION`]
 //!   and [`PIN_VALUE`] name the values its arguments take, but they
@@ -79,12 +79,13 @@
 //!   as readily on a pin somebody else had already exported. So the
 //!   cleanup that looks obvious here is the same call that takes
 //!   libbela's pin away from a run. Skipping it instead leaves the
-//!   pin in `/sys/class/gpio` after the process exits. One process
-//!   does not get that success: the test is `if(fd > 0)`, so a
-//!   program whose standard input is closed can be handed descriptor
-//!   0 by the probe, miss the fast path, leak that descriptor and
-//!   fail the export with `EBUSY` — reporting failure for a pin that
-//!   is exported and perfectly usable.
+//!   pin in `/sys/class/gpio` after the process exits.
+//! - **`gpio_export` has one failure that is not one.** The fast path
+//!   above is guarded by `if(fd > 0)` rather than `>= 0`, so a program
+//!   whose standard input is closed can be handed descriptor 0 by the
+//!   probe, miss the path, leak that descriptor and fail the real
+//!   export with `EBUSY` — a failure reported for a pin that is
+//!   exported and perfectly usable.
 //! - **The two string arguments have to be NUL-terminated.**
 //!   `gpio_set_edge` and `led_set_trigger` both write `strlen(s) + 1`
 //!   bytes, so a pointer into a Rust `&str` sends `strlen` off the end
