@@ -37,8 +37,8 @@ Bela's C++ libraries fall into two groups.
 
 Some of them reach hardware, or real-time machinery, that only Bela's
 own code knows how to drive: the Trill protocol, the IDE channel the
-scope draws through, the boundary between an audio thread and an
-ordinary one. Nothing on crates.io substitutes for those. A binding is
+scope draws through, the fifo a render callback crosses to get work off
+the audio thread. Nothing on crates.io substitutes for those. A binding is
 the only way a Rust program gets them at all.
 
 The rest are ordinary code that happens to be written in C++ — a
@@ -226,10 +226,12 @@ site in `bela/src` names — nineteen of the forty-three:
 
 ### Not bound at all
 
-Forty-four *function declarations* in the vendored headers reach no
-binding. They fall into four groups, every member is named below, and
-only one group could be answered by changing the generator. Four
-things that are not function declarations follow them.
+Forty-four *function declarations* in the three Bela headers reach no
+binding — `NE10_dsp.h` and `NE10_types.h` are vendored too, and what
+they declare is counted with `ne10` above rather than here. They fall
+into four groups, every member is named below, and only one group could
+be answered by changing the generator. Four things that are not function
+declarations follow them.
 
 **Twenty-one are `static inline`.** bindgen skips those whatever the
 allowlist says — `wrap_static_fns` is not enabled — and `libbela`
@@ -319,9 +321,12 @@ options libbela's own usage text lists, the text
 `--disabled-digital-channels`, and the three that fill the gain arrays,
 `--line-out-level`, `--hp-level` and `--audio-input-gain`
 (`RTAudioCommandLine.cpp:306-319,505-521`). `--adc-level` and the two
-`--pga-gain-*` are accepted and discarded with a deprecation warning,
-which is the command line agreeing with the table above about which
-spellings are legacy.
+`--pga-gain-*` are accepted and discarded with a deprecation warning
+naming `--audio-input-gain` in their place, which is the command line
+making the same substitution the gain arrays below made for the
+deprecated scalars. It is not the same judgement as the function table
+above, where `Bela_setAdcLevel` is the one spelling carrying no
+deprecation note: what is legacy here is the option, not the call.
 
 Those eleven are spellings rather than gates. `--json-file` and
 `--json-string` reach the same fields by another road:
