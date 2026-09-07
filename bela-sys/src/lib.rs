@@ -9,25 +9,45 @@
 //!
 //! It also exposes the sysfs GPIO and LED family that `Bela.h`
 //! includes from `GPIOcontrol.h`: the twelve [`gpio_*`](gpio_setup)
-//! functions and [`led_set_trigger`], with [`PIN_DIRECTION`] and
-//! [`PIN_VALUE`] for the arguments they take. It is a different
-//! mechanism from the digital channels of a [`BelaContext`] rather
-//! than a second spelling of them, and the only path here to a pin
-//! that is not one of those sixteen, or to any pin outside a render
-//! callback. It is also file I/O under `/sys/class/gpio` and
-//! `/sys/class/leds`, with a `perror` on every failure path, so it
-//! belongs in `setup`, in `cleanup` or on a thread of the program's
-//! own and never in a callback. libbela claims some of these pins
-//! for itself while a run is up; `docs/board-facts.md` in the
-//! repository records which, and `docs/scope.md` records what a safe
-//! wrapper over these is still waiting on.
+//! functions and [`led_set_trigger`]. It is a different mechanism
+//! from the digital channels of a [`BelaContext`] rather than a
+//! second spelling of them, and the only path here to a pin that is
+//! not one of those sixteen — or to any pin at all outside the
+//! moment a block is being rendered. It is also file I/O under
+//! `/sys/class/gpio` and `/sys/class/leds`, most of the calls opening
+//! and closing a file to move a single bit; `gpio_read` and
+//! `gpio_write` are the pair that work on a descriptor already open.
+//! So it belongs where a Bela program puts file I/O — in `setup`, in
+//! `cleanup`, in an [`AuxiliaryTask`] or on a thread of its own — and
+//! never in `render`. libbela claims some of these pins for itself
+//! while a run is up; `docs/board-facts.md` in the repository records
+//! which, and `docs/scope.md` records what a safe wrapper over these
+//! is still waiting on.
 //!
-//! Two things in the family are easy to read wrong.
-//! `gpio_fd_open`'s `writeFlag` is the second argument of `open(2)`
-//! rather than a boolean — `gpio_setup` passes `O_RDWR` for it — and
-//! the two functions that open a descriptor, `gpio_fd_open` and
-//! `gpio_setup`, return it, where the rest of the family returns `0`
-//! for success and a negative value for failure.
+//! Three things about the family are easy to get wrong:
+//!
+//! - [`PIN_DIRECTION`] and [`PIN_VALUE`] name the values its
+//!   arguments take, but they are `c_uint` where every parameter that
+//!   consumes one is `c_int`. `gpio_set_dir(pin, OUTPUT_PIN as
+//!   c_int)` is the spelling that compiles, and so is `gpio_write(fd,
+//!   HIGH as c_int)`. The `*mut c_uint` that `gpio_get_value` and
+//!   `gpio_read` write a reading through is the one place the two
+//!   already agree.
+//! - `gpio_fd_open`'s `writeFlag` is the second argument of `open(2)`
+//!   rather than a boolean — `gpio_setup` passes `O_RDWR` for it —
+//!   and it and `gpio_setup` return a descriptor, where the rest of
+//!   the family returns `0` for success and a negative value for
+//!   failure.
+//! - `gpio_dismiss` returns `0` whatever happens. It closes the
+//!   descriptor and unexports the pin and discards what either of
+//!   them said, so a pin that failed to unexport is reported as one
+//!   that did not.
+//!
+//! Nor does a failure always announce itself. `gpio_setup` prints to
+//! stdout, and every function that cannot open its sysfs file calls
+//! `perror` — but once a file is open a failed `read` or `write` only
+//! becomes a `-1`, and `gpio_read` and `gpio_write`, which are handed
+//! a descriptor rather than opening one, never print at all.
 //!
 //! Two things here are neither the core API nor generated, and they
 //! are two different kinds of thing:

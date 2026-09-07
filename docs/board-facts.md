@@ -808,6 +808,34 @@ LED (`GPIO0_45`) at `gpio584` and the red underrun LED (`GPIO0_46`) at
   `Gpio::open(..., unexport = false)`, unlike the LEDs, so the export
   is left behind for the next program rather than cleaned up.
 
+Read again on 2026-09-08, over ssh with nothing running: no audio
+system was created, so this is the board at rest rather than during a
+run.
+
+- **At rest `/sys/class/gpio` holds `gpio586` and nothing else** —
+  that, `export`, `unexport` and the four `gpiochip*` directories. It
+  is the bullet above from the other end: a board that has run Bela is
+  left holding the stop button's export and no other pin.
+- **The two banks a `Gpio::Pin` names are `gpiochip539` and
+  `gpiochip631`.** `600000.gpio` is bank 0, base 539, 92 lines;
+  `601000.gpio` is bank 1, base 631, 52 lines. So `GPIO0_n` is sysfs
+  `539 + n` and `GPIO1_n` is `631 + n`, which is where the three
+  numbers above come from. The other two chips are `tps65219-gpio`
+  (base 512, 3 lines) and `4201000.gpio` (base 515, 24).
+- **`led_set_trigger`'s path exists on a Gem, but the numbering starts
+  at 1.** The function builds
+  `/sys/class/leds/beaglebone:green:usr%d/trigger` from its `lednum`
+  argument — `core/GPIOcontrol.cpp:332`, the `#else` of an `#ifdef
+  IS_AM62_SK` that a Gem build does not take, the `#ifdef` side being
+  a single fixed path that ignores `lednum` altogether. On this board
+  `/sys/class/leds` holds `beaglebone:green:usr1` through `usr4`,
+  `blue:bela-power`, `mmc0::` and `mmc1::`. So `lednum` 1 to 4 name a
+  file that is there and 0 names nothing, where the BeagleBone the
+  path is written for has `usr0` to `usr3`. At rest the four triggers
+  were `heartbeat`, `mmc1`, `activity` and `none`, and
+  `blue:bela-power` was `heartbeat`. What is measured here is that the
+  file is there to write, not what writing it does.
+
 ## The Multiplexer Capelet
 
 Collected 2026-08-07: partly on the board with a throwaway C++ project
