@@ -147,11 +147,12 @@
 //! Bela's own C++ libraries — the browser scope, Trill, the GUI and
 //! the rest — are not wrapped either, and neither are the sysfs GPIO
 //! functions `libbela` exports. So an arbitrary pin cannot be read or
-//! driven from here: what this crate reaches are the digital channels
-//! of a block, through [`RenderContext`], and the particular pins
-//! libbela drives for itself — the two LEDs and the stop button, which
+//! driven from here. What a callback reaches are the digital channels
+//! of a block, through [`RenderContext`]. The pins libbela keeps for
+//! itself — the two LEDs and the stop button — are not an alternative:
 //! [`Settings::enable_led`] and [`Settings::stop_button_pin`] choose
-//! whether to claim.
+//! whether libbela claims them, and declining does not hand them over,
+//! as those two say at more length.
 //!
 //! `docs/scope.md` in the repository lists what is absent with the
 //! reason beside each. It follows the repository rather than a

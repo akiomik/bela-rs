@@ -86,12 +86,15 @@ side of it:
   [`AuxiliaryTask`](../bela/src/task.rs); the *non*-real-time task —
   Bela's own way to run work on an ordinary thread that a render
   callback can trigger — has no equivalent here.
-- **Peripherals outside the audio context**: `Gpio`, `I2c`. These are
-  sysfs and `ioctl` wrappers, so by the rule above they are the
-  application's to write — except that `Gpio` is how libbela drives the
-  LEDs and the stop button, which makes what it may touch a question
-  about this board rather than about Linux. The C functions underneath
-  it are [#156](https://github.com/akiomik/bela-rs/issues/156).
+- **Peripherals outside the audio context**: `Gpio`, `I2c`. `I2c` is an
+  `ioctl` wrapper and so the application's to write by the rule above.
+  `Gpio` is not: it `mmap`s the GPIO bank and reads and writes the
+  registers directly (`Gpio.h:3,57,64,70`), reaching sysfs only to
+  claim the pin. That distinction matters for
+  [#156](https://github.com/akiomik/bela-rs/issues/156), which is about
+  the sysfs functions in `GPIOcontrol.h`: binding them would give a
+  Rust program a pin, but not the path libbela's own `Gpio` takes to
+  one.
 - **Block-size adaptation**: `BelaContextFifo`, `BelaContextSplitter`,
   `BelaContextManager`. These are libbela's own, not an application's,
   but what the first one does to digital output persistence is
@@ -137,8 +140,9 @@ here, and the grouping is checkable rather than asserted: `grep -rl
 well as headers — finds seven. Five are the pin helpers, which take a
 `BelaContext*` — three of them in a `Bela*` variant beside a plain one
 (`BelaDebounce`, `BelaEncoder`, `BelaSteppedPot`) and two, `PulseIn`
-and `ShiftRegister`, in the only class they have. The other two,
-`OnePole` and `WriteFile`, include `Bela.h` and use nothing from it.
+and `ShiftRegister`, in the only class they have. `OnePole` includes `Bela.h` and uses nothing from it at all;
+`WriteFile` uses one line of it, an `rt_fprintf` on the overrun path
+(`WriteFile.cpp:287`).
 
 The remaining sixteen name neither `Bela.h` nor `BelaContext`, which is
 all the grep tests. Four of them do reach sideways into Bela's
@@ -153,7 +157,7 @@ it is the core API, and none of it changes the grouping.
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
 | `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has, and no others: `digitalRead` and `pinMode` in all four of the digital ones, `digitalWriteOnce` in `ShiftRegister`, `analogRead` in `SteppedPot`, which touches no digital pin at all — and `digitalWrite` in none of them. Those, over frame and channel counts a `RenderContext` reports, are the whole of what they ask Bela for. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
 | `UdpClient`, `UdpServer`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
-| `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them, and no Bela code behind them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
+| `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. The one thing any of them takes from Bela is `WriteFile`'s overrun warning, an `rt_fprintf` on a thread that is not the audio thread — where an `eprintln!` says the same thing. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
 
 The utility headers under `include/` go the same way:
@@ -298,15 +302,19 @@ with `Bela_initAudio` driven by hand:
   [#158](https://github.com/akiomik/bela-rs/issues/158)
 - `analogOutputsPersist`, `disabledDigitalChannels`
 - `audioThreadStackSize`, `auxiliaryTaskStackSize`
-- `ampMutePin`, `codecMode`, `board`, `projectName`
+- `ampMutePin` — which `Bela_defaultSettings` already reports as `-1`
+  on a Gem, there being no amplifier mute pin on this board to name
+  ([board-facts.md](board-facts.md)), so what an application would set
+  it to is a question for hardware that is out of scope anyway
+- `codecMode`, `board`, `projectName`
 - `pruNumber`, `pruFilename`
 - `audioExpanderInputs`, `audioExpanderOutputs`
 - `audioThreadDone`, the callback that runs when the audio thread ends
 - `numMuxChannels` — the Capelet, deliberately. `--mux-channels` still
-  reaches it, and `validate_settings` still checks what it can about
-  the result, which is the case above in its clearest form: what the
-  crate declines to offer is a way of asking for a Capelet, not a
-  defence against one being asked for.
+  reaches it, and `check_resolved` still rejects what it can before the
+  audio system is built, which is the case above in its clearest form:
+  what the crate declines to offer is a way of asking for a Capelet,
+  not a defence against one being asked for.
 
 On `BelaContext`, the accessors cover the buffers, the frame and
 channel counts, the sample rates, `audioFramesElapsed`, `underrunCount`
