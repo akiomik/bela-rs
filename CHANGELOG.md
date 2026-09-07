@@ -24,6 +24,14 @@ and this project adheres to
   crate already does the job. So most of what is absent is absent by
   argument rather than by backlog, and each entry says which it is.
 
+  Writing it down turned up three functions worth knowing about before
+  reaching for them, all read from the sources on the board:
+  `Bela_runInSameThread` is a stub that prints and calls `exit(1)`,
+  `Bela_printFlushBuffers` has no body outside a Cobalt build and this
+  image is EVL, and `Bela_HwConfig_new` says in its own comment that it
+  always fails. None is wrapped, and the file now says why none should
+  be until libbela changes.
+
   Both crate READMEs and `bela`'s crate documentation point at it, and
   the scope prose they carried in pieces now has one home. No API,
   behaviour or build requirement changes.

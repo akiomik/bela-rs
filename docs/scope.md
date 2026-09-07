@@ -18,9 +18,11 @@ Line numbers follow from that. A citation naming a file under
 `scripts/sync-sysroot.sh` copies it, which is git-ignored — so checking
 one takes a board and that script rather than a click, and it will not
 land on the same line in [BelaPlatform/Bela]. Citations naming a `.rs`
-file, or `Bela.h`, `Utilities.h` or `GPIOcontrol.h`, are into this
-repository; the three headers are vendored and byte-identical to the
-board's.
+file, or one of the five vendored headers — `Bela.h`, `Utilities.h` and
+`GPIOcontrol.h` under `bela-sys/vendor/bela/`, `NE10_dsp.h` and
+`NE10_types.h` under `bela-sys/vendor/ne10/` — are into this repository
+and need no board. The three Bela ones are byte-identical to the
+board's copies.
 
 This file follows `main`, not a release. What it calls wrapped is
 wrapped on `main` — at least what the newest published version has, and
@@ -319,13 +321,27 @@ options libbela's own usage text lists, the text
 (`RTAudioCommandLine.cpp:306-319,505-521`). `--adc-level` and the two
 `--pga-gain-*` are accepted and discarded with a deprecation warning,
 which is the command line agreeing with the table above about which
-spellings are legacy. Two of them the crate refuses before an audio
-system is built — `--mux-channels` and `--pru-number`, in
-`check_resolved` (`settings.rs:895-916`) — precisely because a program
-cannot have set them itself. The other nine arrive unexamined, and four
-of those nine have been run on a board: [board-facts.md](board-facts.md)
-records `--board BelaMini` logged as requested and then ignored in
-favour of the board libbela detected, `--codec-mode garbage` and
+spellings are legacy.
+
+Those eleven are spellings rather than gates. `--json-file` and
+`--json-string` reach the same fields by another road:
+`jsonSettingsInit` turns the JSON back into an argv and calls
+`Bela_getopt_long` with it (`RTAudio.cpp:1379-1459`), and a
+`userArguments` key splices in an arbitrary option string. No new field
+becomes reachable that way — it is the same parser — but a program
+auditing for the eleven flags alone would miss it, and
+`Bela_defaultSettings` runs the board's own `CL=` line from
+`~/.bela/belaconfig` through that parser too, which
+[`Bela::new`](../bela/src/system.rs) documents while looking at no
+arguments at all.
+
+Two of them the crate refuses before an audio system is built —
+`--mux-channels` and `--pru-number`, in `check_resolved`
+(`settings.rs:895-916`) — precisely because a program cannot have set
+them itself. The other nine arrive unexamined, and four of those nine
+have been run on a board: [board-facts.md](board-facts.md) records
+`--board BelaMini` logged as requested and then ignored in favour of the
+board libbela detected, `--codec-mode garbage` and
 `--disabled-digital-channels 65535` doing nothing visible, and
 `--pru-file /nonexistent` failing in `Bela_startAudio`.
 
