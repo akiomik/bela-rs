@@ -60,7 +60,7 @@ Three of the 38 directories under `libraries/` are answered:
 |---|---|
 | `Midi` | Wrapped, through a C++ shim this workspace compiles. [midi.md](midi.md) records what part of it the crate uses and why output leaves `render` through a queue of the crate's own. |
 | `Fft` | Not wrapped, and will not be: the class is a C++ wrapper over NE10, and `bela-sys` declares NE10's transform directly. `RealFft` is what a program uses instead. [fft.md](fft.md). |
-| `ne10` | The real-to-complex pair only (`ne10_fft_r2c_1d_float32_neon` and its inverse, with the alloc/destroy calls around them). The four dozen others that `NE10_dsp.h` declares — FIR, IIR, vector maths — are not, and fall under the rule above rather than under a plan. |
+| `ne10` | The real-to-complex pair only (`ne10_fft_r2c_1d_float32_neon` and its inverse, with the alloc/destroy calls around them). The forty-six others that `NE10_dsp.h` declares — the same transforms for `int16` and `int32`, complex-to-complex, the `_c` fallbacks beside the `_neon` versions, and FIR and IIR — are not, and fall under the rule above rather than under a plan. NE10's vector maths is in `NE10_math.h`, which is not vendored at all. |
 
 ## Not written yet
 
@@ -139,7 +139,14 @@ well as headers — finds seven. Five are the pin helpers, which take a
 (`BelaDebounce`, `BelaEncoder`, `BelaSteppedPot`) and two, `PulseIn`
 and `ShiftRegister`, in the only class they have. The other two,
 `OnePole` and `WriteFile`, include `Bela.h` and use nothing from it.
-The remaining sixteen name no Bela header anywhere.
+
+The remaining sixteen name neither `Bela.h` nor `BelaContext`, which is
+all the grep tests. Four of them do reach sideways into Bela's
+`libraries/` tree — `AudioFile` includes `sndfile`, `Convolver`
+includes `AudioFile` and `ne10`, `Oscillator` includes `math_neon`,
+`OscReceiver` includes `UdpServer` — but every one of those is another
+library in this same group, or `ne10`, which is answered above. None of
+it is the core API, and none of it changes the grouping.
 
 | Libraries | Why not |
 |---|---|
@@ -267,7 +274,7 @@ a layer above `Settings` and wins over it (`cmdline.rs:11-23`), so
 `Bela::run_with_args` and `Bela::new_with_args` hand `--mux-channels`,
 `--pru-number` and `--pru-file` straight through to fields in this
 list, and the crate validates the first two on the way past
-(`settings.rs:895-905`) precisely because a program cannot have set
+(`settings.rs:895-916`) precisely because a program cannot have set
 them itself. What is missing for the rest is a way for the program to
 state a value, not a way for one to arrive. The escape hatch for that
 is `Settings::apply_to` on a `BelaInitSettings` of the caller's own,

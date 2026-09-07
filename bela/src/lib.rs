@@ -149,8 +149,9 @@
 //! functions `libbela` exports. So an arbitrary pin cannot be read or
 //! driven from here: what this crate reaches are the digital channels
 //! of a block, through [`RenderContext`], and the particular pins
-//! libbela drives for itself — the LEDs, the stop button and the
-//! amplifier mute that [`Bela::mute_speakers`] switches.
+//! libbela drives for itself — the two LEDs and the stop button, which
+//! [`Settings::enable_led`] and [`Settings::stop_button_pin`] choose
+//! whether to claim.
 //!
 //! `docs/scope.md` in the repository lists what is absent with the
 //! reason beside each. It follows the repository rather than a
