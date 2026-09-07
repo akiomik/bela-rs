@@ -24,7 +24,7 @@
 //! which, and `docs/scope.md` records what a safe wrapper over these
 //! is still waiting on.
 //!
-//! Seven things about the family are easy to get wrong:
+//! Eight things about the family are easy to get wrong:
 //!
 //! - **The constants are the wrong integer type.** [`PIN_DIRECTION`]
 //!   and [`PIN_VALUE`] name the values its arguments take, but they
@@ -65,6 +65,14 @@
 //!   and no descriptor to hand `gpio_dismiss`. Undoing that takes a
 //!   `gpio_unexport` from the caller, and skipping it leaves the pin
 //!   in `/sys/class/gpio` after the process exits.
+//! - **The two string arguments have to be NUL-terminated.**
+//!   `gpio_set_edge` and `led_set_trigger` both write `strlen(s) + 1`
+//!   bytes, so a pointer into a Rust `&str` sends `strlen` off the end
+//!   of it and puts whatever followed into the sysfs file. Pass a
+//!   [`CStr`](core::ffi::CStr) — `c"rising"` and the like.
+//!   `gpio_set_edge` taking `*mut c_char` rather than `*const` is a
+//!   missing `const` in `GPIOcontrol.h`, not a sign that it writes
+//!   through the pointer; it does not.
 //! - **`led_set_trigger`'s `lednum` starts at 1 on a Gem.** It builds
 //!   `/sys/class/leds/beaglebone:green:usr%d/trigger`, a path written
 //!   for a `BeagleBone`, whose user LEDs are `usr0` to `usr3`. This
@@ -77,7 +85,10 @@
 //! stdout, and every function that cannot open its sysfs file calls
 //! `perror` — but once a file is open a failed `read` or `write` only
 //! becomes a `-1`, and `gpio_read` and `gpio_write`, which are handed
-//! a descriptor rather than opening one, never print at all.
+//! a descriptor rather than opening one, never print at all. And
+//! `gpio_unexport`'s `perror` is labelled `gpio/export`, its
+//! neighbour's label, so a pin that would not go away reports itself
+//! as one that would not arrive.
 //!
 //! Two things here are neither the core API nor generated, and they
 //! are two different kinds of thing:
