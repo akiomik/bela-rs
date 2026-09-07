@@ -173,8 +173,37 @@ pub struct MidiInput {
 // the input thread writes without synchronisation, which the shim's
 // header describes and bounds — a count one message stale, never a
 // torn pointer.
+//
+// Every clause of that is about `raw`, which is why these are gated on
+// the target that has one. Off the device a `MidiInput` has no fields
+// at all, so an unconditional `unsafe impl` would say nothing there
+// today — and would silently cover whatever a host field turned out to
+// be. `RealFft` carries the same pair for the same reason.
+#[cfg(bela_device)]
 unsafe impl Send for MidiInput {}
+#[cfg(bela_device)]
 unsafe impl Sync for MidiInput {}
+
+// So that the host half is a guarantee rather than an accident of the
+// fields: a host-only field that was neither `Send` nor `Sync` fails
+// here, at the type, instead of wherever a downstream first needed
+// one. On a device build the two impls above have already settled it.
+//
+// A trait carrying the two as supertraits rather than a generic
+// function called for its bounds: both are checked when this compiles,
+// and this one has no function body, so it leaves no line for coverage
+// to count as never run.
+//
+// One of three deliberate copies of this idiom; `MidiHandle`'s below
+// carries the reason they are not one.
+const _: () = {
+    #[allow(
+        dead_code,
+        reason = "implemented rather than called; the impl below is the assertion"
+    )]
+    trait SendAndSync: Send + Sync {}
+    impl SendAndSync for MidiInput {}
+};
 
 impl MidiInput {
     /// Opens `port` and starts reading from it.
@@ -1491,8 +1520,32 @@ impl MidiHandle {
 
 // Reached from the thread that opened the port and from the task's
 // thread, one at a time — `Shared::draining` is what makes it one.
+//
+// About `raw`, like `MidiInput`'s, and gated for the same reason: off
+// the device this struct has no fields at all, so the impls would
+// assert nothing there while standing ready to cover whatever a host
+// field turned out to be.
+#[cfg(bela_device)]
 unsafe impl Send for MidiHandle {}
+#[cfg(bela_device)]
 unsafe impl Sync for MidiHandle {}
+
+// The same assertion, for the same reason; see `MidiInput`'s above.
+//
+// Three copies of this idiom exist — here, there, and beside
+// `RealFft` — and that is a decision rather than an oversight. Each
+// one sits with the `unsafe impl` it backs and the argument for it,
+// which is what somebody adding a field is reading; a shared trait in
+// `util.rs` would move the declaration away from all three and buy
+// nothing at the point of use.
+const _: () = {
+    #[allow(
+        dead_code,
+        reason = "implemented rather than called; the impl below is the assertion"
+    )]
+    trait SendAndSync: Send + Sync {}
+    impl SendAndSync for MidiHandle {}
+};
 
 impl Drop for MidiHandle {
     fn drop(&mut self) {
