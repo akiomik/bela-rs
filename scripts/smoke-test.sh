@@ -548,7 +548,15 @@ the one-render-thread column of docs/fft.md"
     # No setup line, which failed above. There is no row to read the
     # cost against without it, and a second failure naming an empty
     # length says nothing the first one did not.
-    pass "fft: $analysis_count analysis transforms"
+    #
+    # A pass rather than a `skip`: the count was read and is a real
+    # answer, and what is missing has already been reported as the
+    # failure it is — where `skip` is for a check the board left
+    # nothing to make, with nothing else failing over it. The line
+    # says what it did and did not read, so that it does not have to
+    # be read together with the failure above to be understood.
+    pass "fft: $analysis_count analysis transforms, with no setup line \
+to say what they should cost"
   elif [ -z "$analysis_expected" ]; then
     fail "fft: ${analysis_length} points has no cost in docs/fft.md; \
 the example analyses a length this check does not know"
