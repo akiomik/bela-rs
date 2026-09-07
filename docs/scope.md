@@ -64,9 +64,9 @@ Of the 38 directories under `libraries/`, three are answered:
 
 ## Not written yet
 
-These need Bela's own code, so the rule says wrap them; nobody has.
-Nothing here is promised, and each entry is an invitation rather than a
-backlog with an order.
+Six of the 38 need Bela's own code, so the rule says wrap them; nobody
+has. Nothing here is promised, and each entry is an invitation rather
+than a backlog with an order.
 
 | Library | What a binding would be for |
 |---|---|
@@ -74,9 +74,7 @@ backlog with an order.
 | `Trill` | The Trill capacitive sensors. Derives from `I2c` and carries Bela's centroid detection; the protocol is not something an application writes for itself. |
 | `Gui`, `GuiController` | Sliders and plots in the browser, over the IDE's websocket channel. |
 | `WSServer` | The transport under the two rows above. Worth wrapping on its own only if something wants the channel without the scope or the GUI on top. |
-| `WriteFile` | Real-time safe logging to disk: a render callback pushes, a background thread of the library's own writes. The thread is the part a Rust program cannot get from crates.io. |
 | `Pipe` | A typedef of `RtNonRtMsgFifo`, kept for legacy code; the header to wrap is `include/RtMsgFifo.h`. This is the real-time-to-ordinary-thread boundary, which is currently only crossable through an `AuxiliaryTask` and whatever the application puts beside it. |
-| `Spi`, `Eeprom` | Board peripherals — user SPI, and the I2C EEPROM. The protocols are Linux's, and Rust has crates for both; what Bela's versions carry is the board wiring, which device node is which and what libbela is already driving. |
 
 The headers under `include/` divide the same way. Not wrapped, and
 under the rule they should be:
@@ -87,9 +85,12 @@ under the rule they should be:
   [`AuxiliaryTask`](../bela/src/task.rs); the *non*-real-time task —
   Bela's own way to run work on an ordinary thread that a render
   callback can trigger — has no equivalent here.
-- **Peripherals outside the audio context**: `Gpio`, `I2c`. The C
-  functions underneath `Gpio` are
-  [#156](https://github.com/akiomik/bela-rs/issues/156).
+- **Peripherals outside the audio context**: `Gpio`, `I2c`. These are
+  sysfs and `ioctl` wrappers, so by the rule above they are the
+  application's to write — except that `Gpio` is how libbela drives the
+  LEDs and the stop button, which makes what it may touch a question
+  about this board rather than about Linux. The C functions underneath
+  it are [#156](https://github.com/akiomik/bela-rs/issues/156).
 - **Block-size adaptation**: `BelaContextFifo`, `BelaContextSplitter`,
   `BelaContextManager`. These are libbela's own, not an application's,
   but what the first one does to digital output persistence is
@@ -128,13 +129,14 @@ patch is better served by Bela's own build for it.
 ### Code an application writes better in Rust
 
 Under the rule, these are absent because a wrapper would buy nothing,
-not because the work is queued. Twenty-one of the 38 libraries are here:
+not because the work is queued. Twenty-four of the 38 libraries are here:
 
 | Libraries | Why not |
 |---|---|
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
 | `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic on top of `digital_read` and `digital_write`, which the crate already has. Each is small enough that wrapping it costs more than writing it. |
 | `UdpClient`, `UdpServer`, `OscSender`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
+| `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them, and no Bela code behind them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
 
 The utility headers under `include/` go the same way:
