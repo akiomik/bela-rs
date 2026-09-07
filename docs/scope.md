@@ -70,12 +70,12 @@ than a backlog with an order.
 
 | Library | What a binding would be for |
 |---|---|
-| `Scope` | The browser oscilloscope. The only debugging output this crate has today is `rt_print!` and `rt_println!`, which makes this the most valuable single entry on the list. Pulls in `WSServer`, `JSON` and `RtLock`. |
-| `Trill` | The Trill capacitive sensors. Derives from `I2c` and carries Bela's centroid detection; the protocol is not something an application writes for itself. |
-| `Gui`, `GuiController` | Sliders and plots in the browser, over the IDE's websocket channel. |
-| `WSServer` | The transport under the two rows above. Worth wrapping on its own only if something wants the channel without the scope or the GUI on top. |
+| `Scope` | The browser oscilloscope. The only debugging output this crate has today is `rt_print!` and `rt_println!`, which makes this the most valuable single entry on the list. Reaches `WSServer`, `JSON`, `RtThread` and `MiscUtilities` (`Scope.cpp:3-8`), so it is Bela's code most of the way down. |
+| `Trill` | The Trill capacitive sensors. Derives from Bela's `I2c` (`Trill.h:13`) and carries its centroid detection; the protocol is not something an application writes for itself. |
+| `Gui`, `GuiController` | Sliders and plots in the browser. `Gui.h:6-11` is `JSON`, `DataBuffer` and `WSServer`; `GuiController` is `Gui` with widgets on top. |
+| `WSServer` | The transport under the two rows above: seasocks, driven by an `AuxTaskNonRT` and an `RtLock` (`WSServer.cpp:3-7`). A websocket crate replaces seasocks; the two Bela pieces are the reason this is not simply that. Worth wrapping on its own only if something wants the channel without the scope or the GUI on top. |
 | `OscSender` | Sending OSC needs no Bela code, but this implementation does: the send runs on an `AuxTaskNonRT` (`OscSender.cpp:6,30`), the non-real-time task listed below, which is the part a Rust program cannot get from crates.io. `OscReceiver` is the asymmetric case and stays out of scope — its receive loop is a plain `std::thread`. |
-| `Pipe` | A typedef of `RtNonRtMsgFifo`, kept for legacy code; the header to wrap is `include/RtMsgFifo.h`. This is the real-time-to-ordinary-thread boundary, which is currently only crossable through an `AuxiliaryTask` and whatever the application puts beside it. |
+| `Pipe` | A typedef of `RtNonRtMsgFifo` (`Pipe.h:4`), kept for legacy code; the header to wrap is `include/RtMsgFifo.h`. This is the real-time-to-ordinary-thread boundary, which is currently only crossable through an `AuxiliaryTask` and whatever the application puts beside it. |
 
 The headers under `include/` divide the same way, and mostly onto this
 side of it:
@@ -142,8 +142,8 @@ sixteen name no Bela header anywhere.
 | Libraries | Why not |
 |---|---|
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
-| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has: `pinMode` (`Debounce`, `Encoder`, `PulseIn`, `ShiftRegister`), `digitalWriteOnce` (`ShiftRegister`), `analogRead` (`SteppedPot`, which touches no digital pin at all) and `map` (`Encoder`, `SteppedPot`), over frame and channel counts a `RenderContext` reports. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
-| `UdpClient`, `UdpServer`, `OscSender`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
+| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has: `pinMode` (`Debounce`, `Encoder`, `PulseIn`, `ShiftRegister`), `digitalWriteOnce` (`ShiftRegister`), and `analogRead` (`SteppedPot`, which touches no digital pin at all), over frame and channel counts a `RenderContext` reports. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
+| `UdpClient`, `UdpServer`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
 | `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them, and no Bela code behind them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
 
@@ -176,8 +176,7 @@ site in `bela/src` names — nineteen of the forty-three:
 
 | Function | What it is for |
 |---|---|
-| `Bela_setAdcLevel`, `Bela_setADCLevel` | The ADC volume, and the only codec control with no wrapper at all — the second is the deprecated `channel = -1` spelling of the first, which is not deprecated. It is a different stage from the PGA gain `Bela::set_audio_input_gain` sets, and `adcGains` is empty in `Bela_defaultSettings` where the other three gain arrays are not (both in [board-facts.md](board-facts.md)). What it does on a Gem has not been measured, so neither is it known what a wrapper would be worth. |
-| `Bela_setPgaGain`, `Bela_setDacLevel`, `Bela_setDACLevel`, `Bela_setHeadphoneLevel` | Deprecated in `Bela.h`, every one of them, and each a second spelling of a call the crate already wraps: `Bela_setPgaGain` is `Bela_setAudioInputGain` with its two arguments the other way round, `Bela_setDacLevel` is told to use `Bela_setLineOutLevel` instead, and `Bela_setDACLevel` and `Bela_setHeadphoneLevel` are the `channel = -1` case of `Bela_setDacLevel` and of `Bela_setHpLevel`, which `Bela::set_headphone_level` wraps. Wrapping a deprecated spelling of a wrapped call buys nothing. |
+| `Bela_setPgaGain`, `Bela_setAdcLevel`, `Bela_setADCLevel`, `Bela_setDacLevel`, `Bela_setDACLevel`, `Bela_setHeadphoneLevel` | Six further spellings of the three calls the crate does wrap. `Bela_setPgaGain`, `Bela_setAdcLevel` and `Bela_setADCLevel` all end in the same `gAudioCodec->setInputGain` as `Bela_setAudioInputGain`, which is why one function has a 0.5 dB positive half and a 1.5 dB negative one — measured, and traced through libbela, in [board-facts.md](board-facts.md). `Bela_setDacLevel` is told by its own header to use `Bela_setLineOutLevel`, and `Bela_setDACLevel` and `Bela_setHeadphoneLevel` are the `channel = -1` case of `Bela_setDacLevel` and of `Bela_setHpLevel`. All but `Bela_setAdcLevel` are marked deprecated. None reaches anything the handle does not. |
 | `Bela_runInSameThread` | Running the audio loop on the calling thread instead of a thread of libbela's own, which `Bela::start` does. |
 | `Bela_setUserData` | Replacing the pointer handed to the callbacks. The crate owns that pointer, so exposing it needs a story for what happens to the application it points at. |
 | `Bela_setVerboseLevel` | Verbosity after `Bela_initAudio`; `Settings::verbose` only sets it before. |
@@ -241,7 +240,7 @@ allowlist drops them exactly as it drops the GPIO family — but they are
 what a C Bela program *defines* rather than calls, and this crate
 defines its own trampolines and hands them to `Bela_initAudio` as
 `BelaInitSettings` fields, so nothing is missing. `Bela_runAuxiliaryTask`
-is declared inside an `#ifdef __cplusplus` (`Bela.h:1181`), for the
+is declared inside an `#ifdef __cplusplus` (`Bela.h:1182`), for the
 sake of its default arguments, so bindgen — which parses `wrapper.h` as
 C — never sees it. The symbol itself is ordinary: `Bela.h`'s
 `extern "C"` block spans the declaration, and `libbela` exports
@@ -257,12 +256,20 @@ system writes five more that are not an application's to choose: the
 `setup`, `render_pre`, `render`, `render_post` and `cleanup` pointers,
 which `Bela::new` sets to the trampolines that reach
 [`BelaApplication`](../bela/src/application.rs) (`system.rs:387-391`).
-The remaining 25 of the struct's 45 fields are left at whatever
+The remaining 25 of the struct's 45 fields start at whatever
 `Bela_defaultSettings()` — and therefore the board's
-`~/.bela/belaconfig` — gives them, and they are all below. Reaching one
-means `Settings::apply_to` on a `BelaInitSettings` of the caller's own
-and `Bela_initAudio` driven by hand, which is what that method is the
-escape hatch for:
+`~/.bela/belaconfig` — gives them, and they are all below.
+
+Not exposed is not the same as unreachable. Bela's own command line is
+a layer above `Settings` and wins over it (`cmdline.rs:11-23`), so
+`Bela::run_with_args` and `Bela::new_with_args` hand `--mux-channels`,
+`--pru-number` and `--pru-file` straight through to fields in this
+list, and the crate validates the first two on the way past
+(`settings.rs:895-905`) precisely because a program cannot have set
+them itself. What is missing for the rest is a way for the program to
+state a value, not a way for one to arrive. The escape hatch for that
+is `Settings::apply_to` on a `BelaInitSettings` of the caller's own,
+with `Bela_initAudio` driven by hand:
 
 - `numAudioInChannels`, `numAudioOutChannels`
 - `lineOutGains`, `headphoneGains`, `audioInputGains` and `adcGains`,
@@ -286,7 +293,11 @@ escape hatch for:
 - `pruNumber`, `pruFilename`
 - `audioExpanderInputs`, `audioExpanderOutputs`
 - `audioThreadDone`, the callback that runs when the audio thread ends
-- `numMuxChannels` — the Capelet, deliberately
+- `numMuxChannels` — the Capelet, deliberately. `--mux-channels` still
+  reaches it, and `validate_settings` still checks what it can about
+  the result, which is the case above in its clearest form: what the
+  crate declines to offer is a way of asking for a Capelet, not a
+  defence against one being asked for.
 
 On `BelaContext`, the accessors cover the buffers, the frame and
 channel counts, the sample rates, `audioFramesElapsed`, `underrunCount`
