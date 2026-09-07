@@ -156,7 +156,9 @@
 //! [`BlockContext`] in [`render_pre`](BelaApplication::render_pre)
 //! and [`render_post`](BelaApplication::render_post). The pins
 //! libbela keeps for itself, the two LEDs and the stop button, are
-//! not a further channel to write to. [`Settings::enable_led`] and
+//! reached the same unsafe way and by nothing safer — they are not a
+//! fourth kind of channel a callback writes through.
+//! [`Settings::enable_led`] and
 //! [`Settings::stop_button_pin`] choose whether libbela claims them,
 //! and declining only stops libbela using them: there is still no
 //! safe API for a pin, and what a run does with one it was told to

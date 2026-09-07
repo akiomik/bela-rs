@@ -866,6 +866,39 @@ run.
   then read `'1'`. So the first read after a write fails where the
   first read on an untouched descriptor succeeds.
 
+The bullets above were read by hand. A throwaway binary (not in the
+repository) linked against `bela-sys` then asked the same questions
+through the real functions, so that what is recorded is what libbela
+does rather than what a re-implementation of it does. It created no
+audio system, and `gpio584` and the `usr1` trigger were put back
+afterwards.
+
+- **All thirteen are in the library the crate links.** `nm -D
+  --defined-only /root/Bela/lib/libbela.so` lists `gpio_setup`,
+  `gpio_export`, `gpio_unexport`, `gpio_set_dir`, `gpio_set_value`,
+  `gpio_get_value`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`,
+  `gpio_write`, `gpio_read`, `gpio_dismiss` and `led_set_trigger`, all
+  as `T`. The binary linked and ran, so this is a link as much as a
+  listing. Nothing in the workspace calls them, so no build here would
+  otherwise find out.
+- **`gpio_write` really does leave the next `gpio_read` with nothing.**
+  `gpio_setup(584, OUTPUT_PIN)` returned descriptor 3;
+  `gpio_write(fd, HIGH)` returned 0; the next `gpio_read` returned
+  `-1` and left its `unsigned int *value` holding the `0xdeadbeef` it
+  had been given, as did the one after it. So the failure is the
+  fail-fast one rather than a stale or invented reading —
+  `gpio_write` writes two bytes (`core/GPIOcontrol.cpp:296-303`) into
+  a two-byte file, and nothing is left to read.
+- **`led_set_trigger(0, ...)` fails and says so; `1` works.** The first
+  returned `-1` and printed `gpio/led-set-trigger: No such file or
+  directory`, which is the `usr0` a Gem does not have. The second
+  returned 0 and changed the trigger.
+- **A second unexport fails silently.** `gpio_dismiss(fd, 584)`
+  returned 0 and removed the export; the `gpio_unexport(584)` after it
+  returned `-1` and printed nothing, the `unexport` file having opened
+  and only the write into it having failed. That is the silent-failure
+  path in the small.
+
 ## The Multiplexer Capelet
 
 Collected 2026-08-07: partly on the board with a throwaway C++ project

@@ -46,10 +46,13 @@
 //!   the second reads the newline — which is not `'0'`, so it reports
 //!   the pin *high* whatever the pin is doing — and every one after
 //!   that reads nothing and returns `-1`. After a `gpio_write`, which
-//!   writes two bytes, the offset is already at the end, so the very
-//!   next `gpio_read` is the one that returns `-1`: writing a pin and
-//!   reading it back on the descriptor `gpio_setup` gave you does not
-//!   work at all. Either way the remedy is the caller's, an `lseek`
+//!   writes two bytes into that two-byte file
+//!   (`core/GPIOcontrol.cpp:296-303`), the offset is already at the
+//!   end, so the very next `gpio_read` is the one that returns `-1`:
+//!   writing a pin and reading it back on the descriptor `gpio_setup`
+//!   gave you does not work at all. Measured through these functions
+//!   rather than reasoned from the source — the reading it fails to
+//!   make is not a wrong one, it is none. Either way the remedy is the caller's, an `lseek`
 //!   back to 0 before each read. Both measured on a board;
 //!   `docs/board-facts.md` in the repository has the transcripts.
 //!   `gpio_get_value` has neither problem, opening and closing the

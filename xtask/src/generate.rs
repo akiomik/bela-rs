@@ -104,6 +104,19 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     }
 
     let bindings = builder.generate().expect("bindgen failed");
+    // `DropFamilyBanner` is defeatable by accident and silent when it
+    // is: bindgen consults only the *last* registered `parse_callbacks`
+    // for comments, so a second one added below this would disable it,
+    // and the match is on the banner's exact text, so an edit to the
+    // vendored header would too. Either way `gpio_setup` quietly
+    // regains a summary line describing the family rather than the
+    // function, and no CI job regenerates this file to notice.
+    assert!(
+        !bindings.to_string().contains("gpio_functions"),
+        "GPIOcontrol.h's family banner survived DropFamilyBanner: either \
+         a later parse_callbacks displaced it, or the banner's text \
+         changed with the vendored header"
+    );
     bindings.write_to_file(&out).expect("write bindings.rs");
     format(root);
     println!("wrote {}", out.display());
