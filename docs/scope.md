@@ -210,10 +210,10 @@ site in `bela/src` names — nineteen of the forty-three:
 | `Bela_runInSameThread` | Offered by the header as running the audio loop on the calling thread instead of a thread of libbela's own. On this image it is a stub: `RTAudio.cpp:1014-1018` prints "Turning the current thread into the audio thread is not supported with the POSIX skin." and calls `exit(1)`. Read rather than run — exercising it would end the process — so what is unwrapped here is a name, with nothing behind it to wrap. |
 | `Bela_setUserData` | Replacing the pointer handed to the callbacks. The crate owns that pointer, so exposing it needs a story for what happens to the application it points at. |
 | `Bela_setVerboseLevel` | Verbosity after `Bela_initAudio`; `Settings::verbose` only sets it before. |
-| `Bela_printFlushBuffers` | Flushing the real-time print buffers, which `rt_println!` fills. |
+| `Bela_printFlushBuffers` | Flushing the real-time print buffers that `rt_println!` fills — except that on this image it does nothing. Its whole body is a lone `#ifdef __COBALT__` (`RtWrappers.cpp:325-330`), and this board's real-time core is EVL rather than Xenomai 3 Cobalt ([board-facts.md](board-facts.md), where `ldd libbela.so` shows `libevl`). Its neighbours in the same file do have `BELA_EVL` branches, so this one is a gap in libbela rather than a choice. Read, not run. |
 | `Bela_initRtBackend` | Bringing the real-time backend up separately from the audio system. |
 | `Bela_gettime`, `Bela_clock_gettime`, `Bela_nanosleep` | Real-time safe time and sleep. `std::time` is not safe to call from a render callback, so these have no Rust equivalent on the audio thread. |
-| `Bela_HwConfig_new`, `Bela_HwConfig_delete` | The hardware configuration object. |
+| `Bela_HwConfig_new`, `Bela_HwConfig_delete` | The hardware configuration object — which libbela's own comment says cannot be obtained: "this will always return error because of nullptr. Codec detection needs to be factored out of `Bela_initAudio`" (`RTAudio.cpp:114-125`). A wrapper would return `None` every time until that is fixed upstream. |
 | `Bela_userSettings` | Not a call the program makes but a hook it may define: `Bela.h:742` marks it `#pragma weak`, and `Bela_defaultSettings` calls it if it is there. A Rust program can define it for itself; the crate neither does nor offers a way to, because where a program does hold the call, `Settings` and `validate_settings` cover the same ground with the types checked. |
 | `Bela_deleteAllAuxiliaryTasks`, `rt_printf` | Left alone for reasons the crate already records. `task.rs:36` has the first: it frees every task at once and leaves the handles dangling, which is what `AuxiliaryTask`'s generation counter exists to survive. `print.rs:165` has the second: `rt_println!` calls `Bela_printf` instead, the header describing the `Bela_*` spellings as the future-proof wrappers. |
 
@@ -314,18 +314,22 @@ options libbela's own usage text lists, the text
 (`RTAudioCommandLine.cpp:306-319,505-521`). `--adc-level` and the two
 `--pga-gain-*` are accepted and discarded with a deprecation warning,
 which is the command line agreeing with the table above about which
-spellings are legacy. The crate validates two of them on the way past
-(`settings.rs:895-916`) precisely because a program cannot have set
-them itself; the other nine arrive unexamined. What arriving amounts
-to varies, and five of the nine have been run on a board:
-[board-facts.md](board-facts.md) records `--board BelaMini` being
-logged as requested and then ignored in favour of the board libbela
-detected, `--codec-mode garbage` and `--disabled-digital-channels
-65535` doing nothing visible, and `--pru-number 5` and `--pru-file
-/nonexistent` failing in `Bela_initAudio` and `Bela_startAudio`. That
-range — silently ignored, silently accepted, or fatal — is libbela's
-doing rather than this crate's, which is the other half of why the two
-the crate does check are checked. What is missing for the rest is a way for the program to
+spellings are legacy. Two of them the crate refuses before an audio system is built —
+`--mux-channels` and `--pru-number`, in `check_resolved`
+(`settings.rs:895-916`) — precisely because a program cannot have set
+them itself. The other nine arrive unexamined, and four of those nine
+have been run on a board: [board-facts.md](board-facts.md) records
+`--board BelaMini` logged as requested and then ignored in favour of
+the board libbela detected, `--codec-mode garbage` and
+`--disabled-digital-channels 65535` doing nothing visible, and
+`--pru-file /nonexistent` failing in `Bela_startAudio`.
+
+That range — silently ignored, silently accepted, or fatal — is
+libbela's doing rather than this crate's, and it is the other half of
+why the two that are checked are checked. The same page measured what
+the alternative costs: `--pru-number 5`, left to libbela, fails inside
+`Bela_initAudio`, and a failure there takes every later audio system in
+the process with it rather than only the attempt. What is missing for the rest is a way for the program to
 state a value, not a way for one to arrive. The escape hatch for that
 is `Settings::apply_to` on a `BelaInitSettings` of the caller's own,
 with `Bela_initAudio` driven by hand:
