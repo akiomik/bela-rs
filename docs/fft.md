@@ -259,6 +259,13 @@ on a fixed cosine. Repeats land within a few percent, and the shortest
 lengths vary most: a 256-point transform is a couple of microseconds,
 which is close enough to the clock and the cache to move around.
 
+`scripts/smoke-test.sh` reads this column back on every run, within a
+factor of ten either way, so a board that stopped transforming at these
+speeds — a debug build, a lost NEON path, a slower board — fails the
+release gate rather than going unnoticed. Anyone re-measuring the table
+should update `documented_micros` in that script with it, and a length
+the example measures and the script does not know is a failure there.
+
 On one thread it is roughly `N log N`, as it should be, and cheap
 enough that the length is chosen by what the analysis needs rather
 than by what the deadline allows: even 4096 points every block leaves

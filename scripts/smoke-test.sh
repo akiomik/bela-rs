@@ -41,6 +41,16 @@ STARTUP_ALLOWANCE_SECONDS=1.5
 # Shorter runs are all startup and the block count check stops meaning
 # anything.
 MIN_DURATION=3
+# How far a transform's measured cost may be from what docs/fft.md
+# recorded, either way. Repeats land within a few percent and four
+# threads transforming at once cost about twice as much each, so an
+# order of magnitude never fires on a board that is merely busy — while
+# still catching a debug build, a lost NEON path or a slower board.
+FFT_COST_TOLERANCE=10
+# The worst a round trip may differ from the signal it started from.
+# A board reports about 3e-7; anything near this would mean the inverse
+# had stopped restoring the amplitudes.
+FFT_ROUND_TRIP_MAX=1e-5
 
 failures=0
 daemon_was_active=no
@@ -431,6 +441,168 @@ else
   else
     pass "midi: cleanup reported $received message(s) received"
   fi
+fi
+
+# The FFT. Everything above it only says the example ran; these are
+# what say it transformed anything, and correctly. `setup` transforms a
+# cosine and transforms it back, and `cleanup` reports what each
+# transform cost and how many there were.
+#
+# The costs are read against "What a transform costs" in docs/fft.md,
+# whose one-render-thread column is the one this run is in — checked
+# below rather than assumed. A cost far from them is not this transform
+# any more: a `libNE10` whose inverse stopped applying the `1/N` is what
+# the round trip catches, and a debug build or a lost NEON path is what
+# these do.
+
+# A count read out of a log, which has to be a number and above zero:
+# `[ "$c" -eq 0 ]` would answer "not zero" for a field that is not a
+# number at all, and say so on stderr while passing.
+positive_count() {
+  awk -v c="$1" 'BEGIN { exit !(c ~ /^[0-9]+$/ && c + 0 > 0) }'
+}
+
+# A measured cost against what docs/fft.md recorded, within
+# `FFT_COST_TOLERANCE` either way.
+within_tolerance() {
+  awk -v m="$1" -v e="$2" -v t="$FFT_COST_TOLERANCE" \
+    'BEGIN { exit !(m ~ /^[0-9]/ && m + 0 >= e / t && m + 0 <= e * t) }'
+}
+
+documented_micros() {
+  case "$1" in
+  256) echo 2.7 ;;
+  512) echo 5.1 ;;
+  1024) echo 10.4 ;;
+  2048) echo 22.4 ;;
+  4096) echo 51.5 ;;
+  # A length the example measures and this table does not know. The two
+  # are written down in different files and have to move together.
+  *) echo "" ;;
+  esac
+}
+
+log="$LOG_DIR/fft.log"
+if [ ! -s "$log" ]; then
+  fail "fft: produced no output"
+else
+  # setup: 1024-point analysis over 1 render thread(s), 43 Hz per bin; ...
+  #
+  # Both numbers are read rather than assumed. The length says which row
+  # of the table the analysis is read against, and the thread count says
+  # which column everything here is: the loop above passes no argument
+  # and `fft` defaults to one thread, so a run that stops doing that has
+  # to be read against the four-thread column instead, and is failed
+  # rather than quietly compared against the wrong one.
+  setup="$(awk '/^setup: [0-9]+-point analysis/ \
+    { sub(/-point/, "", $2); print $2, $5; exit }' "$log")"
+  analysis_length="${setup%% *}"
+  threads="${setup##* }"
+  if [ -z "$analysis_length" ]; then
+    fail "fft: no setup line"
+    sed 's/^/        /' "$log" >&2
+  elif [ "$threads" != 1 ]; then
+    fail "fft: ran on $threads render thread(s), and the costs below are \
+the one-render-thread column of docs/fft.md"
+  else
+    pass "fft: a $analysis_length-point analysis on $threads render thread(s)"
+  fi
+
+  # setup: round trip differs by at most 2.98e-7
+  round_trip="$(awk '/^setup: round trip differs by at most/ { print $NF; exit }' "$log")"
+  if [ -z "$round_trip" ]; then
+    # `setup` prints the failure instead and returns false when the
+    # round trip could not be run at all, so the log says which it was.
+    fail "fft: no round trip line"
+    sed 's/^/        /' "$log" >&2
+  elif awk -v w="$round_trip" -v m="$FFT_ROUND_TRIP_MAX" \
+    'BEGIN { exit !(w ~ /^[0-9]/ && w + 0 > 0 && w + 0 <= m + 0) }'; then
+    pass "fft: a round trip differs by at most $round_trip, within $FFT_ROUND_TRIP_MAX"
+  else
+    # Both ends, and the number has to be one. Too large is an inverse
+    # that stopped restoring what it was given. Exactly zero is a round
+    # trip that never happened — 1024 points of float arithmetic do not
+    # come back bit for bit, and an `inverse` that handed back its input
+    # would. `NaN` is neither: the example folds with `f32::max`, which
+    # ignores it, so a transform producing nothing but NaN reports 0,
+    # and awk would read the word itself as 0 as well.
+    fail "fft: a round trip differs by $round_trip, which is not inside \
+0 to $FFT_ROUND_TRIP_MAX"
+  fi
+
+  # cleanup: 175 whole-block analysis transforms at 11.1 us each
+  #
+  # docs/fft.md measures this one at 11.0 us against the table's 10.4
+  # for the same length, the two running at different points in the
+  # block; they are well inside one tolerance of each other, so the
+  # table's row for the analysis length is what it is read against.
+  analysis="$(awk '/^cleanup: [0-9]+ whole-block/ { print $2, $7; exit }' "$log")"
+  analysis_count="${analysis%% *}"
+  analysis_micros="${analysis##* }"
+  analysis_expected="$(documented_micros "$analysis_length")"
+  if [ -z "$analysis_count" ]; then
+    fail "fft: cleanup reported no analysis transforms"
+  elif ! positive_count "$analysis_count"; then
+    fail "fft: the analysis ran $analysis_count time(s); nothing was transformed"
+  elif [ -z "$analysis_length" ]; then
+    # No setup line, which failed above. There is no row to read the
+    # cost against without it, and a second failure naming an empty
+    # length says nothing the first one did not.
+    #
+    # A pass rather than a `skip`: the count was read and is a real
+    # answer, and what is missing has already been reported as the
+    # failure it is — where `skip` is for a check the board left
+    # nothing to make, with nothing else failing over it. The line
+    # says what it did and did not read, so that it does not have to
+    # be read together with the failure above to be understood.
+    pass "fft: $analysis_count analysis transforms, with no setup line \
+to say what they should cost"
+  elif [ -z "$analysis_expected" ]; then
+    fail "fft: ${analysis_length} points has no cost in docs/fft.md; \
+the example analyses a length this check does not know"
+  elif within_tolerance "$analysis_micros" "$analysis_expected"; then
+    pass "fft: $analysis_count analysis transforms at $analysis_micros us, \
+around the ${analysis_expected} us in docs/fft.md"
+  else
+    fail "fft: $analysis_count analysis transforms at $analysis_micros us, \
+not within ${FFT_COST_TOLERANCE}x of the ${analysis_expected} us in docs/fft.md"
+  fi
+
+  # The lengths come from the example rather than from here: a run that
+  # reported four of the five it measures would otherwise pass on the
+  # four. Reading nothing is not read as nothing to check, either.
+  #
+  # const MEASURED_LENGTHS: [usize; 5] = [256, 512, 1024, 2048, 4096];
+  measured_lengths="$(awk -F'[][]' \
+    '/^const MEASURED_LENGTHS/ { gsub(/,/, " ", $4); print $4; exit }' \
+    "$ROOT/bela/examples/fft.rs")"
+  if [ -z "$measured_lengths" ]; then
+    fail "fft: could not read MEASURED_LENGTHS from bela/examples/fft.rs"
+  fi
+  for length in $measured_lengths; do
+    # cleanup:  1024 points: 10.8 us per transform over 565 of them
+    reported="$(awk -v n="$length" \
+      '$1 == "cleanup:" && $3 == "points:" && $2 == n { print $4, $9; exit }' "$log")"
+    if [ -z "$reported" ]; then
+      fail "fft: cleanup said nothing about $length points"
+      continue
+    fi
+    micros="${reported%% *}"
+    count="${reported##* }"
+    expected="$(documented_micros "$length")"
+    if ! positive_count "$count"; then
+      fail "fft: $length points was transformed $count time(s)"
+    elif [ -z "$expected" ]; then
+      fail "fft: $length points has no cost in docs/fft.md; \
+the example measures a length this check does not know"
+    elif within_tolerance "$micros" "$expected"; then
+      pass "fft: $length points at $micros us over $count transforms, \
+around the ${expected} us in docs/fft.md"
+    else
+      fail "fft: $length points at $micros us over $count transforms, \
+not within ${FFT_COST_TOLERANCE}x of the ${expected} us in docs/fft.md"
+    fi
+  done
 fi
 
 # Bela's standard command-line options. Only the board can answer
