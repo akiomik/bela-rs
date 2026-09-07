@@ -94,8 +94,11 @@ and this project adheres to
   Nothing else about them is a change: they are new declarations,
   nothing calls them, and no behaviour on a board differs. What `bela`'s
   own documentation said about them was wrong, though, and is corrected
-  with them: it claimed an arbitrary pin "cannot be read or driven from
-  here", which the re-export above makes false.
+  with them, in both of the two places that said it: the crate page
+  claimed an arbitrary pin "cannot be read or driven from here", and
+  `Settings::enable_led` claimed the crate "offers no API" for the LED
+  pins. The re-export above makes both false. What is still true, and
+  what they say now, is that there is no *safe* API for a pin.
 
 ## [0.8.1] - 2026-09-08
 
