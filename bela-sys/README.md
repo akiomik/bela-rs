@@ -89,7 +89,9 @@ takes the functions named `Bela_*` and `rt_*` and nothing else, so what
 the headers declare under another name is absent — the `gpio_*` family
 `Bela.h` pulls in from `GPIOcontrol.h` among it
 ([#156](https://github.com/akiomik/bela-rs/issues/156)).
-[docs/scope.md](../docs/scope.md) lists the rest.
+[docs/scope.md](https://github.com/akiomik/bela-rs/blob/main/docs/scope.md)
+lists the rest. That link is absolute because this file is read on
+crates.io, where the repository around it is not there.
 
 ## The MIDI shim
 

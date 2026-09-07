@@ -64,8 +64,8 @@ Of the 38 directories under `libraries/`, three are answered:
 
 ## Not written yet
 
-Six of the 38 need Bela's own code, so the rule says wrap them; nobody
-has. Nothing here is promised, and each entry is an invitation rather
+Seven of the 38 need Bela's own code, so the rule says wrap them;
+nobody has. Nothing here is promised, and each entry is an invitation rather
 than a backlog with an order.
 
 | Library | What a binding would be for |
@@ -74,10 +74,11 @@ than a backlog with an order.
 | `Trill` | The Trill capacitive sensors. Derives from `I2c` and carries Bela's centroid detection; the protocol is not something an application writes for itself. |
 | `Gui`, `GuiController` | Sliders and plots in the browser, over the IDE's websocket channel. |
 | `WSServer` | The transport under the two rows above. Worth wrapping on its own only if something wants the channel without the scope or the GUI on top. |
+| `OscSender` | Sending OSC needs no Bela code, but this implementation does: the send runs on an `AuxTaskNonRT` (`OscSender.cpp:6,30`), the non-real-time task listed below, which is the part a Rust program cannot get from crates.io. `OscReceiver` is the asymmetric case and stays out of scope — its receive loop is a plain `std::thread`. |
 | `Pipe` | A typedef of `RtNonRtMsgFifo`, kept for legacy code; the header to wrap is `include/RtMsgFifo.h`. This is the real-time-to-ordinary-thread boundary, which is currently only crossable through an `AuxiliaryTask` and whatever the application puts beside it. |
 
-The headers under `include/` divide the same way. Not wrapped, and
-under the rule they should be:
+The headers under `include/` divide the same way, and mostly onto this
+side of it:
 
 - **The real-time boundary**: `AuxTaskNonRT`, `AuxTaskRT`, `RtThread`,
   `RtLock`, `RtMsgFifo`, `RtWrappers`, `SchedulableTask`. Bela's
@@ -120,8 +121,9 @@ regardless is in [board-facts.md](board-facts.md).
 
 ### Hosting another language runtime
 
-`libpd`, `BelaLibpd`, `pd-externals`, `csound` and `BelaArduino` run
-Pure Data patches, Csound orchestras and Arduino sketches on the board.
+Five of the 38 — `libpd`, `BelaLibpd`, `pd-externals`, `csound` and
+`BelaArduino` — run Pure Data patches, Csound orchestras and Arduino
+sketches on the board.
 Each is a project of its own rather than a binding, and none of them
 gets easier by being reached from Rust: a program that wants to run a Pd
 patch is better served by Bela's own build for it.
@@ -129,16 +131,18 @@ patch is better served by Bela's own build for it.
 ### Code an application writes better in Rust
 
 Under the rule, these are absent because a wrapper would buy nothing,
-not because the work is queued. Twenty-four of the 38 libraries are
-here, and the grouping is checkable rather than asserted: nineteen of
-them include no Bela header at all, and the five that do — the pin
-helpers' `Bela*` variants — include `Bela.h` only to reach two
-accessors the crate has already rewritten.
+not because the work is queued. Twenty-three of the 38 libraries are
+here, and the grouping is checkable rather than asserted: `grep -rl
+'Bela\.h\|BelaContext'` over the twenty-three directories — sources as
+well as headers — finds seven. Five are the pin helpers, whose `Bela*`
+variants do take a `BelaContext*`; the other two, `OnePole` and
+`WriteFile`, include `Bela.h` and use nothing from it. The remaining
+sixteen name no Bela header anywhere.
 
 | Libraries | Why not |
 |---|---|
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
-| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic on top of `digital_read` and `digital_write`, which the crate already has. The `Bela*` variants do take a `BelaContext*` and include `Bela.h`, but only to reach those two accessors, so what they need from Bela is what a `RenderContext` already is. Each is small enough that wrapping it would cost more than writing it. |
+| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has: `pinMode` (`Debounce`, `Encoder`, `PulseIn`, `ShiftRegister`), `digitalWriteOnce` (`ShiftRegister`), `analogRead` (`SteppedPot`, which touches no digital pin at all) and `map` (`Encoder`, `SteppedPot`), over frame and channel counts a `RenderContext` reports. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
 | `UdpClient`, `UdpServer`, `OscSender`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
 | `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them, and no Bela code behind them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
@@ -237,8 +241,12 @@ allowlist drops them exactly as it drops the GPIO family — but they are
 what a C Bela program *defines* rather than calls, and this crate
 defines its own trampolines and hands them to `Bela_initAudio` as
 `BelaInitSettings` fields, so nothing is missing. `Bela_runAuxiliaryTask`
-is declared inside an `#ifdef __cplusplus`, for the sake of its default
-arguments, so no C binding could reach it at all; it is
+is declared inside an `#ifdef __cplusplus` (`Bela.h:1181`), for the
+sake of its default arguments, so bindgen — which parses `wrapper.h` as
+C — never sees it. The symbol itself is ordinary: `Bela.h`'s
+`extern "C"` block spans the declaration, and `libbela` exports
+`Bela_runAuxiliaryTask` unmangled, so a hand-written `extern` would
+link. It is not worth writing one: the function is
 `Bela_createAuxiliaryTask` followed by `Bela_scheduleAuxiliaryTask`,
 and `AuxiliaryTask` wraps both.
 
@@ -249,11 +257,11 @@ system writes five more that are not an application's to choose: the
 `setup`, `render_pre`, `render`, `render_post` and `cleanup` pointers,
 which `Bela::new` sets to the trampolines that reach
 [`BelaApplication`](../bela/src/application.rs) (`system.rs:387-391`).
-Everything else is left at whatever `Bela_defaultSettings()` — and
-therefore the board's `~/.bela/belaconfig` — gives it. Reaching one
-means
-`Settings::apply_to` on a `BelaInitSettings` of the caller's own and
-`Bela_initAudio` driven by hand, which is what that method is the
+The remaining 25 of the struct's 45 fields are left at whatever
+`Bela_defaultSettings()` — and therefore the board's
+`~/.bela/belaconfig` — gives them, and they are all below. Reaching one
+means `Settings::apply_to` on a `BelaInitSettings` of the caller's own
+and `Bela_initAudio` driven by hand, which is what that method is the
 escape hatch for:
 
 - `numAudioInChannels`, `numAudioOutChannels`
