@@ -147,9 +147,9 @@ three in a `Bela*` variant beside a plain one (`BelaDebounce`,
 `ShiftRegister`, in the only class they have. The other two are
 `OnePole`, which includes `Bela.h` and uses nothing from it at all,
 and `WriteFile`, which uses one line — an `rt_fprintf` on the overrun
-path (`WriteFile.cpp:287`). A third gratuitous include is `Encoder`'s
+path (`WriteFile.cpp:287`). The second gratuitous include is `Encoder`'s
 plain `Encoder.cpp`, in a directory the pin helpers already account
-for.
+for; `WriteFile`'s is not gratuitous, being the one line above.
 
 The remaining sixteen name neither `Bela.h` nor `BelaContext`, which is
 all the grep tests. Four of them do reach sideways into Bela's
@@ -280,13 +280,20 @@ The remaining 25 of the struct's 45 fields start at whatever
 `Bela_defaultSettings()` — and therefore the board's
 `~/.bela/belaconfig` — gives them, and they are all below.
 
-Not exposed is not the same as unreachable. Bela's own command line is
-a layer above `Settings` and wins over it (`cmdline.rs:11-23`), so
-`Bela::run_with_args` and `Bela::new_with_args` hand `--mux-channels`,
-`--pru-number` and `--pru-file` straight through to fields in this
-list, and the crate validates the first two on the way past
+Not exposed is not the same as unreachable, and the gap is wider than
+it looks. Bela's own command line is a layer above `Settings` and wins
+over it (`cmdline.rs:11-23`), so `Bela::run_with_args` and
+`Bela::new_with_args` hand it straight through — and nine of libbela's
+long options write into this list: `--mux-channels`, `--pru-number`,
+`--pru-file`, `--board`, `--codec-mode`, `--audio-expander-inputs`,
+`--audio-expander-outputs`, `--disabled-digital-channels` and
+`--line-out-level`. The crate validates two of them on the way past
 (`settings.rs:895-916`) precisely because a program cannot have set
-them itself. What is missing for the rest is a way for the program to
+them itself; the other seven arrive unexamined. What arriving amounts
+to varies — [board-facts.md](board-facts.md) measured `--board
+BelaMini` on a Gem being logged as requested and then ignored in favour
+of the board libbela detected — but that is libbela's doing, not this
+crate's. What is missing for the rest is a way for the program to
 state a value, not a way for one to arrive. The escape hatch for that
 is `Settings::apply_to` on a `BelaInitSettings` of the caller's own,
 with `Bela_initAudio` driven by hand:
