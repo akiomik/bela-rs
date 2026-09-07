@@ -49,8 +49,10 @@
 //! before reading a failure: `cargo test` runs them in parallel by
 //! default, and while that is sound — every plan here is its own, and
 //! `docs/fft.md` measures four threads transforming at once — a
-//! serial first run leaves nothing to rule out. In CI the device half is type-checked rather than
-//! run: `clippy-aarch64` builds `--all-targets` for
+//! serial first run leaves nothing to rule out.
+//!
+//! In CI the device half is type-checked rather than run:
+//! `clippy-aarch64` builds `--all-targets` for
 //! `aarch64-unknown-linux-gnu`, which is what stops the two
 //! implementations drifting apart.
 
@@ -170,7 +172,8 @@ const fn check_spectrum(length: FftLength, spectrum: &[FftBin]) -> Result<(), Tr
 /// wrong length into a panic instead of an error.
 #[allow(
     clippy::float_cmp,
-    reason = "an endpoint bin has to be exactly zero — that is what a real               signal produces and what realfft requires of it"
+    reason = "an endpoint bin has to be exactly zero — that is what a real \
+              signal produces and what realfft requires of it"
 )]
 fn check_endpoints(spectrum: &[FftBin]) -> Result<(), TransformError> {
     let is_real = |bin: Option<&FftBin>| bin.is_none_or(|bin| bin.im == 0.0);
