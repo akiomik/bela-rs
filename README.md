@@ -29,16 +29,14 @@ compiles — see [MIDI](docs/midi.md).
 The FFT is reached differently again: `bela-sys` declares NE10's
 real-to-complex transform (`libNE10.so.10`, the library Bela's own
 `Fft` class calls) and calls it directly, with no shim and no C++;
-`bela` wraps that as `RealFft` — see [FFT](docs/fft.md). Bela's C++
-libraries themselves (Scope, Trill, Fft, Gui) are out of scope for now
-and may be added incrementally.
+`bela` wraps that as `RealFft` — see [FFT](docs/fft.md).
 
-One corner of the core API is left out on purpose: the Multiplexer
-Capelet accessors. The Capelet is an accessory for the original Bela
-cape and cannot be attached to a Gem, so what a reading means — which
-Capelet pin it came from — cannot be checked on the board this crate is
-measured against. What a Gem does with `--mux-channels` regardless is
-recorded in [Board facts](docs/board-facts.md).
+Bela's other C++ libraries — the browser scope, Trill, the GUI and the
+rest — are not wrapped, and neither is one corner of the core API:
+the Multiplexer Capelet accessors, for an accessory that cannot be
+attached to a Gem at all. What is wrapped, what is left out on purpose
+and why, and what is merely not written yet are in
+[docs/scope.md](docs/scope.md).
 
 The integration model is the officially supported one: a standalone
 binary that defines the render callbacks and links `libbela`,
@@ -124,6 +122,8 @@ audio callback boundary aborts the process either way.
 
 ## Documentation
 
+- [Scope](docs/scope.md) — what is wrapped, what is left out on purpose
+  and why, and what is merely not written yet
 - [Cross-compilation setup](docs/cross-compile.md)
 - [Board facts](docs/board-facts.md) — measured values from the actual board
 - [Connecting the board over Ethernet](docs/board-network.md) — USB

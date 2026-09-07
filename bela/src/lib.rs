@@ -144,6 +144,27 @@
 //! on the board this crate is measured against. `docs/board-facts.md`
 //! records what a Gem does with the multiplexer settings regardless.
 //!
+//! `Midi` is the one C++ library of Bela's own that this crate wraps;
+//! the browser scope, Trill, the GUI and the rest are not. Neither are
+//! the sysfs GPIO functions `libbela` exports, so an arbitrary pin
+//! cannot be read or driven from here. What a callback reaches are the
+//! digital channels of a block — [`RenderContext`] in
+//! [`render`](BelaApplication::render), [`BlockContext`] in
+//! [`render_pre`](BelaApplication::render_pre) and
+//! [`render_post`](BelaApplication::render_post). The pins libbela
+//! keeps for itself, the two LEDs and the stop button, are not an
+//! alternative: [`Settings::enable_led`] and
+//! [`Settings::stop_button_pin`] choose whether libbela claims them,
+//! and declining does not hand them over — which
+//! [`Settings::enable_led`] is the one of the two that argues at
+//! length.
+//!
+//! `docs/scope.md` in the repository lists what is absent with the
+//! reason beside each. It follows the repository rather than a
+//! release, so what it calls wrapped is at least what this version has
+//! and may be more; the crate's own answer is what these pages
+//! document.
+//!
 //! What the program is running on is [`Board::detect`] and
 //! [`Version::running`] — the board libbela says it found, and the
 //! version of the library it found it with. Both answer before there is

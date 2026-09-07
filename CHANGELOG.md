@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Documentation of what these crates cover.
+  [docs/scope.md](docs/scope.md) is one place that answers what is
+  wrapped, what is left out on purpose and why, and what is merely not
+  written yet: all 38 of Bela's C++ libraries, the headers beside them,
+  the corners of the C API that have no safe wrapper, and the
+  `BelaInitSettings` and `BelaContext` fields the safe API does not
+  expose.
+
+  What it sorts by is that a wrapper earns its place when it is the
+  only way to get the thing — Bela's hardware, its real-time
+  machinery, the channel its IDE draws through — and not when a Rust
+  crate already does the job. So most of what is absent is absent by
+  argument rather than by backlog, and each entry says which it is.
+
+  Writing it down turned up three functions worth knowing about before
+  reaching for them, all read from the sources on the board:
+  `Bela_runInSameThread` is a stub that prints and calls `exit(1)`,
+  `Bela_printFlushBuffers` has no body outside a Cobalt build and this
+  image is EVL, and `Bela_HwConfig_new` says in its own comment that it
+  always fails. None is wrapped, and the file now says why none should
+  be until libbela changes.
+
+  Both crate READMEs and `bela`'s crate documentation point at it, and
+  the scope prose they carried in pieces now has one home. No API,
+  behaviour or build requirement changes.
+
 ## [0.8.1] - 2026-09-08
 
 ### Added
