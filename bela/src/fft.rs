@@ -384,9 +384,19 @@ unsafe impl Sync for RealFft {}
 // here, at the type, instead of wherever a downstream first needed a
 // `Send` render state. On a device build the two impls above have
 // already settled it.
+//
+// A trait with the two as supertraits rather than a generic function
+// called for its bounds: both are checked when this compiles, and this
+// one has no function body, so it leaves no line for coverage to
+// count as never run. An assertion that exists to be proved by the
+// compiler should not read as untested code.
 const _: () = {
-    const fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<RealFft>();
+    #[allow(
+        dead_code,
+        reason = "implemented rather than called; the impl below is the assertion"
+    )]
+    trait SendAndSync: Send + Sync {}
+    impl SendAndSync for RealFft {}
 };
 
 impl RealFft {
