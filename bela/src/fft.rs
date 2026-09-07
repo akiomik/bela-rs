@@ -390,6 +390,9 @@ unsafe impl Sync for RealFft {}
 // one has no function body, so it leaves no line for coverage to
 // count as never run. An assertion that exists to be proved by the
 // compiler should not read as untested code.
+//
+// One of three deliberate copies of this idiom; `MidiHandle`'s in
+// `midi.rs` carries the reason they are not one.
 const _: () = {
     #[allow(
         dead_code,
