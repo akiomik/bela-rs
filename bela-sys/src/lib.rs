@@ -52,9 +52,12 @@
 //!   `gpio_get_value` has neither problem, opening and closing the
 //!   file around each reading.
 //! - **A reading is written only on success.** `gpio_get_value` and
-//!   `gpio_read` leave their `*mut c_uint` untouched when they return
-//!   `-1`, so it is not sound to hand either an uninitialised
-//!   location and assume the pointee afterwards.
+//!   `gpio_read` leave their `*mut c_uint` untouched on every failure
+//!   path, so it is not sound to hand either an uninitialised
+//!   location and assume the pointee afterwards. The test is `< 0`
+//!   rather than `== -1`: every failure in this family happens to be
+//!   `-1`, the paths that pass one on getting it from a failed
+//!   `open`, but a negative value is what the family promises.
 //! - **`gpio_dismiss` returns `0` whatever happens.** It closes the
 //!   descriptor and unexports the pin and discards what either of
 //!   them said, so a pin that failed to unexport is reported as one
@@ -69,10 +72,11 @@
 //!   `gpio_set_edge` and `led_set_trigger` both write `strlen(s) + 1`
 //!   bytes, so a pointer into a Rust `&str` sends `strlen` off the end
 //!   of it and puts whatever followed into the sysfs file. Pass a
-//!   [`CStr`](core::ffi::CStr) — `c"rising"` and the like.
-//!   `gpio_set_edge` taking `*mut c_char` rather than `*const` is a
-//!   missing `const` in `GPIOcontrol.h`, not a sign that it writes
-//!   through the pointer; it does not.
+//!   [`CStr`](core::ffi::CStr): `led_set_trigger(1,
+//!   c"heartbeat".as_ptr())`, and — because `GPIOcontrol.h` declares
+//!   the other one `char *` where it means `const char *` —
+//!   `gpio_set_edge(pin, c"rising".as_ptr().cast_mut())`. Neither
+//!   writes through the pointer.
 //! - **`led_set_trigger`'s `lednum` starts at 1 on a Gem.** It builds
 //!   `/sys/class/leds/beaglebone:green:usr%d/trigger`, a path written
 //!   for a `BeagleBone`, whose user LEDs are `usr0` to `usr3`. This
