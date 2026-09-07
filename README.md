@@ -31,8 +31,8 @@ real-to-complex transform (`libNE10.so.10`, the library Bela's own
 `Fft` class calls) and calls it directly, with no shim and no C++;
 `bela` wraps that as `RealFft` — see [FFT](docs/fft.md).
 
-Bela's C++ libraries themselves — the browser scope, Trill, the GUI and
-the rest — are not wrapped, and neither is one corner of the core API:
+Bela's other C++ libraries — the browser scope, Trill, the GUI and the
+rest — are not wrapped, and neither is one corner of the core API:
 the Multiplexer Capelet accessors, for an accessory that cannot be
 attached to a Gem at all. What is wrapped, what is left out on purpose
 and why, and what is merely not written yet are in

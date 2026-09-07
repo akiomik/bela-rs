@@ -37,8 +37,9 @@ fn main() -> Result<(), bela::Error> {
 }
 ```
 
-What this wraps is Bela's core audio API, MIDI and an FFT. Its C++
-libraries — the browser scope, Trill, the GUI and the rest — are not
+What this wraps is Bela's core audio API, an FFT, and one of Bela's own
+C++ libraries: `Midi`, through a shim this workspace compiles. The
+others — the browser scope, Trill, the GUI and the rest — are not
 wrapped.
 [docs/scope.md](https://github.com/akiomik/bela-rs/blob/main/docs/scope.md)
 lists what is in, what is left out on purpose and why, and what is

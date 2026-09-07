@@ -124,9 +124,11 @@ regardless is in [board-facts.md](board-facts.md).
 
 ### Hosting another language runtime
 
-Five of the 38 — `libpd`, `BelaLibpd`, `pd-externals`, `csound` and
-`BelaArduino` — run Pure Data patches, Csound orchestras and Arduino
-sketches on the board.
+Five of the 38 put another language's runtime on the board. `libpd`,
+`BelaLibpd` and `pd-externals` run Pure Data patches; `csound` is
+Csound's own API, shipped as a header; `BelaArduino` puts an
+Arduino-shaped API — `Print`, `Stream`, `Wire` — over that same libpd
+machinery (`BelaArduino.h:1-5`).
 Each is a project of its own rather than a binding, and none of them
 gets easier by being reached from Rust: a program that wants to run a Pd
 patch is better served by Bela's own build for it.
@@ -137,12 +139,17 @@ Under the rule, these are absent because a wrapper would buy nothing,
 not because the work is queued. Twenty-three of the 38 libraries are
 here, and the grouping is checkable rather than asserted: `grep -rl
 'Bela\.h\|BelaContext'` over the twenty-three directories — sources as
-well as headers — finds seven. Five are the pin helpers, which take a
-`BelaContext*` — three of them in a `Bela*` variant beside a plain one
-(`BelaDebounce`, `BelaEncoder`, `BelaSteppedPot`) and two, `PulseIn`
-and `ShiftRegister`, in the only class they have. `OnePole` includes `Bela.h` and uses nothing from it at all;
-`WriteFile` uses one line of it, an `rt_fprintf` on the overrun path
-(`WriteFile.cpp:287`).
+well as headers — hits thirteen files in seven of them.
+
+Five of the seven are the pin helpers, which take a `BelaContext*` —
+three in a `Bela*` variant beside a plain one (`BelaDebounce`,
+`BelaEncoder`, `BelaSteppedPot`) and two, `PulseIn` and
+`ShiftRegister`, in the only class they have. The other two are
+`OnePole`, which includes `Bela.h` and uses nothing from it at all,
+and `WriteFile`, which uses one line — an `rt_fprintf` on the overrun
+path (`WriteFile.cpp:287`). A third gratuitous include is `Encoder`'s
+plain `Encoder.cpp`, in a directory the pin helpers already account
+for.
 
 The remaining sixteen name neither `Bela.h` nor `BelaContext`, which is
 all the grep tests. Four of them do reach sideways into Bela's
