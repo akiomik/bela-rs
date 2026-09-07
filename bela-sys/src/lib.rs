@@ -73,7 +73,12 @@
 //!   as readily on a pin somebody else had already exported. So the
 //!   cleanup that looks obvious here is the same call that takes
 //!   libbela's pin away from a run. Skipping it instead leaves the
-//!   pin in `/sys/class/gpio` after the process exits.
+//!   pin in `/sys/class/gpio` after the process exits. One process
+//!   does not get that success: the test is `if(fd > 0)`, so a
+//!   program whose standard input is closed can be handed descriptor
+//!   0 by the probe, miss the fast path, leak that descriptor and
+//!   fail the export with `EBUSY` — reporting failure for a pin that
+//!   is exported and perfectly usable.
 //! - **The two string arguments have to be NUL-terminated.**
 //!   `gpio_set_edge` and `led_set_trigger` both write `strlen(s) + 1`
 //!   bytes, so a pointer into a Rust `&str` sends `strlen` off the end
