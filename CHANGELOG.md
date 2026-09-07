@@ -77,7 +77,9 @@ and this project adheres to
   `HIGH` constants, and the `PIN_DIRECTION` and `PIN_VALUE` aliases
   they are typed as. A crate that glob-imports `bela_sys` alongside
   another glob providing one of those names has an ambiguity where it
-  had none, and using the name is then `E0659`.
+  had none, and using the name is then `E0659`. `bela` re-exports the
+  crate, so `bela::bela_sys::*` gains them too and a program that
+  never names `bela-sys` in its `Cargo.toml` is reached the same way.
 
   What breaks is narrower than it sounds: it takes two globs, one
   contested name, and code that uses it, and an item a crate defines
@@ -90,7 +92,10 @@ and this project adheres to
   [docs/release.md](docs/release.md).
 
   Nothing else about them is a change: they are new declarations,
-  nothing calls them, and no behaviour on a board differs.
+  nothing calls them, and no behaviour on a board differs. What `bela`'s
+  own documentation said about them was wrong, though, and is corrected
+  with them: it claimed an arbitrary pin "cannot be read or driven from
+  here", which the re-export above makes false.
 
 ## [0.8.1] - 2026-09-08
 

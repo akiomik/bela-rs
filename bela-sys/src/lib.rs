@@ -24,24 +24,42 @@
 //! which, and `docs/scope.md` records what a safe wrapper over these
 //! is still waiting on.
 //!
-//! Three things about the family are easy to get wrong:
+//! Six things about the family are easy to get wrong:
 //!
-//! - [`PIN_DIRECTION`] and [`PIN_VALUE`] name the values its
-//!   arguments take, but they are `c_uint` where every parameter that
-//!   consumes one is `c_int`. `gpio_set_dir(pin, OUTPUT_PIN as
-//!   c_int)` is the spelling that compiles, and so is `gpio_write(fd,
-//!   HIGH as c_int)`. The `*mut c_uint` that `gpio_get_value` and
-//!   `gpio_read` write a reading through is the one place the two
-//!   already agree.
-//! - `gpio_fd_open`'s `writeFlag` is the second argument of `open(2)`
-//!   rather than a boolean — `gpio_setup` passes `O_RDWR` for it —
-//!   and it and `gpio_setup` return a descriptor, where the rest of
-//!   the family returns `0` for success and a negative value for
-//!   failure.
-//! - `gpio_dismiss` returns `0` whatever happens. It closes the
+//! - **The constants are the wrong integer type.** [`PIN_DIRECTION`]
+//!   and [`PIN_VALUE`] name the values its arguments take, but they
+//!   are `c_uint` where every parameter that consumes one is `c_int`.
+//!   `gpio_set_dir(pin, OUTPUT_PIN as c_int)` is the spelling that
+//!   compiles, and so is `gpio_write(fd, HIGH as c_int)`.
+//! - **`writeFlag` is not a flag.** `gpio_fd_open`'s second argument
+//!   is the second argument of `open(2)` — `gpio_setup` passes
+//!   `O_RDWR` for it — and it and `gpio_setup` return a descriptor,
+//!   where the rest of the family returns `0` for success and a
+//!   negative value for failure.
+//! - **`gpio_read` is correct once per descriptor.** It reads a
+//!   single byte and never rewinds, and a sysfs `value` file holds
+//!   `"0\n"`. So the first call answers, the second reads the newline
+//!   — which is not `'0'`, so it reports the pin *high* whatever the
+//!   pin is doing — and every call after that reads nothing and
+//!   returns `-1`. A caller has to `lseek` the descriptor back to 0
+//!   itself before each read. Measured on a board;
+//!   `docs/board-facts.md` in the repository has the transcript.
+//!   `gpio_get_value` does not have the problem, opening and closing
+//!   the file around each reading.
+//! - **A reading is written only on success.** `gpio_get_value` and
+//!   `gpio_read` leave their `*mut c_uint` untouched when they return
+//!   `-1`, so it is not sound to hand either an uninitialised
+//!   location and assume the pointee afterwards.
+//! - **`gpio_dismiss` returns `0` whatever happens.** It closes the
 //!   descriptor and unexports the pin and discards what either of
 //!   them said, so a pin that failed to unexport is reported as one
 //!   that did not.
+//! - **A failed `gpio_setup` can leave the pin exported.** It exports,
+//!   sets the direction and then opens; if either of the last two
+//!   fails it returns a negative value with the export already done
+//!   and no descriptor to hand `gpio_dismiss`. Undoing that takes a
+//!   `gpio_unexport` from the caller, and skipping it leaves the pin
+//!   in `/sys/class/gpio` after the process exits.
 //!
 //! Nor does a failure always announce itself. `gpio_setup` prints to
 //! stdout, and every function that cannot open its sysfs file calls

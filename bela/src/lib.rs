@@ -145,9 +145,13 @@
 //! records what a Gem does with the multiplexer settings regardless.
 //!
 //! `Midi` is the one C++ library of Bela's own that this crate wraps;
-//! the browser scope, Trill, the GUI and the rest are not. Neither are
-//! the sysfs GPIO functions `libbela` exports, so an arbitrary pin
-//! cannot be read or driven from here. What a callback reaches are the
+//! the browser scope, Trill, the GUI and the rest are not. Nor is
+//! there a safe wrapper over the sysfs GPIO functions `libbela`
+//! exports, though [`bela_sys`] binds them and this crate re-exports
+//! it, so an arbitrary pin is reachable through
+//! `bela::bela_sys::gpio_setup` and its neighbours — unsafely, with
+//! the traps that crate's documentation lists, and with nothing here
+//! keeping the call out of `render`. What a callback reaches are the
 //! digital channels of a block — [`RenderContext`] in
 //! [`render`](BelaApplication::render), [`BlockContext`] in
 //! [`render_pre`](BelaApplication::render_pre) and

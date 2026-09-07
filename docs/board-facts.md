@@ -835,6 +835,26 @@ run.
   were `heartbeat`, `mmc1`, `activity` and `none`, and
   `blue:bela-power` was `heartbeat`. What is measured here is that the
   file is there to write, not what writing it does.
+- **`gpio_read` is correct once per descriptor, then wrong, then
+  broken.** It reads one byte and never rewinds
+  (`core/GPIOcontrol.cpp:269-286`), and a sysfs `value` file holds
+  `"0\n"` or `"1\n"`. Three bare one-byte reads of an exported
+  `gpio584` held high, with no `lseek` between them, returned `'1'`,
+  `'\n'` and then nothing:
+
+  | read | byte | what `gpio_read` reports |
+  |---:|---|---|
+  | 1 | `'1'` | high — correct |
+  | 2 | `'\n'` | high, because `'\n'` is not `'0'` — whatever the pin is doing |
+  | 3 | — (0 bytes) | `-1`, and so does every call after it |
+
+  With `lseek(fd, 0, SEEK_SET)` before each read the same three
+  returned `'1'`, `'1'`, `'1'`. So a descriptor from `gpio_setup` or
+  `gpio_fd_open` answers one `gpio_read` and needs rewinding by the
+  caller after that; the defect is libbela's, and nothing in the
+  header says so. `gpio_get_value` is unaffected, opening and closing
+  the file around each reading, and libbela's own `Gpio` never reaches
+  either, going to the mapped registers instead.
 
 ## The Multiplexer Capelet
 
