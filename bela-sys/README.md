@@ -84,6 +84,13 @@ The sysroot is the one synced from the board (see
 [docs/cross-compile.md](../docs/cross-compile.md)); bindgen needs it
 for the libc headers `Bela.h` includes.
 
+The bindgen options live in `xtask/src/generate.rs`. Its allowlist
+takes the functions named `Bela_*` and `rt_*` and nothing else, so what
+the headers declare under another name is absent — the `gpio_*` family
+`Bela.h` pulls in from `GPIOcontrol.h` among it
+([#156](https://github.com/akiomik/bela-rs/issues/156)).
+[docs/scope.md](../docs/scope.md) lists the rest.
+
 ## The MIDI shim
 
 `shim/midi.h` and `shim/midi.cpp` are a C surface over Bela's `Midi`

@@ -37,6 +37,14 @@ fn main() -> Result<(), bela::Error> {
 }
 ```
 
+What this wraps is Bela's core audio API, MIDI and an FFT. Its C++
+libraries — the browser scope, Trill, the GUI and the rest — are not
+wrapped.
+[docs/scope.md](https://github.com/akiomik/bela-rs/blob/main/docs/scope.md)
+lists what is in, what is left out on purpose and why, and what is
+merely not written yet. It follows the repository rather than a
+release, so what it calls wrapped is at least what this version has.
+
 ## One or four threads, one application model
 
 Bela can render a block on all four of a Bela Gem's cores, and it does

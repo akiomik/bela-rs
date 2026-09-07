@@ -144,6 +144,14 @@
 //! on the board this crate is measured against. `docs/board-facts.md`
 //! records what a Gem does with the multiplexer settings regardless.
 //!
+//! Bela's own C++ libraries — the browser scope, Trill, the GUI and
+//! the rest — are not wrapped either, and neither is anything that
+//! reaches a GPIO pin outside a render callback. `docs/scope.md` in
+//! the repository lists them with the reason beside each. It follows
+//! the repository rather than a release, so what it calls wrapped is
+//! at least what this version has and may be more; the crate's own
+//! answer is what these pages document.
+//!
 //! What the program is running on is [`Board::detect`] and
 //! [`Version::running`] — the board libbela says it found, and the
 //! version of the library it found it with. Both answer before there is
