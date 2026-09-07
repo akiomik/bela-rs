@@ -92,19 +92,24 @@ side of it:
 - **The real-time boundary**: `AuxTaskNonRT`, `AuxTaskRT`, `RtThread`,
   `RtLock`, `RtMsgFifo`, `RtWrappers`, `SchedulableTask`. Bela's
   real-time auxiliary task is reached through the C API already, as
-  [`AuxiliaryTask`](../bela/src/task.rs); the *non*-real-time task —
-  Bela's own way to run work on an ordinary thread that a render
-  callback can trigger — has no equivalent here.
+  [`AuxiliaryTask`](../bela/src/task.rs). `AuxTaskNonRT` has no
+  equivalent here: a render callback triggers it by writing to an
+  `RtNonRtMsgFifo` (`AuxTaskNonRT.h:19`, `AuxTaskNonRT.cpp:11-25`),
+  where `AuxTaskRT` holds an `RtMsgFifo` (`AuxTaskRT.h:21`) — two
+  classes in the same header (`RtMsgFifo.h:8,74`). The fifo is what
+  separates them; the thread is not, both going through the same
+  `SchedulableTask`, which starts it with `RtThread`
+  (`SchedulableTask.cpp:45`).
 - **Peripherals outside the audio context**: `Gpio`, `I2c`. `I2c` is an
   `ioctl` wrapper and so the application's to write by the rule above.
   `Gpio` is not: it `mmap`s the GPIO bank and reads and writes the
-  registers directly (`Gpio.h:3,57,64,70`), reaching sysfs only to
-  claim the pin — `Gpio::open` calls `gpio_export` and then maps the
-  bank (`Gpio.cpp:99,108-109`), and nothing after that is a file. That distinction matters for
+  registers directly (`Gpio.h:3,57,64,70`), reaching sysfs only to claim
+  the pin — `Gpio::open` calls `gpio_export` and then maps the bank
+  (`Gpio.cpp:99,108-109`), and nothing after that is a file. That
+  distinction matters for
   [#156](https://github.com/akiomik/bela-rs/issues/156), which is about
-  the sysfs functions in `GPIOcontrol.h`: binding them would give a
-  Rust program a pin, but not the path libbela's own `Gpio` takes to
-  one.
+  the sysfs functions in `GPIOcontrol.h`: binding them would give a Rust
+  program a pin, but not the path libbela's own `Gpio` takes to one.
 - **Block-size adaptation**: `BelaContextFifo`, `BelaContextSplitter`,
   `BelaContextManager`. These are libbela's own, not an application's,
   but what the first one does to digital output persistence is
@@ -301,9 +306,9 @@ The remaining 25 of the struct's 45 fields start at whatever
 `Bela_defaultSettings()` — and therefore the board's
 `~/.bela/belaconfig` — gives them, and they are all below.
 
-Not exposed is not the same as unreachable, and the gap is wider than
-it looks. Bela's own command line is a layer above `Settings` and wins
-over it (`cmdline.rs:11-23`), so `Bela::run_with_args` and
+Not exposed is not the same as unreachable, and the gap is wider than it
+looks. Bela's own command line is a layer above `Settings` and wins over
+it (`cmdline.rs:11-23`), so `Bela::run_with_args` and
 `Bela::new_with_args` hand it straight through — and eleven of the
 options libbela's own usage text lists, the text
 [`print_usage`](../bela/src/cmdline.rs) prints, write into this list:
@@ -314,13 +319,13 @@ options libbela's own usage text lists, the text
 (`RTAudioCommandLine.cpp:306-319,505-521`). `--adc-level` and the two
 `--pga-gain-*` are accepted and discarded with a deprecation warning,
 which is the command line agreeing with the table above about which
-spellings are legacy. Two of them the crate refuses before an audio system is built —
-`--mux-channels` and `--pru-number`, in `check_resolved`
-(`settings.rs:895-916`) — precisely because a program cannot have set
-them itself. The other nine arrive unexamined, and four of those nine
-have been run on a board: [board-facts.md](board-facts.md) records
-`--board BelaMini` logged as requested and then ignored in favour of
-the board libbela detected, `--codec-mode garbage` and
+spellings are legacy. Two of them the crate refuses before an audio
+system is built — `--mux-channels` and `--pru-number`, in
+`check_resolved` (`settings.rs:895-916`) — precisely because a program
+cannot have set them itself. The other nine arrive unexamined, and four
+of those nine have been run on a board: [board-facts.md](board-facts.md)
+records `--board BelaMini` logged as requested and then ignored in
+favour of the board libbela detected, `--codec-mode garbage` and
 `--disabled-digital-channels 65535` doing nothing visible, and
 `--pru-file /nonexistent` failing in `Bela_startAudio`.
 
@@ -329,10 +334,11 @@ libbela's doing rather than this crate's, and it is the other half of
 why the two that are checked are checked. The same page measured what
 the alternative costs: `--pru-number 5`, left to libbela, fails inside
 `Bela_initAudio`, and a failure there takes every later audio system in
-the process with it rather than only the attempt. What is missing for the rest is a way for the program to
-state a value, not a way for one to arrive. The escape hatch for that
-is `Settings::apply_to` on a `BelaInitSettings` of the caller's own,
-with `Bela_initAudio` driven by hand:
+the process with it rather than only the attempt. What is missing for
+the rest is a way for the program to state a value, not a way for one to
+arrive. The escape hatch for that is `Settings::apply_to` on a
+`BelaInitSettings` of the caller's own, with `Bela_initAudio` driven by
+hand:
 
 - `numAudioInChannels`, `numAudioOutChannels`
 - `lineOutGains`, `headphoneGains`, `audioInputGains` and `adcGains`,

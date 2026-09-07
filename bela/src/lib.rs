@@ -155,7 +155,8 @@
 //! keeps for itself, the two LEDs and the stop button, are not an
 //! alternative: [`Settings::enable_led`] and
 //! [`Settings::stop_button_pin`] choose whether libbela claims them,
-//! and declining does not hand them over, as those two say at more
+//! and declining does not hand them over — which
+//! [`Settings::enable_led`] is the one of the two that argues at
 //! length.
 //!
 //! `docs/scope.md` in the repository lists what is absent with the
