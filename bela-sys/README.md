@@ -91,9 +91,10 @@ named `Bela_*` and `rt_*`, and the sysfs GPIO and LED family —
 `GPIOcontrol.h`, together with that header's `PIN_*` enums, which is
 what puts `PIN_DIRECTION`, `PIN_VALUE` and the `INPUT_PIN`,
 `OUTPUT_PIN`, `LOW` and `HIGH` constants in as well — so what the
-headers declare under any other name is absent. A blocklist then removes six the allowlist had taken: the
-`FILE*` and `va_list` printf variants, which would drag glibc
-internals into the bindings and are not usable from Rust anyway.
+headers declare under any other name is absent. A blocklist then
+removes six the allowlist had taken: the `FILE*` and `va_list` printf
+variants, which would drag glibc internals into the bindings and are
+not usable from Rust anyway.
 [docs/scope.md](../docs/scope.md) lists the rest.
 
 ## The MIDI shim

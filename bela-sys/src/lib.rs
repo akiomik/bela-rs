@@ -61,13 +61,19 @@
 //! - **`gpio_dismiss` returns `0` whatever happens.** It closes the
 //!   descriptor and unexports the pin and discards what either of
 //!   them said, so a pin that failed to unexport is reported as one
-//!   that did not.
+//!   that did not. It unexports whether or not this process was what
+//!   exported the pin, too, which on one libbela holds is how a
+//!   program takes an LED or the stop button away from a live run.
 //! - **A failed `gpio_setup` can leave the pin exported.** It exports,
 //!   sets the direction and then opens; if either of the last two
 //!   fails it returns a negative value with the export already done
 //!   and no descriptor to hand `gpio_dismiss`. Undoing that takes a
-//!   `gpio_unexport` from the caller, and skipping it leaves the pin
-//!   in `/sys/class/gpio` after the process exits.
+//!   `gpio_unexport` from the caller — but only where the export was
+//!   this program's, which `gpio_export` cannot say, succeeding just
+//!   as readily on a pin somebody else had already exported. So the
+//!   cleanup that looks obvious here is the same call that takes
+//!   libbela's pin away from a run. Skipping it instead leaves the
+//!   pin in `/sys/class/gpio` after the process exits.
 //! - **The two string arguments have to be NUL-terminated.**
 //!   `gpio_set_edge` and `led_set_trigger` both write `strlen(s) + 1`
 //!   bytes, so a pointer into a Rust `&str` sends `strlen` off the end
