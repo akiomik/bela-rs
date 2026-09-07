@@ -45,16 +45,14 @@
 //!
 //! The tests run against whichever backend the target has, so a
 //! `cargo test` on a laptop exercises `realfft` and one on a board
-//! exercises NE10. In CI the device half is type-checked rather than
+//! exercises NE10. On a board, run them once with `--test-threads=1`
+//! before reading a failure: `cargo test` runs them in parallel by
+//! default, and while that is sound — every plan here is its own, and
+//! `docs/fft.md` measures four threads transforming at once — a
+//! serial first run leaves nothing to rule out. In CI the device half is type-checked rather than
 //! run: `clippy-aarch64` builds `--all-targets` for
 //! `aarch64-unknown-linux-gnu`, which is what stops the two
 //! implementations drifting apart.
-
-#![allow(
-    clippy::float_cmp,
-    reason = "an endpoint bin has to be exactly zero, which is what \
-              realfft requires of it and what a real signal produces"
-)]
 
 use core::f32::consts::TAU;
 
@@ -162,11 +160,21 @@ const fn check_spectrum(length: FftLength, spectrum: &[FftBin]) -> Result<(), Tr
     }
 }
 
-/// The endpoint check, which only runs once the spectrum is known to
-/// be the right length — DC is the first bin and Nyquist the last.
+/// The endpoint check: DC is the first bin and Nyquist the last, and
+/// a real signal's spectrum has no imaginary part in either.
+///
+/// Written with `first` and `last` rather than `[0]` and
+/// `[len - 1]` so that it says nothing about when it is called. It
+/// runs after the length checks today; indexing would make that
+/// ordering load-bearing, and rearranging two lines would turn a
+/// wrong length into a panic instead of an error.
+#[allow(
+    clippy::float_cmp,
+    reason = "an endpoint bin has to be exactly zero — that is what a real               signal produces and what realfft requires of it"
+)]
 fn check_endpoints(spectrum: &[FftBin]) -> Result<(), TransformError> {
-    let nyquist = spectrum.len() - 1;
-    if spectrum[0].im == 0.0 && spectrum[nyquist].im == 0.0 {
+    let is_real = |bin: Option<&FftBin>| bin.is_none_or(|bin| bin.im == 0.0);
+    if is_real(spectrum.first()) && is_real(spectrum.last()) {
         Ok(())
     } else {
         Err(TransformError::EndpointNotReal)
@@ -329,15 +337,15 @@ impl Transform for HostTransform {
 ///
 /// The only `cfg` the program's own code needs: everything below is
 /// written against [`Transform`].
+#[cfg(bela_device)]
 fn transform(length: FftLength) -> impl Transform {
-    #[cfg(bela_device)]
-    {
-        BoardTransform::new(length).expect("NE10 plans every length FftLength holds")
-    }
-    #[cfg(not(bela_device))]
-    {
-        HostTransform::new(length)
-    }
+    BoardTransform::new(length).expect("NE10 plans every length FftLength holds")
+}
+
+/// The transform this target can build. See the device version above.
+#[cfg(not(bela_device))]
+fn transform(length: FftLength) -> impl Transform {
+    HostTransform::new(length)
 }
 
 /// A length every test here uses, short enough to read and long enough
@@ -370,7 +378,20 @@ fn worst_difference(a: &[f32], b: &[f32]) -> f32 {
     a.iter()
         .zip(b)
         .map(|(x, y)| (x - y).abs())
-        .fold(0.0_f32, f32::max)
+        // Not `fold(0.0, f32::max)`. That one returns the *other*
+        // argument when one of them is NaN, so a backend answering
+        // with nothing but NaN would read as a difference of zero and
+        // pass every tolerance below. NaN is how a broken transform
+        // usually arrives — uninitialised scratch, a division by a
+        // zero length, a lost code path — which makes it the one
+        // result these tests must not swallow.
+        .fold(0.0_f32, |worst, difference| {
+            if difference.is_nan() {
+                f32::INFINITY
+            } else {
+                worst.max(difference)
+            }
+        })
 }
 
 /// A tolerance both backends meet with room to spare, and far too
@@ -472,6 +493,11 @@ fn a_spectral_low_pass_keeps_what_it_should() {
 
 /// A refusal leaves both buffers as they were, on either backend.
 #[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "a buffer a refused call must not have touched still holds \
+              exactly what was put in it"
+)]
 fn a_buffer_of_the_wrong_length_is_refused_and_changes_nothing() {
     let length = length();
     let mut fft = transform(length);
@@ -496,10 +522,49 @@ fn a_buffer_of_the_wrong_length_is_refused_and_changes_nothing() {
     );
 }
 
+/// The length checks run in argument order, so the error that comes
+/// back names the buffer to look at first.
+///
+/// The counterpart of `the_check_order_follows_the_argument_order` in
+/// `bela`'s own tests, and the only thing that holds the order the
+/// module documentation promises: with one buffer wrong there is
+/// nothing to order.
+#[test]
+fn the_check_order_follows_the_argument_order() {
+    let length = length();
+    let mut fft = transform(length);
+    let mut signal = vec![0.0_f32; length.get() + 1];
+    let mut spectrum = vec![FftBin::ZERO; length.spectrum_len() + 1];
+
+    // `forward(signal, spectrum)` takes the signal first.
+    assert_eq!(
+        fft.forward(&mut signal, &mut spectrum),
+        Err(TransformError::SignalLen {
+            expected: length.get(),
+            actual: length.get() + 1,
+        }),
+        "with both buffers wrong, forward reports the one it takes first"
+    );
+    // `inverse(spectrum, signal)` takes the spectrum first.
+    assert_eq!(
+        fft.inverse(&mut spectrum, &mut signal),
+        Err(TransformError::SpectrumLen {
+            expected: length.spectrum_len(),
+            actual: length.spectrum_len() + 1,
+        }),
+        "with both buffers wrong, inverse reports the one it takes first"
+    );
+}
+
 /// The endpoint check: a spectrum no real signal could have is refused
 /// before anything is transformed, rather than after, and identically
 /// on both backends.
 #[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "a buffer a refused call must not have touched still holds \
+              exactly what was put in it"
+)]
 fn a_spectrum_with_a_complex_endpoint_is_refused() {
     let length = length();
     let mut fft = transform(length);
