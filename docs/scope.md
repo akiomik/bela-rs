@@ -99,7 +99,8 @@ side of it:
   `ioctl` wrapper and so the application's to write by the rule above.
   `Gpio` is not: it `mmap`s the GPIO bank and reads and writes the
   registers directly (`Gpio.h:3,57,64,70`), reaching sysfs only to
-  claim the pin. That distinction matters for
+  claim the pin — `Gpio::open` calls `gpio_export` and then maps the
+  bank (`Gpio.cpp:99,108-109`), and nothing after that is a file. That distinction matters for
   [#156](https://github.com/akiomik/bela-rs/issues/156), which is about
   the sysfs functions in `GPIOcontrol.h`: binding them would give a
   Rust program a pin, but not the path libbela's own `Gpio` takes to
@@ -206,7 +207,7 @@ site in `bela/src` names — nineteen of the forty-three:
 | Function | What it is for |
 |---|---|
 | `Bela_setPgaGain`, `Bela_setAdcLevel`, `Bela_setADCLevel`, `Bela_setDacLevel`, `Bela_setDACLevel`, `Bela_setHeadphoneLevel` | Six further spellings of the three calls the crate does wrap. `Bela_setPgaGain`, `Bela_setAdcLevel` and `Bela_setADCLevel` all end in the same `gAudioCodec->setInputGain` as `Bela_setAudioInputGain`, which is why one function has a 0.5 dB positive half and a 1.5 dB negative one — measured, and traced through libbela, in [board-facts.md](board-facts.md). `Bela_setDacLevel` is told by its own header to use `Bela_setLineOutLevel`, and `Bela_setDACLevel` and `Bela_setHeadphoneLevel` are the `channel = -1` case of `Bela_setDacLevel` and of `Bela_setHpLevel`. All but `Bela_setAdcLevel` are marked deprecated. None reaches anything the handle does not. |
-| `Bela_runInSameThread` | Running the audio loop on the calling thread instead of a thread of libbela's own, which `Bela::start` does. |
+| `Bela_runInSameThread` | Offered by the header as running the audio loop on the calling thread instead of a thread of libbela's own. On this image it is a stub: `RTAudio.cpp:1014-1018` prints "Turning the current thread into the audio thread is not supported with the POSIX skin." and calls `exit(1)`. Read rather than run — exercising it would end the process — so what is unwrapped here is a name, with nothing behind it to wrap. |
 | `Bela_setUserData` | Replacing the pointer handed to the callbacks. The crate owns that pointer, so exposing it needs a story for what happens to the application it points at. |
 | `Bela_setVerboseLevel` | Verbosity after `Bela_initAudio`; `Settings::verbose` only sets it before. |
 | `Bela_printFlushBuffers` | Flushing the real-time print buffers, which `rt_println!` fills. |
@@ -218,9 +219,10 @@ site in `bela/src` names — nineteen of the forty-three:
 
 ### Not bound at all
 
-Forty-four declarations in the vendored headers reach no binding. They
-fall into four groups, every member is named below, and only one group
-could be answered by changing the generator.
+Forty-four *function declarations* in the vendored headers reach no
+binding. They fall into four groups, every member is named below, and
+only one group could be answered by changing the generator. Four
+things that are not function declarations follow them.
 
 **Twenty-one are `static inline`.** bindgen skips those whatever the
 allowlist says — `wrap_static_fns` is not enabled — and `libbela`
@@ -278,6 +280,16 @@ link. It is not worth writing one: the function is
 `Bela_createAuxiliaryTask` followed by `Bela_scheduleAuxiliaryTask`,
 and `AuxiliaryTask` wraps both.
 
+Beyond those forty-four, **four names in `Bela.h` are function-like
+macros rather than declarations**, which bindgen does not translate:
+`Bela_setBit`, `Bela_clearBit`, `Bela_getBit` and `Bela_changeBit`
+(`Bela.h:1223-1232`). They are bit twiddling on a `uint32_t` — `Bela.h`
+implements `digitalRead` itself as `Bela_getBit(context->digital[frame],
+channel + 16)` — so a Rust program writes the shift and mask where a C
+one writes the macro, which is what `digital_read` does. `_ATTRIBUTE`
+is the only other function-like macro in the three headers, and it is
+the `printf`-attribute plumbing rather than API.
+
 ## Settings and context fields not exposed
 
 `Settings` writes 15 of the fields in `BelaInitSettings`, and the audio
@@ -299,7 +311,7 @@ options libbela's own usage text lists, the text
 `--codec-mode`, `--audio-expander-inputs`, `--audio-expander-outputs`,
 `--disabled-digital-channels`, and the three that fill the gain arrays,
 `--line-out-level`, `--hp-level` and `--audio-input-gain`
-(`RTAudioCommandLine.cpp:306-320,505-521`). `--adc-level` and the two
+(`RTAudioCommandLine.cpp:306-319,505-521`). `--adc-level` and the two
 `--pga-gain-*` are accepted and discarded with a deprecation warning,
 which is the command line agreeing with the table above about which
 spellings are legacy. The crate validates two of them on the way past
