@@ -367,8 +367,37 @@ pub struct RealFft {
 // that takes `&self` and passes the plan to NE10 would break this, and
 // it would compile: the invariant lives here rather than in the type
 // system.
+//
+// Every clause of that is about `plan`, which is why these are gated
+// on the target that has one. Off the device a `RealFft` is a
+// `FftLength` and derives both on its own, so an unconditional
+// `unsafe impl` would say nothing there today — and would silently
+// cover whatever a host field turned out to be.
+#[cfg(bela_device)]
 unsafe impl Send for RealFft {}
+#[cfg(bela_device)]
 unsafe impl Sync for RealFft {}
+
+// So that the host half is a guarantee rather than an accident of the
+// fields, in the style the length bound and the bin layout are pinned
+// in above. A host-only field that was neither `Send` nor `Sync` fails
+// here, at the type, instead of wherever a downstream first needed a
+// `Send` render state. On a device build the two impls above have
+// already settled it.
+//
+// A trait with the two as supertraits rather than a generic function
+// called for its bounds: both are checked when this compiles, and this
+// one has no function body, so it leaves no line for coverage to
+// count as never run. An assertion that exists to be proved by the
+// compiler should not read as untested code.
+const _: () = {
+    #[allow(
+        dead_code,
+        reason = "implemented rather than called; the impl below is the assertion"
+    )]
+    trait SendAndSync: Send + Sync {}
+    impl SendAndSync for RealFft {}
+};
 
 impl RealFft {
     /// A plan for transforms of `length` points.
