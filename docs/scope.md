@@ -54,7 +54,7 @@ callbacks, `Bela_initAudio` and its siblings, the codec levels — is
 what these crates are for, and the exceptions are listed under [Corners
 of the C API](#corners-of-the-c-api-that-are-not-reached) below.
 
-Of the 38 directories under `libraries/`, three are answered:
+Three of the 38 directories under `libraries/` are answered:
 
 | Library | State |
 |---|---|
@@ -134,15 +134,17 @@ Under the rule, these are absent because a wrapper would buy nothing,
 not because the work is queued. Twenty-three of the 38 libraries are
 here, and the grouping is checkable rather than asserted: `grep -rl
 'Bela\.h\|BelaContext'` over the twenty-three directories — sources as
-well as headers — finds seven. Five are the pin helpers, whose `Bela*`
-variants do take a `BelaContext*`; the other two, `OnePole` and
-`WriteFile`, include `Bela.h` and use nothing from it. The remaining
-sixteen name no Bela header anywhere.
+well as headers — finds seven. Five are the pin helpers, which take a
+`BelaContext*` — three of them in a `Bela*` variant beside a plain one
+(`BelaDebounce`, `BelaEncoder`, `BelaSteppedPot`) and two, `PulseIn`
+and `ShiftRegister`, in the only class they have. The other two,
+`OnePole` and `WriteFile`, include `Bela.h` and use nothing from it.
+The remaining sixteen name no Bela header anywhere.
 
 | Libraries | Why not |
 |---|---|
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
-| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has: `pinMode` (`Debounce`, `Encoder`, `PulseIn`, `ShiftRegister`), `digitalWriteOnce` (`ShiftRegister`), and `analogRead` (`SteppedPot`, which touches no digital pin at all), over frame and channel counts a `RenderContext` reports. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
+| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has, and no others: `digitalRead` and `pinMode` in all four of the digital ones, `digitalWriteOnce` in `ShiftRegister`, `analogRead` in `SteppedPot`, which touches no digital pin at all — and `digitalWrite` in none of them. Those, over frame and channel counts a `RenderContext` reports, are the whole of what they ask Bela for. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
 | `UdpClient`, `UdpServer`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
 | `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them, and no Bela code behind them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
