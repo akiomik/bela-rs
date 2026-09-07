@@ -145,12 +145,18 @@
 //! records what a Gem does with the multiplexer settings regardless.
 //!
 //! Bela's own C++ libraries — the browser scope, Trill, the GUI and
-//! the rest — are not wrapped either, and neither is anything that
-//! reaches a GPIO pin outside a render callback. `docs/scope.md` in
-//! the repository lists them with the reason beside each. It follows
-//! the repository rather than a release, so what it calls wrapped is
-//! at least what this version has and may be more; the crate's own
-//! answer is what these pages document.
+//! the rest — are not wrapped either, and neither are the sysfs GPIO
+//! functions `libbela` exports. So an arbitrary pin cannot be read or
+//! driven from here: what this crate reaches are the digital channels
+//! of a block, through [`RenderContext`], and the particular pins
+//! libbela drives for itself — the LEDs, the stop button and the
+//! amplifier mute that [`Bela::mute_speakers`] switches.
+//!
+//! `docs/scope.md` in the repository lists what is absent with the
+//! reason beside each. It follows the repository rather than a
+//! release, so what it calls wrapped is at least what this version has
+//! and may be more; the crate's own answer is what these pages
+//! document.
 //!
 //! What the program is running on is [`Board::detect`] and
 //! [`Version::running`] — the board libbela says it found, and the

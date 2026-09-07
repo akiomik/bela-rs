@@ -129,12 +129,16 @@ patch is better served by Bela's own build for it.
 ### Code an application writes better in Rust
 
 Under the rule, these are absent because a wrapper would buy nothing,
-not because the work is queued. Twenty-four of the 38 libraries are here:
+not because the work is queued. Twenty-four of the 38 libraries are
+here, and the grouping is checkable rather than asserted: nineteen of
+them include no Bela header at all, and the five that do — the pin
+helpers' `Bela*` variants — include `Bela.h` only to reach two
+accessors the crate has already rewritten.
 
 | Libraries | Why not |
 |---|---|
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
-| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic on top of `digital_read` and `digital_write`, which the crate already has. Each is small enough that wrapping it costs more than writing it. |
+| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic on top of `digital_read` and `digital_write`, which the crate already has. The `Bela*` variants do take a `BelaContext*` and include `Bela.h`, but only to reach those two accessors, so what they need from Bela is what a `RenderContext` already is. Each is small enough that wrapping it would cost more than writing it. |
 | `UdpClient`, `UdpServer`, `OscSender`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
 | `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them, and no Bela code behind them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
@@ -158,7 +162,13 @@ detection through `Bela_detectHw`, which `Board::detect` wraps.
 
 ## Corners of the C API that are not reached
 
-Bound in `bela-sys`, no safe wrapper in `bela`:
+Both lists below are set differences rather than hand-picked ones, so a
+reader who suspects an entry has gone missing can recompute them.
+
+### Bound, with no safe wrapper
+
+Every `pub fn` in `bela-sys/src/bindings.rs` that no `bela_sys::` call
+site in `bela/src` names — nineteen of the forty-three:
 
 | Function | What it is for |
 |---|---|
@@ -171,35 +181,32 @@ Bound in `bela-sys`, no safe wrapper in `bela`:
 | `Bela_initRtBackend` | Bringing the real-time backend up separately from the audio system. |
 | `Bela_gettime`, `Bela_clock_gettime`, `Bela_nanosleep` | Real-time safe time and sleep. `std::time` is not safe to call from a render callback, so these have no Rust equivalent on the audio thread. |
 | `Bela_HwConfig_new`, `Bela_HwConfig_delete` | The hardware configuration object. |
+| `Bela_userSettings` | Not a call the program makes but a hook it may define: `Bela.h:742` marks it `#pragma weak`, and `Bela_defaultSettings` calls it if it is there. A Rust program can define it for itself; the crate neither does nor offers a way to, because where a program does hold the call, `Settings` and `validate_settings` cover the same ground with the types checked. |
+| `Bela_deleteAllAuxiliaryTasks`, `rt_printf` | Left alone for reasons the crate already records. `task.rs:36` has the first: it frees every task at once and leaves the handles dangling, which is what `AuxiliaryTask`'s generation counter exists to survive. `print.rs:165` has the second: `rt_println!` calls `Bela_printf` instead, the header describing the `Bela_*` spellings as the future-proof wrappers. |
 
-Not bound at all, and for two different reasons, which is worth
-keeping apart: only one of them could be answered by changing the
-generator.
+### Not bound at all
 
-`cargo xtask bindgen` allows through the functions named `Bela_*` and
-`rt_*` and nothing else (`xtask/src/generate.rs`). **One family is lost
-to that alone:**
+Forty-four declarations in the vendored headers reach no binding. They
+fall into four groups, every member is named below, and only one group
+could be answered by changing the generator.
 
-- **`GPIOcontrol.h`** — thirteen functions, `gpio_setup` through
-  `led_set_trigger`, every one of them exported from the `libbela` the
-  crate already links. The header is vendored, `Bela.h` includes it,
-  and the allowlist is the only thing between it and Rust. That is an
-  oversight rather than a decision:
-  [#156](https://github.com/akiomik/bela-rs/issues/156).
+**Twenty-one are `static inline`.** bindgen skips those whatever the
+allowlist says — `wrap_static_fns` is not enabled — and `libbela`
+exports no symbol for any of them, so a hand-written `extern` would not
+link either. Having them in Rust means writing them in Rust:
 
-**Everything else the headers declare and `bindings.rs` does not is
-`static inline`**, which bindgen skips whatever the allowlist says —
-`wrap_static_fns` is not enabled — and for which `libbela` exports no
-symbol. Widening the allowlist would produce nothing for these, and a
-hand-written `extern` would fail to link. Having them in Rust means
-writing them in Rust, which is what the crate does:
-
-- The I/O accessors — `audioRead` and `audioWrite`, `analogRead`,
-  `analogWrite` and `analogWriteOnce`, `digitalRead`, `digitalWrite`
-  and `digitalWriteOnce`, `pinMode` and `pinModeOnce`, and the `NI`
-  variants of each — rewritten as the methods on `BlockContext` and
-  `RenderContext`, which do the same indexing against the same
-  `BelaContext` fields.
+- The I/O accessors — `audioRead`, `audioWrite`, `analogRead`,
+  `analogWrite`, `analogWriteOnce`, `digitalRead`, `digitalWrite`,
+  `digitalWriteOnce`, `pinMode` and `pinModeOnce` — rewritten as the
+  methods on `BlockContext` and `RenderContext`, which do the same
+  indexing against the same `BelaContext` fields.
+- Their non-interleaved counterparts — `audioReadNI`, `audioWriteNI`,
+  `analogReadNI`, `analogWriteNI` and `analogWriteOnceNI`, the only
+  five there are, the digital and `pinMode` helpers having none —
+  **not** rewritten. The crate's accessors assume the interleaved
+  layout (`context.rs:312`) and nothing checks that the assumption
+  holds, which is
+  [#158](https://github.com/akiomik/bela-rs/issues/158).
 - `constrain`, `map`, `min` and `max` from `Utilities.h` — `constrain`
   and `map` are public in `bela`, and the other two are `std`.
 - `multiplexerAnalogRead` and `multiplexerChannelForFrame`, the Capelet
@@ -208,18 +215,32 @@ writing them in Rust, which is what the crate does:
   them, they could not have been bound. See above for why they are not
   written.
 
-Excluded deliberately, with the reason recorded where it is done:
+**Thirteen are the `GPIOcontrol.h` family** — `gpio_setup`,
+`gpio_export`, `gpio_unexport`, `gpio_set_dir`, `gpio_set_value`,
+`gpio_get_value`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`,
+`gpio_write`, `gpio_read`, `gpio_dismiss` and `led_set_trigger` — and
+these are the ones the allowlist alone accounts for. Every one of them
+is exported from the `libbela` the crate already links, the header is
+vendored, and `Bela.h` includes it, so the allowlist is the only thing
+between them and Rust. That is an oversight rather than a decision:
+[#156](https://github.com/akiomik/bela-rs/issues/156).
 
-- The `FILE*` and `va_list` printf variants — `Bela_fprintf`,
-  `Bela_vprintf`, `rt_fprintf`, `rt_vfprintf` — are blocklisted in
-  `xtask/src/generate.rs`: they would drag glibc internals into the
-  bindings and are not usable from Rust anyway. `Bela_printf` and
-  `rt_printf` are bound, and `rt_println!` is built on the second.
-- `Bela_runAuxiliaryTask` is C++ only — `Bela.h` declares it inside an
-  `#ifdef __cplusplus`, for the sake of its default arguments — so a C
-  binding cannot reach it at all. It is `Bela_createAuxiliaryTask`
-  followed by `Bela_scheduleAuxiliaryTask`, and `AuxiliaryTask` wraps
-  both.
+**Six are the `FILE*` and `va_list` printf variants** — `Bela_fprintf`,
+`Bela_vfprintf`, `Bela_vprintf`, `rt_fprintf`, `rt_vfprintf` and
+`rt_vprintf` — blocklisted in `xtask/src/generate.rs` with the reason
+beside them: they would drag glibc internals into the bindings and are
+not usable from Rust anyway.
+
+**Four are none of those.** `setup`, `render` and `cleanup`
+(`Bela.h:663`, `:679`, `:696`) are ordinary prototypes and the
+allowlist drops them exactly as it drops the GPIO family — but they are
+what a C Bela program *defines* rather than calls, and this crate
+defines its own trampolines and hands them to `Bela_initAudio` as
+`BelaInitSettings` fields, so nothing is missing. `Bela_runAuxiliaryTask`
+is declared inside an `#ifdef __cplusplus`, for the sake of its default
+arguments, so no C binding could reach it at all; it is
+`Bela_createAuxiliaryTask` followed by `Bela_scheduleAuxiliaryTask`,
+and `AuxiliaryTask` wraps both.
 
 ## Settings and context fields not exposed
 
@@ -248,7 +269,10 @@ escape hatch for:
   starts, so a call between `Bela::new` and `Bela::start` reaches the
   hardware in the same state and at the same moment. There is nothing
   left for a setting to carry but a second way to say it.
-- `interleave`, `analogOutputsPersist`, `disabledDigitalChannels`
+- `interleave` — which the accessors nonetheless assume the value of,
+  and nothing checks:
+  [#158](https://github.com/akiomik/bela-rs/issues/158)
+- `analogOutputsPersist`, `disabledDigitalChannels`
 - `audioThreadStackSize`, `auxiliaryTaskStackSize`
 - `ampMutePin`, `codecMode`, `board`, `projectName`
 - `pruNumber`, `pruFilename`
