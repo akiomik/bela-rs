@@ -24,7 +24,7 @@
 //! which, and `docs/scope.md` records what a safe wrapper over these
 //! is still waiting on.
 //!
-//! Six things about the family are easy to get wrong:
+//! Seven things about the family are easy to get wrong:
 //!
 //! - **The constants are the wrong integer type.** [`PIN_DIRECTION`]
 //!   and [`PIN_VALUE`] name the values its arguments take, but they
@@ -36,16 +36,21 @@
 //!   `O_RDWR` for it — and it and `gpio_setup` return a descriptor,
 //!   where the rest of the family returns `0` for success and a
 //!   negative value for failure.
-//! - **`gpio_read` is correct once per descriptor.** It reads a
-//!   single byte and never rewinds, and a sysfs `value` file holds
-//!   `"0\n"`. So the first call answers, the second reads the newline
-//!   — which is not `'0'`, so it reports the pin *high* whatever the
-//!   pin is doing — and every call after that reads nothing and
-//!   returns `-1`. A caller has to `lseek` the descriptor back to 0
-//!   itself before each read. Measured on a board;
-//!   `docs/board-facts.md` in the repository has the transcript.
-//!   `gpio_get_value` does not have the problem, opening and closing
-//!   the file around each reading.
+//! - **`gpio_read` needs the descriptor rewound, and `gpio_write`
+//!   moves it.** The two share one file offset and neither resets it,
+//!   and a sysfs `value` file is two bytes — `"0\n"` or `"1\n"`. On a
+//!   descriptor nothing has written to, the first `gpio_read` answers,
+//!   the second reads the newline — which is not `'0'`, so it reports
+//!   the pin *high* whatever the pin is doing — and every one after
+//!   that reads nothing and returns `-1`. After a `gpio_write`, which
+//!   writes two bytes, the offset is already at the end, so the very
+//!   next `gpio_read` is the one that returns `-1`: writing a pin and
+//!   reading it back on the descriptor `gpio_setup` gave you does not
+//!   work at all. Either way the remedy is the caller's, an `lseek`
+//!   back to 0 before each read. Both measured on a board;
+//!   `docs/board-facts.md` in the repository has the transcripts.
+//!   `gpio_get_value` has neither problem, opening and closing the
+//!   file around each reading.
 //! - **A reading is written only on success.** `gpio_get_value` and
 //!   `gpio_read` leave their `*mut c_uint` untouched when they return
 //!   `-1`, so it is not sound to hand either an uninitialised
@@ -60,6 +65,13 @@
 //!   and no descriptor to hand `gpio_dismiss`. Undoing that takes a
 //!   `gpio_unexport` from the caller, and skipping it leaves the pin
 //!   in `/sys/class/gpio` after the process exits.
+//! - **`led_set_trigger`'s `lednum` starts at 1 on a Gem.** It builds
+//!   `/sys/class/leds/beaglebone:green:usr%d/trigger`, a path written
+//!   for a `BeagleBone`, whose user LEDs are `usr0` to `usr3`. This
+//!   board has `usr1` to `usr4`, so `0` — the obvious first guess, and
+//!   the right one on the hardware the path names — reaches no file
+//!   and comes back `-1` with a `perror`. Measured;
+//!   `docs/board-facts.md` has the inventory.
 //!
 //! Nor does a failure always announce itself. `gpio_setup` prints to
 //! stdout, and every function that cannot open its sysfs file calls

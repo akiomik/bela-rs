@@ -836,11 +836,11 @@ run.
   `blue:bela-power` was `heartbeat`. What is measured here is that the
   file is there to write, not what writing it does.
 - **`gpio_read` is correct once per descriptor, then wrong, then
-  broken.** It reads one byte and never rewinds
-  (`core/GPIOcontrol.cpp:269-286`), and a sysfs `value` file holds
-  `"0\n"` or `"1\n"`. Three bare one-byte reads of an exported
-  `gpio584` held high, with no `lseek` between them, returned `'1'`,
-  `'\n'` and then nothing:
+  broken — and not even once if anything has written.** It reads one
+  byte and never rewinds (`core/GPIOcontrol.cpp:269-286`), and a sysfs
+  `value` file holds `"0\n"` or `"1\n"`. Three bare one-byte reads of
+  an exported `gpio584` held high, with no `lseek` between them,
+  returned `'1'`, `'\n'` and then nothing:
 
   | read | byte | what `gpio_read` reports |
   |---:|---|---|
@@ -855,6 +855,16 @@ run.
   header says so. `gpio_get_value` is unaffected, opening and closing
   the file around each reading, and libbela's own `Gpio` never reaches
   either, going to the mapped registers instead.
+
+  `gpio_write` shares that offset and moves it, so on the descriptor
+  `gpio_setup` returns — which it opens `O_RDWR`
+  (`core/GPIOcontrol.cpp:63`) — a pin cannot be written and read back
+  at all. Measured on the same pin, made an output: the file offset
+  was 0 after the open, `write(fd, "1\0", 2)` put it at 2, and the
+  next one-byte read returned nothing, which is `gpio_read`'s `-1`
+  with its `unsigned int *value` left untouched. An `lseek` back to 0
+  then read `'1'`. So the first read after a write fails where the
+  first read on an untouched descriptor succeeds.
 
 ## The Multiplexer Capelet
 
