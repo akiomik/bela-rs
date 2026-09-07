@@ -6,6 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use bindgen::callbacks::ParseCallbacks;
 
 const TARGET: &str = "aarch64-unknown-linux-gnu";
@@ -38,12 +41,17 @@ const BELA_DEFINES: &[&str] = &[
 /// carries `gpio_functions` as its summary line on docs.rs while its
 /// twelve neighbours carry nothing. Every other comment is passed
 /// through untouched.
+/// Records whether it matched, because a silent miss is the failure
+/// worth catching: nothing about a banner that survives is an error.
 #[derive(Debug)]
-struct DropFamilyBanner;
+struct DropFamilyBanner(Arc<AtomicBool>);
 
 impl ParseCallbacks for DropFamilyBanner {
     fn process_comment(&self, comment: &str) -> Option<String> {
-        comment.trim().eq("gpio_functions").then(String::new)
+        comment.trim().eq("gpio_functions").then(|| {
+            self.0.store(true, Ordering::Relaxed);
+            String::new()
+        })
     }
 }
 
@@ -52,6 +60,12 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     let source = fs::read_to_string(vendor.join("SOURCE")).expect("read vendor SOURCE file");
     let source = source.trim();
     let out = root.join("bela-sys/src/bindings.rs");
+
+    // Set by `DropFamilyBanner` when it matches, and asserted below.
+    // bindgen consults only the *last* registered `parse_callbacks`
+    // for comments, so this one both loses to any registered after it
+    // and suppresses `process_comment` on any registered before it.
+    let banner_dropped = Arc::new(AtomicBool::new(false));
 
     let mut builder = bindgen::Builder::default()
         .header(root.join("bela-sys/wrapper.h").display().to_string())
@@ -95,7 +109,7 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
         .blocklist_type("^__gnuc_va_list$")
         .blocklist_type("^__BindgenOpaqueArray$")
         .derive_default(true)
-        .parse_callbacks(Box::new(DropFamilyBanner))
+        .parse_callbacks(Box::new(DropFamilyBanner(Arc::clone(&banner_dropped))))
         // Formatting is left to `cargo fmt`; see `format`.
         .formatter(bindgen::Formatter::None)
         .raw_line(format!(
@@ -107,18 +121,19 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     }
 
     let bindings = builder.generate().expect("bindgen failed");
-    // `DropFamilyBanner` is defeatable by accident and silent when it
-    // is: bindgen consults only the *last* registered `parse_callbacks`
-    // for comments, so a second one added below this would disable it,
-    // and the match is on the banner's exact text, so an edit to the
-    // vendored header would too. Either way `gpio_setup` quietly
-    // regains a summary line describing the family rather than the
-    // function, and no CI job regenerates this file to notice.
+    // Assert the callback matched rather than that its text is gone.
+    // The two ways it stops working are a later `parse_callbacks`
+    // displacing it and the vendored banner being reworded, and only
+    // the first leaves `gpio_functions` behind to search for: a
+    // reworded banner would be attached to `gpio_setup` under its new
+    // name, which is the outcome this guards against, while a search
+    // for the old name passed. Neither is an error to bindgen, and no
+    // CI job regenerates this file to notice.
     assert!(
-        !bindings.to_string().contains("gpio_functions"),
-        "GPIOcontrol.h's family banner survived DropFamilyBanner: either \
-         a later parse_callbacks displaced it, or the banner's text \
-         changed with the vendored header"
+        banner_dropped.load(Ordering::Relaxed),
+        "DropFamilyBanner never matched: a later parse_callbacks has \
+         displaced it, or GPIOcontrol.h's family banner was reworded, \
+         or the gpio_* family is no longer being generated at all"
     );
     bindings.write_to_file(&out).expect("write bindings.rs");
     format(root);

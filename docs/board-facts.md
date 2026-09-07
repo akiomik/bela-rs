@@ -882,8 +882,10 @@ afterwards.
   listing. Nothing in the workspace calls them, so no build here would
   otherwise find out.
 - **`gpio_write` really does leave the next `gpio_read` with nothing.**
-  `gpio_setup(584, OUTPUT_PIN)` returned descriptor 3;
-  `gpio_write(fd, HIGH)` returned 0; the next `gpio_read` returned
+  `gpio_setup(584, OUTPUT_PIN as c_int)` returned descriptor 3;
+  `gpio_write(fd, HIGH as c_int)` returned 0 — the casts being the
+  first of the traps the crate documentation lists, and what the
+  binary actually ran; the next `gpio_read` returned
   `-1` and left its `unsigned int *value` holding the `0xdeadbeef` it
   had been given, as did the one after it. So the failure is the
   fail-fast one rather than a stale or invented reading —
