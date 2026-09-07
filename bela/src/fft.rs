@@ -354,6 +354,14 @@ pub struct RealFft {
     plan: NonNull<bela_sys::ne10_fft_r2c_state_float32_t>,
 }
 
+// Gated on the target these arguments are about. Off the device there
+// is no `plan` field, so a `RealFft` is a `FftLength` and derives both
+// on its own; an unconditional `unsafe impl` would say nothing here
+// today and would silently cover whatever a host field turned out to
+// be. The assertion below keeps the guarantee stated for both, which
+// is the division worth having: asserted by hand where NE10 is the
+// reason, and concluded by the compiler where it is not.
+//
 // The plan is a `malloc`ed block with no thread affinity: no EVL
 // registration, unlike `MidiOutput`, and nothing address-sensitive
 // inside it. So it moves between threads soundly, which matters
@@ -367,8 +375,22 @@ pub struct RealFft {
 // that takes `&self` and passes the plan to NE10 would break this, and
 // it would compile: the invariant lives here rather than in the type
 // system.
+#[cfg(bela_device)]
 unsafe impl Send for RealFft {}
+#[cfg(bela_device)]
 unsafe impl Sync for RealFft {}
+
+// What both targets promise, in the style the length bound and the bin
+// layout are pinned in above. On a device build this restates what the
+// two impls assert; off it, it is the whole guarantee, and it is the
+// compiler's conclusion rather than ours — which is the point of not
+// writing an `unsafe impl` there. A host-only field that was neither
+// would fail here, at the type rather than at whatever downstream
+// needed a `Send` render state.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<RealFft>();
+};
 
 impl RealFft {
     /// A plan for transforms of `length` points.
