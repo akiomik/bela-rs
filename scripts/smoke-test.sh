@@ -448,13 +448,13 @@ fi
 # cosine and transforms it back, and `cleanup` reports what each
 # transform cost and how many there were.
 #
-# The costs are the one-render-thread column of "What a transform
-# costs" in docs/fft.md, which is the column this run is in: `fft`
-# takes its thread count from an argument the loop above does not pass,
-# and defaults to one. A cost far from them is not this transform any
-# more — a `libNE10` whose inverse stopped applying the `1/N` is what
+# The costs are read against "What a transform costs" in docs/fft.md,
+# whose one-render-thread column is the one this run is in — checked
+# below rather than assumed. A cost far from them is not this transform
+# any more: a `libNE10` whose inverse stopped applying the `1/N` is what
 # the round trip catches, and a debug build or a lost NEON path is what
 # these do.
+
 # A count read out of a log, which has to be a number and above zero:
 # `[ "$c" -eq 0 ]` would answer "not zero" for a field that is not a
 # number at all, and say so on stderr while passing.
@@ -544,6 +544,11 @@ the one-render-thread column of docs/fft.md"
     fail "fft: cleanup reported no analysis transforms"
   elif ! positive_count "$analysis_count"; then
     fail "fft: the analysis ran $analysis_count time(s); nothing was transformed"
+  elif [ -z "$analysis_length" ]; then
+    # No setup line, which failed above. There is no row to read the
+    # cost against without it, and a second failure naming an empty
+    # length says nothing the first one did not.
+    pass "fft: $analysis_count analysis transforms"
   elif [ -z "$analysis_expected" ]; then
     fail "fft: ${analysis_length} points has no cost in docs/fft.md; \
 the example analyses a length this check does not know"
