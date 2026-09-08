@@ -275,11 +275,18 @@ ssh -o ConnectTimeout=10 "$HOST" "
 
 if [ "$alone_status" -ne 0 ]; then
   echo
-  echo "Pass 1 exited $alone_status, so pass 2 is not run: a pass 1 that" >&2
-  echo "stopped part way can leave a pin of its own exported, and pass 2" >&2
-  echo "would then report it as one libbela is holding — which is the" >&2
-  echo "distinction its answers turn on. The handler gives back whatever" >&2
-  echo "the probe was still holding." >&2
+  # 255 is ssh's own, and says nothing about whether the probe ran —
+  # the distinction scripts/probe-fft.sh keeps for the same reason.
+  if [ "$alone_status" -eq 255 ]; then
+    echo "Pass 1's ssh failed (255): a transport failure, which says nothing" >&2
+    echo "about whether the probe ran or what it left." >&2
+  else
+    echo "Pass 1 exited $alone_status: the probe could not ask." >&2
+  fi
+  echo "Pass 2 is not run either way: a pass 1 that stopped part way can" >&2
+  echo "leave a pin of its own exported, and pass 2 would then report it as" >&2
+  echo "one libbela is holding — the distinction its answers turn on. The" >&2
+  echo "handler gives back whatever the probe was still holding." >&2
   exit 1
 fi
 
@@ -383,8 +390,21 @@ echo
 # Pass 1's own failure exits above, at the point where continuing
 # would corrupt pass 2, so only pass 2's status can reach here.
 if [ "$with_run_status" -ne 0 ]; then
-  echo "Pass 2 exited $with_run_status: it could not ask, rather than" >&2
-  echo "getting a surprising answer." >&2
+  # The remote block returns the probe's status where that is non-zero
+  # and the release's otherwise, so `2` here is the release declining
+  # after every question was asked and printed. That transcript is a
+  # measurement; what failed is the tidy-up.
+  if [ "$with_run_status" -eq 255 ]; then
+    echo "Pass 2's ssh failed (255): a transport failure, which says nothing" >&2
+    echo "about whether the probe ran or what it left." >&2
+  elif [ "$with_run_status" -eq 2 ]; then
+    echo "Pass 2 asked its questions — the transcript above stands — but the" >&2
+    echo "release that follows them declined, so a pin may be left exported." >&2
+    echo "See its message above." >&2
+  else
+    echo "Pass 2 exited $with_run_status: it could not ask, rather than" >&2
+    echo "getting a surprising answer." >&2
+  fi
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."

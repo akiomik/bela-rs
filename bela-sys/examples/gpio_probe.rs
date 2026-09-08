@@ -246,19 +246,15 @@ mod imp {
     /// LEDs, which nothing else takes.
     fn release_all() -> Result<(), String> {
         println!("== releasing every pin this probe can claim ==");
-        // The precondition, checked here rather than trusted to every
-        // caller: two of these three are libbela's while a run is up,
-        // and the alone pass refuses for the same reason. `DIGITAL_D0`
-        // is the signal because libbela exports the sixteen channels
-        // for the PRU and gives them back when the run ends. A run
-        // with digital I/O off is not detected by it — the script's
-        // own calls are made where it has just ended the run it
-        // started, which is what covers that.
         // Asked of pins this does *not* release, so that the two it
         // does can always be given back. Guarding on `LED_RUNNING`
         // instead — which is where this started — made the backstop
         // unable to return the pin the alone pass is likeliest to
-        // leak, since every question from 1 to 7 claims it.
+        // leak, since every question from 1 to 7 claims it. And
+        // guarding on `DIGITAL_D0` alone, which came before that,
+        // missed a run with digital I/O off; `a_run_is_up` sees one,
+        // that run still exporting the ADC reset and the SPI DAC chip
+        // select among the twenty.
         if a_run_is_up() {
             // Through `Err` rather than a printed line, because the
             // caller that most needs to know is the script's handler,
