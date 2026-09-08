@@ -212,18 +212,23 @@ mod imp {
     /// here. No configuration measured on this board does that: with
     /// `enable_led` off it exports the other twenty and neither LED,
     /// and with the LEDs on it exports those twenty as well.
-    fn a_run_is_up() -> bool {
-        let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
-            // Unreadable: assume the worse of the two, which is that
-            // something is holding pins.
-            return true;
-        };
-        entries.filter_map(Result::ok).any(|entry| {
+    fn a_run_is_up() -> Result<bool, String> {
+        let entries = fs::read_dir("/sys/class/gpio").map_err(|e| {
+            // Declining is still right — nothing here can be trusted —
+            // but saying "pins are exported" would be a claim about a
+            // directory that could not be read at all.
+            format!(
+                "NOT released: /sys/class/gpio could not be read ({e}), so whether \
+                 anything is holding a pin is unknown. This declines rather than \
+                 guess, and nothing is known to be left exported."
+            )
+        })?;
+        Ok(entries.filter_map(Result::ok).any(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             name.strip_prefix("gpio")
                 .and_then(|rest| rest.parse::<u32>().ok())
                 .is_some_and(|pin| !matches!(pin, LED_RUNNING | LED_UNDERRUN | STOP_BUTTON))
-        })
+        }))
     }
 
     /// Gives back every pin this probe can claim, whether or not this
@@ -255,7 +260,7 @@ mod imp {
         // missed a run with digital I/O off; `a_run_is_up` sees one,
         // that run still exporting the ADC reset and the SPI DAC chip
         // select among the twenty.
-        if a_run_is_up() {
+        if a_run_is_up()? {
             // Through `Err` rather than a printed line, because the
             // caller that most needs to know is the script's handler,
             // which runs this after a `kill -9` — where libbela's

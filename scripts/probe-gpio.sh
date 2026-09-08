@@ -349,7 +349,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
     rm -f sine.pid
     r=\$(cat run.pid 2>/dev/null)
     if [ -z \"\$r\" ] || [ ! -d /proc/\$r ]; then rm -f run.pid; fi
-    exit 3
+    # 4, because 2 and 3 are the probe's: it could not ask, and its
+    # release declined. Nothing here ran the probe at all.
+    exit 4
   fi
   timeout -s INT -k 5 $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
   probe_status=\$?
@@ -401,6 +403,9 @@ if [ "$with_run_status" -ne 0 ]; then
   if [ "$with_run_status" -eq 255 ]; then
     echo "Pass 2's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
+  elif [ "$with_run_status" -eq 4 ]; then
+    echo "Pass 2 could not start a run to ask beside: see sine's output above." >&2
+    echo "No question was put and nothing was tidied, because nothing ran." >&2
   elif [ "$with_run_status" -eq 3 ]; then
     echo "Pass 2 asked its questions — the transcript above stands — but the" >&2
     echo "release that follows them declined, so a pin may be left exported." >&2
