@@ -290,6 +290,16 @@ PROBE_RAN=yes
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR
+  # Before the questions, not only after them. Question 8 answers by
+  # leaving gpio585 exported, and it can only answer where the pin was
+  # free to begin with — so a gpio585 left by an earlier invocation
+  # makes it print "goes unanswered" while the listing below is
+  # byte-for-byte the one a run that answered produces. Its status is
+  # ignored on purpose: where this declines, a run is up, and the
+  # probe's own guard says which pin and why a line later.
+  echo '-- giving back anything an earlier invocation left --'
+  timeout -s INT -k 5 15 ./gpio_probe --release || true
+  echo
   probe_out=\$(timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe 2>&1)
   probe_status=\$?
   echo \"\$probe_out\"
@@ -360,7 +370,18 @@ if [ "$alone_status" -ne 0 ]; then
       echo "release that follows them declined, so a pin may be left exported." >&2
       echo "See its message above." >&2
     fi
+  elif [ "$alone_status" -eq 2 ]; then
+    # A trigger left at `none` exits 6, never 2: the probe's own
+    # precedence rule puts that first. So a 2 is provably a pass that
+    # changed nothing, and the advice below would send an operator to
+    # check four files this run did not touch.
+    PROBE_RAN=no
+    echo "Pass 1's probe declined to ask; see its message above. Nothing was" >&2
+    echo "changed, and nothing is left to put back." >&2
   else
+    # Not cleared here: an unexpected status is a probe that died
+    # without saying so, and question 6 sets a trigger to `none` a line
+    # before it restores it.
     echo "Pass 1 exited $alone_status: the probe could not ask." >&2
   fi
   echo "Pass 2 is not run either way: a pass 1 that stopped part way can" >&2
