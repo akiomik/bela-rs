@@ -89,6 +89,11 @@ BOARD_PREPARED=no
 # own "an LED trigger may be left" advice, which is written for exactly
 # that run.
 INTERRUPTED=no
+# Whether the probe has been started on the board at all. The advice
+# about LED triggers is about question 6, so before that there is
+# nothing to have left behind and telling an operator to go and check
+# four files is noise.
+PROBE_RAN=no
 # Whether the handler has already run. On a signal it runs, exits, and
 # the EXIT trap runs it again; without this the second pass opens
 # another restore ssh — whose failure would report pins and a daemon
@@ -183,7 +188,7 @@ cleanup() {
   # daemon, not the triggers. So say it here, on the path an
   # interrupted run actually takes, rather than after the checks that
   # a failed or interrupted run never reaches.
-  if [ "$status" -ne 0 ]; then
+  if [ "$status" -ne 0 ] && [ "$PROBE_RAN" = yes ]; then
     echo "If this run was interrupted, an LED trigger may be left at none." >&2
     echo "Check with:" >&2
     echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'" >&2
@@ -241,6 +246,7 @@ echo "=============================================================="
 # failing ssh before the assignment ran, and the report at the bottom
 # would be unreachable code.
 alone_status=0
+PROBE_RAN=yes
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR

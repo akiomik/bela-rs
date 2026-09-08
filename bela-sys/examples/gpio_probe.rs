@@ -89,9 +89,9 @@
 //! - A pin exported by something else. `--release` will unexport one
 //!   of its two whoever claimed it — Bela's own two LEDs, which
 //!   nothing else takes on an idle board. It declines outright where
-//!   `gpio584` or `gpio637` is exported, since either says a run may
-//!   be holding them; the cost of that is a pin the probe itself left
-//!   being reported rather than cleared.
+//!   any *other* pin is exported, that being what a run looks like,
+//!   and it asks about those rather than about the LEDs so that the
+//!   LEDs can always be given back.
 
 fn main() {
     imp::main();
@@ -199,6 +199,33 @@ mod imp {
     /// transcript whose point is telling claimed pins from free ones.
     const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN];
 
+    /// Whether anything on the board looks like a run in progress.
+    ///
+    /// Any exported pin other than the two LEDs and the stop button.
+    /// The LEDs cannot be the signal — they are what `--release` gives
+    /// back, so guarding on them would mean never giving them back —
+    /// and the stop button is exported before any run and stays. Every
+    /// other pin of the twenty-two libbela takes for a run is there
+    /// only while one is up; `docs/board-facts.md` lists them.
+    ///
+    /// A run that exported nothing but the LEDs would not be seen
+    /// here. No configuration measured on this board does that: with
+    /// `enable_led` off it exports the other twenty and neither LED,
+    /// and with the LEDs on it exports those twenty as well.
+    fn a_run_is_up() -> bool {
+        let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
+            // Unreadable: assume the worse of the two, which is that
+            // something is holding pins.
+            return true;
+        };
+        entries.filter_map(Result::ok).any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.strip_prefix("gpio")
+                .and_then(|rest| rest.parse::<u32>().ok())
+                .is_some_and(|pin| !matches!(pin, LED_RUNNING | LED_UNDERRUN | STOP_BUTTON))
+        })
+    }
+
     /// Gives back every pin this probe can claim, whether or not this
     /// invocation claimed it.
     ///
@@ -213,10 +240,10 @@ mod imp {
     /// same shape `scripts/probe-io.sh` has always had.
     ///
     /// The cost is that it will unexport one of its two even if
-    /// something else exported it. It declines where either of the
-    /// pins a run holds is claimed, and they are Bela's own two LEDs,
-    /// which nothing else on this board takes while nothing is
-    /// running.
+    /// something else exported it. It declines where any pin outside
+    /// its own set and the stop button is claimed, which is what a run
+    /// looks like; on a board with no run these two are Bela's own
+    /// LEDs, which nothing else takes.
     fn release_all() -> Result<(), String> {
         println!("== releasing every pin this probe can claim ==");
         // The precondition, checked here rather than trusted to every
@@ -227,21 +254,12 @@ mod imp {
         // with digital I/O off is not detected by it — the script's
         // own calls are made where it has just ended the run it
         // started, which is what covers that.
-        // The same two pins the alone pass refuses on, and for the
-        // reason written there: a run with digital I/O off exports no
-        // channel, and one with `enable_led` off exports no LED, so
-        // neither alone covers every configuration. Checking only
-        // `DIGITAL_D0` let this take the LEDs from a run that had
-        // digital off.
-        //
-        // The cost is that `LED_RUNNING` is in the list below *and* in
-        // this check, so a run holding it makes the release decline
-        // rather than give back a pin the probe itself may have left.
-        // That is the ambiguity this design accepts: an export says
-        // the pin is claimed, never by whom. Declining and saying so
-        // is the safe half of it — the operator unexports one pin by
-        // hand, where the other way round takes two from a live run.
-        if exported(DIGITAL_D0) || exported(LED_RUNNING) {
+        // Asked of pins this does *not* release, so that the two it
+        // does can always be given back. Guarding on `LED_RUNNING`
+        // instead — which is where this started — made the backstop
+        // unable to return the pin the alone pass is likeliest to
+        // leak, since every question from 1 to 7 claims it.
+        if a_run_is_up() {
             // Through `Err` rather than a printed line, because the
             // caller that most needs to know is the script's handler,
             // which runs this after a `kill -9` — where libbela's
@@ -249,11 +267,11 @@ mod imp {
             // still there. Silently returning `0` from that is how a
             // board is left claimed with nobody told.
             return Err(format!(
-                "NOT released: gpio{DIGITAL_D0} or gpio{LED_RUNNING} is exported. \
-                 Either a run is up and these are its, or one was killed hard \
-                 enough to skip libbela's teardown and its exports are orphaned. \
-                 An export says a pin is claimed and never by whom, so this \
-                 declines rather than guess; unexport by hand what is left."
+                "NOT released: pins other than gpio{LED_RUNNING}, gpio{LED_UNDERRUN} \
+                 and gpio{STOP_BUTTON} are exported, so either a run is up and the \
+                 LEDs are its, or one was killed hard enough to skip libbela's \
+                 teardown and its exports are orphaned. Either way the LEDs are not \
+                 this probe's to take back; unexport by hand what is left."
             ));
         }
         let mut still_held = Vec::new();
@@ -634,7 +652,10 @@ mod imp {
         println!("\n-- writing gpio{DIGITAL_D0} while the PRU drives it --");
         let d0_direction = direction(DIGITAL_D0);
         println!("  its direction is {d0_direction}");
-        if d0_direction != "in" && !destructive {
+        if d0_direction != "in" && d0_direction != "out" {
+            println!("  not attempted: its direction could not be read, so whether a");
+            println!("  write would contend with a driver is not established");
+        } else if d0_direction == "out" && !destructive {
             println!("  not attempted: writing an output pin contends with its driver,");
             println!("  which is what --destructive is for");
         } else {
