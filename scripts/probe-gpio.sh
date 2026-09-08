@@ -171,8 +171,12 @@ cleanup() {
     undo="$undo; n=0"
     undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; if { alive \$p || alive \$r; } && [ -n \"\$w\" ]"
-    undo="$undo; then kill -9 -\$w 2>/dev/null; fi"
+    # On `$w` being alive, not on either of the other two. A pgid is a
+    # pid and is not reissued while the group has members, so this was
+    # not reachable — but saying so takes an argument about the kernel,
+    # and `alive \$w` says it in three characters. The run is reached by
+    # the per-pid loop below either way; nothing here forks.
+    undo="$undo; if alive \$w; then kill -9 -\$w 2>/dev/null; fi"
     undo="$undo; for t in \$p \$r; do"
     undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
     # And any probe of ours still running, or the release below would
@@ -265,12 +269,19 @@ fi
 # the daemon stopped, and a handler that had not been armed yet would
 # exit silently without putting it back.
 #
-# The directory is removed rather than reused. `cleanup`'s single ssh
-# is allowed to fail, so a previous run can have left `sine.pid` and
-# `run.pid` behind — and a handler acting on a stale pid would signal
-# whatever has since been given that number.
+# The directory is removed rather than reused, and *before* the flag is
+# armed rather than in the same call. `cleanup`'s single ssh is allowed
+# to fail, so a previous run can have left `sine.pid` and `run.pid`
+# behind — and a handler acting on a stale pid would signal whatever has
+# since been given that number. Inside the guarded window that is
+# reachable: `systemctl stop` can take seconds while the daemon holds
+# the audio device, and an interrupt in there would arm the ladder
+# against the files this call had not reached yet.
+# shellcheck disable=SC2029 # the remote path is meant to expand here
+ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
 BOARD_PREPARED=yes
-ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; rm -rf $REMOTE_DIR; mkdir -p $REMOTE_DIR"
+# shellcheck disable=SC2029
+ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
   scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
