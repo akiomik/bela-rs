@@ -49,8 +49,7 @@
 //! With a run up:
 //!
 //! 9. What does claiming one of libbela's own pins return?
-//! 10. What can be read from one, and does a digital channel driven by
-//!     the PRU read back what the PRU is doing?
+//! 10. What can be read from one?
 //! 11. Does a write to a PRU-driven channel reach the pin?
 //! 12. (`--destructive`) What does unexporting one of libbela's pins
 //!     do to the run holding it?
@@ -213,11 +212,18 @@ mod imp {
         // `LED_RUNNING`, which sysfs grants whoever asks. Run against a
         // live run it would take that pin with no `--destructive` and
         // no warning, which is the one act this probe gates.
-        if exported(DIGITAL_D0) {
-            return Err(format!(
-                "gpio{DIGITAL_D0} (digital D0) is exported, so something is rendering; \
-                 these questions claim and release pins and must not run beside a run"
-            ));
+        // Two pins, because neither alone covers every configuration: a
+        // run with digital I/O off exports no channel, and one with
+        // `enable_led` off exports no LED. Where neither is exported
+        // libbela is not holding the running LED either, so there is
+        // nothing for this pass to take.
+        for (what, pin) in [("digital D0", DIGITAL_D0), ("the running LED", LED_RUNNING)] {
+            if exported(pin) {
+                return Err(format!(
+                    "gpio{pin} ({what}) is exported, so something else is holding pins; \
+                     these questions claim and release them and must not run beside a run"
+                ));
+            }
         }
         println!("at rest, /sys/class/gpio holds: {}", listing());
 
@@ -442,20 +448,6 @@ mod imp {
             println!("  gpio_get_value = {ret}, *value {value:#x}");
         }
 
-        // 10 continued: does a PRU-driven channel change under us?
-        println!("\n-- does gpio{DIGITAL_D0} (D0) move while the PRU has it? --");
-        let mut seen = String::new();
-        for _ in 0..10 {
-            let mut value: PIN_VALUE = 0xdead_beef;
-            let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
-            seen.push(if ret == 0 {
-                char::from_digit(value.min(9), 10).unwrap_or('?')
-            } else {
-                'x'
-            });
-        }
-        println!("  ten readings: {seen}");
-
         // 11: writing to a pin the PRU drives. On this board the pin
         // is an input and the write cannot take, which is the answer
         // and is harmless. On a board where it is an output the same
@@ -510,6 +502,12 @@ mod imp {
                     // and the transcript would not say which.
                     println!("  NOT proceeding: what follows would be a bare unexport,");
                     println!("  which is a different thing from taking a pin we held");
+                    // `gpio_setup` sets the direction before it opens,
+                    // so this branch is reached with the run's LED
+                    // already flipped to an input. Put it back.
+                    println!("  restoring its direction to out: {}", unsafe {
+                        gpio_set_dir(LED_RUNNING, arg::OUTPUT)
+                    });
                 } else {
                     println!("  gpio_dismiss = {}", unsafe {
                         gpio_dismiss(fd, LED_RUNNING)

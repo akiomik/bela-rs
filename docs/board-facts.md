@@ -860,6 +860,28 @@ run.
   `blue:bela-power` was `heartbeat`. What is measured here is that the
   file is there to write, not what writing it does.
 
+## What a Bela program is called while it runs
+
+Collected 2026-09-08 while writing `scripts/probe-gpio.sh`, whose
+cleanup depended on getting this wrong.
+
+- **libbela renames the process, so nothing is called what it was
+  built as.** `bela/examples/sine`, run as `./sine`, has
+  `/proc/<pid>/comm` reading `sine:2640:18042` — the binary's name,
+  its pid, and a third number — while `/proc/<pid>/cmdline` stays
+  `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine`
+  reports success having killed nothing, which is a silent no-op
+  rather than an error.
+- **Matching on the command line instead is worse.** `pkill -f
+  './sine'` matches the ssh command line of any script that mentions
+  the binary, this one included, and takes the connection down with
+  the run.
+- **What works is the recorded pid.** `kill -INT` on the pid of the
+  `timeout` managing the run is relayed to the run, libbela's teardown
+  goes through, and its exports are released: measured with fifteen
+  `gpio6*` entries during a run and `gpio586` alone one second after
+  the signal.
+
 ## Reaching a pin through sysfs
 
 Collected 2026-09-08 with `scripts/probe-gpio.sh`, which runs

@@ -88,23 +88,29 @@ cleanup() {
     # cost a full ConnectTimeout, and one WARNING naming everything
     # that may be left rather than three swallowed failures.
     #
-    # The kill comes first, and it is graceful *and* bounded, which
-    # neither half alone gives. `-INT` on its own returns as soon as
-    # the signal is queued, so the daemon below would start while
-    # `sine` still held the audio device. `-9` on its own cannot be
-    # handled, so libbela's teardown never runs and the twenty-two
-    # pins it exported for the run stay exported — after which this
+    # The kill comes first, by pid, and it is graceful *and* bounded.
+    #
+    # By pid because nothing else works here. libbela renames the
+    # process — `comm` becomes `sine:<pid>:<n>`, measured — so
+    # `pkill -x sine` matches nothing and reports success, and
+    # `pkill -f ./sine` matches the ssh command running this script
+    # and kills the connection. Pass 2 writes the pid down for this.
+    #
+    # Graceful and bounded because neither half alone will do. `-INT`
+    # returns as soon as the signal is queued, so the daemon below
+    # would start while the run still held the audio device. `-9`
+    # cannot be handled, so libbela's teardown never runs and the
+    # twenty-two pins it exported stay exported — after which this
     # script's own pass 1 reads `gpio637` and aborts with "something
     # is rendering" when nothing is. So: ask, wait up to six seconds
-    # for it to go (smoke-test.sh budgets five for the same teardown),
-    # then insist. `-x` matches the exact name: the remote cmdline is
-    # `./sine`, so a pattern built from $REMOTE_DIR would match
-    # nothing and report success.
-    undo="pkill -INT -x sine 2>/dev/null"
+    # (smoke-test.sh budgets five for the same teardown), then insist.
+    # `timeout` relays the signal to the run it manages, measured.
+    undo="p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null)"
+    undo="$undo; if [ -n \"\$p\" ]; then kill -INT \$p 2>/dev/null"
     undo="$undo; n=0"
-    undo="$undo; while pgrep -x sine >/dev/null 2>&1 && [ \$n -lt 6 ]"
+    undo="$undo; while [ -d /proc/\$p ] && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; pkill -9 -x sine 2>/dev/null"
+    undo="$undo; kill -9 \$p 2>/dev/null; fi"
     # Only outside pass 2: in it, this pin is libbela's.
     if [ -n "$LEFT_EXPORTED" ] && [ "$PHASE" != 2 ]; then
       undo="$undo; echo $LEFT_EXPORTED > /sys/class/gpio/unexport"
@@ -214,19 +220,29 @@ echo
 echo "=============================================================="
 echo "Pass 2: the probe beside a run${DESTRUCTIVE:+ (destructive)}"
 echo "=============================================================="
-# `sine` is backgrounded with its PID captured rather than matched on
-# later: a cmdline that does not contain the path is how a pkill
-# reports success and kills nothing. `timeout -s INT` bounds it even if
-# the kill is missed, and the sleep is for `Bela_startAudio` to have
-# claimed the pins before the probe looks at them.
+# `sine` is backgrounded with its pid captured and written down, and
+# everything that asks after it asks by that pid. Matching by name
+# cannot work — libbela renames the process, measured in
+# docs/board-facts.md — and matching by cmdline is worse, `./sine`
+# appearing in the ssh command line of this script. `timeout -s INT`
+# bounds the run even if a kill is missed, and the sleep is for
+# `Bela_startAudio` to have claimed the pins before the probe looks.
 with_run_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR
   timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
+  # For the handler, which runs in another connection and cannot see
+  # this shell's job table — and cannot find the run by name either.
+  echo \$sine_pid > sine.pid
   sleep 4
-  if ! kill -0 \$sine_pid 2>/dev/null; then
+  # By pid, and through /proc rather than a signal-0: under a shell
+  # which reaps only at wait, a run that died a second ago is still
+  # a zombie that a signal-0 succeeds on. Not by name either: libbela
+  # renames the process, so nothing here is called sine.
+  alive() { [ -d /proc/\$1 ] && ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }
+  if ! alive \$sine_pid; then
     echo 'sine did not stay up; its output was:'
     cat sine.log
     exit 3
@@ -235,7 +251,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
   probe_status=\$?
   echo
   echo '-- what the run did while that happened --'
-  if kill -0 \$sine_pid 2>/dev/null; then
+  if alive \$sine_pid; then
     echo '   still up at the moment the probe finished'
   else
     echo '   ALREADY GONE before the probe finished'
@@ -260,15 +276,26 @@ ssh -o ConnectTimeout=10 "$HOST" "
   exit \$probe_status
 " || with_run_status=$?
 
-# The run has ended, so a pin pass 1 meant to clear and did not is ours
-# to give back after all.
-PHASE=3
-if [ -n "$LEFT_EXPORTED" ]; then
-  # shellcheck disable=SC2029
-  ssh -o ConnectTimeout=10 "$HOST" \
-    "test -e /sys/class/gpio/gpio$LEFT_EXPORTED &&
-     echo $LEFT_EXPORTED > /sys/class/gpio/unexport &&
-     echo '(gpio$LEFT_EXPORTED was still exported after pass 2; cleared)'" 2>/dev/null || true
+# A pin pass 1 meant to clear and did not is ours to give back — but
+# only once the run has actually ended, and the ssh above returning
+# does not say that: only its normal path reaches `wait`, so a dropped
+# connection leaves `sine` rendering for the rest of its bound. Ask the
+# board rather than assume, or this unexports a live pin, which is the
+# act PHASE exists to prevent.
+# shellcheck disable=SC2029
+if ssh -o ConnectTimeout=10 "$HOST" \
+  "p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null); [ -n \"\$p\" ] && [ -d /proc/\$p ]" 2>/dev/null; then
+  echo "sine is still running, so gpio${LEFT_EXPORTED:-<none>} is left alone;" >&2
+  echo "check for it once that run has ended." >&2
+else
+  PHASE=3
+  if [ -n "$LEFT_EXPORTED" ]; then
+    # shellcheck disable=SC2029
+    ssh -o ConnectTimeout=10 "$HOST" \
+      "test -e /sys/class/gpio/gpio$LEFT_EXPORTED &&
+       echo $LEFT_EXPORTED > /sys/class/gpio/unexport &&
+       echo '(gpio$LEFT_EXPORTED was still exported after pass 2; cleared)'" 2>/dev/null || true
+  fi
 fi
 
 echo
