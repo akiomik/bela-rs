@@ -290,12 +290,13 @@ impl Settings {
     /// application. They are ordinary GPIOs reached through sysfs,
     /// which is file I/O and has no place in a real-time callback, and
     /// this crate has no safe API for them. What it has is the raw
-    /// family [`bela_sys`](crate::bela_sys) binds, which will reach
-    /// any pin by number, these two included — with the traps that
-    /// crate documents, and still as file I/O, so still not from a
-    /// callback. Declining leaves the two pins unexported rather than
-    /// handing them over, which "The board LEDs" in
-    /// `docs/board-facts.md` measured. An indicator a callback can
+    /// family [`bela_sys`](crate::bela_sys) binds, which names a pin
+    /// by number — with the traps that crate documents, and still as
+    /// file I/O, so still not from a callback. What a sysfs write
+    /// reaches while libbela is driving one of these two is not
+    /// measured; what is, in "The board LEDs" in
+    /// `docs/board-facts.md`, is that declining leaves them unexported
+    /// rather than handing them over. An indicator a callback can
     /// drive is an LED on a digital channel, where [`pin_mode`] and
     /// [`digital_write`] are real-time safe and need nothing else —
     /// those two on [`RenderContext`] in [`render`], and their

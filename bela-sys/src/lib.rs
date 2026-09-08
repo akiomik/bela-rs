@@ -22,12 +22,17 @@
 //! Four things about the signatures, which a caller has to honour to
 //! call these correctly at all:
 //!
-//! - **The return value is not uniform.** `gpio_setup` and
-//!   `gpio_fd_open` return a file descriptor; the other eleven return
-//!   `0` for success and a negative value for failure. So the idiom
-//!   that suits eleven of them, `if ret != 0 { ... }`, rejects every
-//!   successful `gpio_setup` — a descriptor is rarely `0` — and
-//!   reading one of those two as a status leaks the descriptor.
+//! - **The return value is not uniform, in three ways.** `gpio_setup`
+//!   and `gpio_fd_open` return a file descriptor, or a negative value
+//!   if they could not open one. Ten of the others return `0` for
+//!   success and a negative value for failure. `gpio_dismiss` returns
+//!   `0` whatever happened and so can never report one. The idiom
+//!   that suits the middle group, `if ret != 0`, therefore rejects
+//!   every successful `gpio_setup` — a descriptor is rarely `0` —
+//!   while reading either of those two as a status leaks the
+//!   descriptor, and a `gpio_setup` that failed passes its `-1` on to
+//!   the next call, where it is a `write(2)` on a bad descriptor
+//!   rather than anything to do with a pin.
 //! - **`writeFlag` is not a flag.** `gpio_fd_open`'s second argument
 //!   is the second argument of `open(2)`; `gpio_setup` passes
 //!   `O_RDWR`, which is `2`. This crate is `no_std` and depends on no
