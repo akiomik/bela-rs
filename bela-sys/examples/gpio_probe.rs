@@ -161,6 +161,15 @@ mod imp {
 
     pub(crate) fn main() {
         let args: Vec<String> = env::args().skip(1).collect();
+        // An unknown argument used to fall through to the alone pass,
+        // so a mistyped `--with_run` ran the pass that takes pins.
+        if let Some(bad) = args
+            .iter()
+            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive" | "--will-leave"))
+        {
+            eprintln!("unknown argument: {bad}");
+            process::exit(2);
+        }
         let with_run = args.iter().any(|a| a == "--with-run");
         let destructive = args.iter().any(|a| a == "--destructive");
 
@@ -199,6 +208,17 @@ mod imp {
     )]
     fn alone_questions() -> Result<(), String> {
         println!("== alone: nothing else should be running ==");
+        // The mirror of the check `with_run_questions` makes, and the
+        // more important of the two: this pass dismisses and unexports
+        // `LED_RUNNING`, which sysfs grants whoever asks. Run against a
+        // live run it would take that pin with no `--destructive` and
+        // no warning, which is the one act this probe gates.
+        if exported(DIGITAL_D0) {
+            return Err(format!(
+                "gpio{DIGITAL_D0} (digital D0) is exported, so something is rendering; \
+                 these questions claim and release pins and must not run beside a run"
+            ));
+        }
         println!("at rest, /sys/class/gpio holds: {}", listing());
 
         // 1. Exporting a free pin, then the same pin again.
@@ -275,20 +295,32 @@ mod imp {
             // marker would otherwise be set to `none` and left there,
             // while the transcript said there was no file at all.
             let Some(before) = current_trigger(n) else {
-                let exists = fs::metadata(trigger_path(n)).is_ok();
-                println!(
-                    "  lednum {n}: not asked — {}",
-                    if exists {
-                        "the file is there but its current trigger could not be read"
-                    } else {
-                        "no such file"
-                    }
-                );
+                if fs::metadata(trigger_path(n)).is_ok() {
+                    // The file is there but would not say what it holds,
+                    // so a write could not be undone. Do not write.
+                    println!("  lednum {n}: not asked — the file is there but its");
+                    println!("    current trigger could not be read, so a write");
+                    println!("    could not be put back");
+                } else {
+                    // Nothing to restore and nothing to break: this is
+                    // the answer for a number naming no file, and it is
+                    // what the `lednum` starting at 1 finding rests on.
+                    let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+                    println!("  lednum {n}: ret {ret} (no such file to begin with)");
+                }
                 continue;
             };
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
             println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
             if let Err(e) = fs::write(trigger_path(n), &before) {
+                // Loudly, and naming both, because nothing else will
+                // put it back: the script's handler covers the GPIO
+                // export, the remote directory and the daemon, not this.
+                eprintln!(
+                    "LEFT CHANGED: usr{n} is now `none` and was `{before}`; \
+                     restore it by hand with: echo {before} > {}",
+                    trigger_path(n)
+                );
                 return Err(format!("could not restore usr{n} to {before}: {e}"));
             }
         }
@@ -367,11 +399,20 @@ mod imp {
         }
 
         // 9 and 10: claiming and reading pins libbela is holding.
+        // Whatever we exported that libbela had not — which happens
+        // with `enable_led` off, where it claims neither LED — is ours
+        // to give back, or the closing listing reports our own leak as
+        // an answer.
+        let mut ours: Vec<u32> = Vec::new();
         for (name, pin) in claimed {
             println!("\n-- {name} (gpio{pin}) --");
-            println!("  exported before we ask: {}", exported(pin));
+            let was_exported = exported(pin);
+            println!("  exported before we ask: {was_exported}");
             println!("  direction: {}", direction(pin));
             println!("  gpio_export = {}", unsafe { gpio_export(pin) });
+            if !was_exported && exported(pin) {
+                ours.push(pin);
+            }
             let mut value: PIN_VALUE = 0xdead_beef;
             let ret = unsafe { gpio_get_value(pin, &raw mut value) };
             println!("  gpio_get_value = {ret}, *value {value:#x}");
@@ -445,6 +486,15 @@ mod imp {
             }
         } else {
             println!("\n(skipping the destructive question; pass --destructive for it)");
+        }
+
+        if ours.is_empty() {
+            println!("\n(libbela had already exported every pin asked about)");
+        } else {
+            println!("\n-- giving back the pins libbela had not exported --");
+            for pin in ours {
+                println!("  gpio_unexport({pin}) = {}", unsafe { gpio_unexport(pin) });
+            }
         }
 
         // The entry check said a run was up. Say whether one still is,

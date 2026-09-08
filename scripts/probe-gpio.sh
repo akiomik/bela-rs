@@ -148,7 +148,7 @@ alone_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR
-  probe_out=\$(timeout -s INT $PROBE_TIMEOUT ./gpio_probe)
+  probe_out=\$(timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe)
   probe_status=\$?
   echo \"\$probe_out\"
   echo
@@ -169,6 +169,14 @@ ssh -o ConnectTimeout=10 "$HOST" "
   exit \$probe_status
 " || alone_status=$?
 
+# Pass 1 clears the pin as its last act, so once it has returned
+# cleanly the handler must stop being armed to clear it again: pass 2
+# has a run holding that same pin, and unexporting it there is the act
+# this script gates behind --destructive.
+if [ "$alone_status" -eq 0 ]; then
+  LEFT_EXPORTED=""
+fi
+
 echo
 echo "=============================================================="
 echo "Pass 2: the probe beside a run${DESTRUCTIVE:+ (destructive)}"
@@ -182,7 +190,7 @@ with_run_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR
-  timeout -s INT $RUN_SECONDS ./sine > sine.log 2>&1 &
+  timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
   sleep 4
   if ! kill -0 \$sine_pid 2>/dev/null; then
@@ -190,7 +198,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
     cat sine.log
     exit 3
   fi
-  timeout -s INT $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
+  timeout -s INT -k 5 $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
   probe_status=\$?
   echo
   echo '-- what the run did while that happened --'
