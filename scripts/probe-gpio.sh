@@ -104,7 +104,7 @@ cleanup() {
     undo="$undo; while [ -d /proc/\$p ] && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; kill -9 \$p 2>/dev/null; fi"
-    undo="$undo; if [ -n \"\$r\" ]; then kill -9 \$r 2>/dev/null; fi"
+    undo="$undo; if [ -n \"\$r\" ] && [ -d /proc/\$r ]; then kill -9 \$r 2>/dev/null; fi"
     # The probe keeps one ledger of the pins it has exported and not
     # given back, in `claimed.pins`, and writes it as it changes. It
     # lists only pins the probe itself exported — `gpio_export` answers
@@ -123,6 +123,17 @@ cleanup() {
       echo "WARNING: could not restore $HOST — check for a leftover sine" \
         "process, the pins named by $REMOTE_DIR/claimed.pins still" \
         "exported, $REMOTE_DIR, and bela_daemon" >&2
+  fi
+  # Question 6 sets an LED trigger to `none` and puts it back a line
+  # later, and nothing here can cover a probe killed in between — the
+  # handler reaches the GPIO exports, the remote directory and the
+  # daemon, not the triggers. So say it here, on the path an
+  # interrupted run actually takes, rather than after the checks that
+  # a failed or interrupted run never reaches.
+  if [ "$status" -ne 0 ]; then
+    echo "If this run was interrupted, an LED trigger may be left at none." >&2
+    echo "Check with:" >&2
+    echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and then walk into
@@ -306,11 +317,3 @@ echo
 echo "If a pin is still exported above that was not before, this probe"
 echo "left it there: that is question 13's answer and not a tidy-up the"
 echo "script forgot."
-echo
-echo "One thing is not covered by any of this. Question 6 sets an LED"
-echo "trigger to \`none\` and puts it back a line later; a probe killed"
-echo "in between — by its timeout, or by a signal — leaves that LED"
-echo "changed, and the handler here covers the GPIO export, the remote"
-echo "directory and the daemon rather than the triggers. If a run was"
-echo "interrupted, check:"
-echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'"

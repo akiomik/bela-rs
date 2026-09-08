@@ -153,8 +153,11 @@ mod imp {
         Some(contents[start..end].to_owned())
     }
 
-    /// Where the ledger lives, beside the binary. The script and its
-    /// handler read it, the handler running in another connection.
+    /// Where the ledger lives: a relative path, so in the working
+    /// directory, which `scripts/probe-gpio.sh` sets to the directory
+    /// it copied this binary into. The script and its handler read it
+    /// there, the handler running in another connection. Run by hand
+    /// from somewhere else and the recovery paths will not find it.
     const LEDGER: &str = "claimed.pins";
 
     /// Every pin this process has exported and not yet given back.
@@ -181,7 +184,16 @@ mod imp {
             ours
         }
 
+        /// Forgets a pin only once it is really gone. `gpio_dismiss`
+        /// discards `gpio_unexport`'s result and returns `0` whatever
+        /// happened, and a bare `gpio_unexport` here is not checked
+        /// either, so releasing on the call rather than on the pin
+        /// would drop from the ledger exactly the pins that failed to
+        /// come back — which is the leak it exists to catch.
         fn release(&mut self, pin: u32) {
+            if exported(pin) {
+                return;
+            }
             self.0.retain(|&held| held != pin);
             self.flush();
         }
@@ -458,11 +470,21 @@ mod imp {
             gpio_export(LED_UNDERRUN)
         });
         let ours = held.claim(LED_UNDERRUN, was_exported);
-        if was_exported || !ours {
+        if was_exported {
             println!("  it was already exported before this probe asked, so there is");
-            println!("  nothing of ours here to leave behind or to give back");
+            println!("  nothing of ours here to leave behind, and this question");
+            println!("  goes unanswered rather than answered by somebody else's pin");
             println!("\nleaving /sys/class/gpio at: {}", listing());
             return Ok(());
+        }
+        if !ours {
+            // The pin was free and is still not exported, so the call
+            // failed. Saying "already exported" here would report the
+            // question as answered when it was never asked.
+            return Err(format!(
+                "gpio_export({LED_UNDERRUN}) left the pin unexported, so question 8 \
+                 could not be put"
+            ));
         }
         println!("  exiting now WITHOUT unexporting it, on purpose");
         // Not released, so it stays in the ledger — which is what
