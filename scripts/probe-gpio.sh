@@ -285,23 +285,31 @@ echo "=============================================================="
 # failing ssh before the assignment ran, and the report at the bottom
 # would be unreachable code.
 alone_status=0
-# Question 6 touches the LED triggers, and it is in this pass only.
+# Before the questions, not only after them. Question 8 answers by
+# leaving gpio585 exported, and it can only answer where the pin was
+# free to begin with — so a gpio585 left by an earlier invocation makes
+# it report the question as unanswered while the listing pass 1 prints
+# is byte-for-byte the one a run that answered produces. Its status is
+# ignored on purpose: where this declines, a run is up, and the probe's
+# own guard names the pin and the reason a moment later.
+#
+# In its own connection, and before PROBE_RAN is armed below, because it
+# can take fifteen seconds: an interrupt inside it would otherwise send
+# an operator to check four LED triggers that question 6 had not reached.
+echo "-- giving back anything an earlier invocation left --"
+# shellcheck disable=SC2029
+ssh -o ConnectTimeout=10 "$HOST" "cd $REMOTE_DIR &&
+  timeout -s INT -k 5 15 ./gpio_probe --release" || true
+echo
+
+# Question 6 touches the LED triggers, and it is in this pass only. The
+# window this over-covers is what is left of the one above: the connect,
+# and the run up to question 6. Nothing here can see where the probe got
+# to, and the advice is written as a conditional for that reason.
 PROBE_RAN=yes
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR
-  # Before the questions, not only after them. Question 8 answers by
-  # leaving gpio585 exported, and it can only answer where the pin was
-  # free to begin with — so a gpio585 left by an earlier invocation
-  # makes it report the question as unanswered while the listing below
-  # is byte-for-byte the one a run that answered produces. (No quotes
-  # in here: this comment is inside the double-quoted ssh string, and
-  # an unescaped pair splits the remote script into two arguments.) Its status is
-  # ignored on purpose: where this declines, a run is up, and the
-  # probe's own guard says which pin and why a line later.
-  echo '-- giving back anything an earlier invocation left --'
-  timeout -s INT -k 5 15 ./gpio_probe --release || true
-  echo
   probe_out=\$(timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe 2>&1)
   probe_status=\$?
   echo \"\$probe_out\"
