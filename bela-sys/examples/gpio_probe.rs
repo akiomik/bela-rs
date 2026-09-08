@@ -86,6 +86,11 @@
 //!   line later; a probe killed in between leaves it changed, and
 //!   nothing here restores triggers. The script says so and gives the
 //!   command to check.
+//! - A digital channel left driven. Question 11 writes one and puts
+//!   it back a line later, and a probe killed in between leaves it
+//!   driving against the PRU for the rest of the run. `--release`
+//!   unexports pins; nothing here restores a pin's *value*, and the
+//!   run's own end is what clears it.
 //! - A pin exported by something else. `--release` will unexport one
 //!   of its two whoever claimed it — Bela's own two LEDs, which
 //!   nothing else takes on an idle board. It declines outright where
@@ -468,6 +473,10 @@ mod imp {
 
         // 6. Which LED numbers name a file.
         println!("\n-- 6. led_set_trigger --");
+        // The branch below that finds an unreadable file does not call
+        // it, so a pass in which every number took that branch would be
+        // evidence for twelve of the thirteen while exiting 0.
+        let mut trigger_called = false;
         for &n in LED_NUMBERS {
             // Read first, and only write what can be put back. A file
             // that exists but cannot be read for its `[selected]`
@@ -485,11 +494,13 @@ mod imp {
                     // the answer for a number naming no file, and it is
                     // what the `lednum` starting at 1 finding rests on.
                     let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+                    trigger_called = true;
                     println!("  lednum {n}: ret {ret} (no such file to begin with)");
                 }
                 continue;
             };
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+            trigger_called = true;
             if ret != 0 {
                 // Nothing was changed, so there is nothing to restore
                 // — and restoring anyway would write the same
@@ -512,6 +523,14 @@ mod imp {
                 );
                 return Err(format!("could not restore usr{n} to {before}: {e}"));
             }
+        }
+
+        if !trigger_called {
+            return Err(
+                "every lednum named a file whose current trigger could not be read, so \
+                 led_set_trigger went uncalled and this pass is not evidence for it"
+                    .to_owned(),
+            );
         }
 
         // The four this pass's questions never reach. `gpio_fd_close`
@@ -677,6 +696,9 @@ mod imp {
         // call would contend with whatever is driving it — the
         // loopback rig in "What a digital pin does" is one — so that
         // case needs the same opt-in the destructive question has.
+        // Carried rather than returned on the spot: the pins below are
+        // owed back first, and a bare `return Err` here would leak them.
+        let mut left_driven = false;
         println!("\n-- writing gpio{DIGITAL_D0} while the PRU drives it --");
         let d0_direction = direction(DIGITAL_D0);
         println!("  its direction is {d0_direction}");
@@ -709,9 +731,23 @@ mod imp {
                 } else {
                     "LOW, its value not having been readable first".to_owned()
                 };
-                println!("  restoring to {to}: {}", unsafe {
-                    gpio_set_value(DIGITAL_D0, restore)
-                });
+                let put_back = unsafe { gpio_set_value(DIGITAL_D0, restore) };
+                println!("  restoring to {to}: {put_back}");
+                if put_back != 0 {
+                    // Reachable only under `--destructive` on a board
+                    // where D0 is an output — this one has it as an
+                    // input, where the write above cannot take. There
+                    // the channel is now driven against the PRU until
+                    // the run ends, which is the same class of thing as
+                    // question 6's trigger and is treated the same way:
+                    // loudly, and the pass fails. Not here, though —
+                    // the pins below are still owed back first.
+                    eprintln!(
+                        "LEFT CHANGED: gpio{DIGITAL_D0} was written HIGH and would not go \
+                         back ({put_back}); it is driving against the PRU until the run ends"
+                    );
+                    left_driven = true;
+                }
             } else {
                 println!("  the write did not take, so there is nothing to put back");
             }
@@ -817,6 +853,15 @@ mod imp {
         }
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
+        // Last, so that everything above — the give-back and the two
+        // reports — has run first. A restore that refused is the one
+        // thing this pass can leave behind that neither `--release`
+        // nor the script's handler reaches.
+        if left_driven {
+            return Err(format!(
+                "gpio{DIGITAL_D0} was left driven; see LEFT CHANGED above"
+            ));
+        }
         Ok(())
     }
 
