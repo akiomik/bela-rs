@@ -281,6 +281,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # pass 2 start with gpio585 still exported — which it would then
   # report as a pin libbela is holding, the distinction every answer in
   # that pass turns on.
+  # 5, not 124: the release below is wrapped in timeout too, so
+  # letting the probe own 124 through would leave the two
+  # indistinguishable, which is what 3 was before it was split out.
+  if [ \$probe_status -eq 124 ]; then exit 5; fi
   if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
   exit \$release_status
 " || alone_status=$?
@@ -292,6 +296,10 @@ if [ "$alone_status" -ne 0 ]; then
   if [ "$alone_status" -eq 255 ]; then
     echo "Pass 1's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
+  elif [ "$alone_status" -eq 5 ]; then
+    echo "Pass 1's probe hit its own timeout part way through: the transcript" >&2
+    echo "above stops wherever it stopped, and is not a complete measurement." >&2
+    echo "The tidy-up after it did run." >&2
   elif [ "$alone_status" -eq 124 ]; then
     echo "Pass 1's tidy-up hit its own timeout: the questions were asked and" >&2
     echo "the transcript above stands, but a pin may be left exported." >&2
@@ -409,6 +417,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # not looking at libbela's pins.
   release_status=0
   timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
+  if [ \$probe_status -eq 124 ]; then exit 5; fi
   if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
   exit \$release_status
 " || with_run_status=$?
@@ -427,6 +436,10 @@ if [ "$with_run_status" -ne 0 ]; then
   elif [ "$with_run_status" -eq 4 ]; then
     echo "Pass 2 could not start a run to ask beside: see sine's output above." >&2
     echo "No question was put and nothing was tidied, because nothing ran." >&2
+  elif [ "$with_run_status" -eq 5 ]; then
+    echo "Pass 2's probe hit its own timeout part way through: the transcript" >&2
+    echo "above stops wherever it stopped, and is not a complete measurement." >&2
+    echo "The tidy-up after it did run." >&2
   elif [ "$with_run_status" -eq 124 ]; then
     echo "Pass 2's tidy-up hit its own timeout: the questions were asked and" >&2
     echo "the transcript above stands, but a pin may be left exported." >&2
