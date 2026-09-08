@@ -73,6 +73,9 @@ DAEMON_WAS_RUNNING=0
 # probe is asked for the number rather than it being written here: it
 # derives it from bank bases that are measured and can move.
 LEFT_EXPORTED=""
+# Which pass is running, because it decides whether the handler may
+# give `$LEFT_EXPORTED` back: in pass 2 that pin is libbela's.
+PHASE=1
 
 BOARD_PREPARED=no
 
@@ -85,16 +88,25 @@ cleanup() {
     # cost a full ConnectTimeout, and one WARNING naming everything
     # that may be left rather than three swallowed failures.
     #
-    # The kill is `-9` and comes first. `-INT` is the graceful path:
-    # libbela's handler tears the audio system down, and `pkill`
-    # returns as soon as the signal is queued rather than when the
-    # process is gone — so the daemon below would start while `sine`
-    # still held the audio device, which is the one thing killing it
-    # is for. `-x` matches the exact name: the remote cmdline is
+    # The kill comes first, and it is graceful *and* bounded, which
+    # neither half alone gives. `-INT` on its own returns as soon as
+    # the signal is queued, so the daemon below would start while
+    # `sine` still held the audio device. `-9` on its own cannot be
+    # handled, so libbela's teardown never runs and the twenty-two
+    # pins it exported for the run stay exported — after which this
+    # script's own pass 1 reads `gpio637` and aborts with "something
+    # is rendering" when nothing is. So: ask, wait up to six seconds
+    # for it to go (smoke-test.sh budgets five for the same teardown),
+    # then insist. `-x` matches the exact name: the remote cmdline is
     # `./sine`, so a pattern built from $REMOTE_DIR would match
     # nothing and report success.
-    undo="pkill -9 -x sine"
-    if [ -n "$LEFT_EXPORTED" ]; then
+    undo="pkill -INT -x sine 2>/dev/null"
+    undo="$undo; n=0"
+    undo="$undo; while pgrep -x sine >/dev/null 2>&1 && [ \$n -lt 6 ]"
+    undo="$undo; do sleep 1; n=\$((n+1)); done"
+    undo="$undo; pkill -9 -x sine 2>/dev/null"
+    # Only outside pass 2: in it, this pin is libbela's.
+    if [ -n "$LEFT_EXPORTED" ] && [ "$PHASE" != 2 ]; then
       undo="$undo; echo $LEFT_EXPORTED > /sys/class/gpio/unexport"
     fi
     undo="$undo; rm -rf $REMOTE_DIR"
@@ -134,8 +146,12 @@ echo "Preparing $HOST..."
 if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>/dev/null; then
   DAEMON_WAS_RUNNING=1
 fi
-ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
+# Armed before the stop rather than after it, as the sibling scripts
+# do: an interrupt or a dropped connection *during* this call can leave
+# the daemon stopped, and a handler that had not been armed yet would
+# exit silently without putting it back.
 BOARD_PREPARED=yes
+ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
   scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
@@ -187,13 +203,12 @@ ssh -o ConnectTimeout=10 "$HOST" "
   exit \$probe_status
 " || alone_status=$?
 
-# Disarm before pass 2 whatever pass 1 did. Pass 1 clears the pin as
-# its last act, and its failure paths return before question 8 exports
-# anything at all — but neither of those is what decides it. What does
-# is that pass 2 has a live run holding that same pin, so a handler
-# still armed there would unexport it out from under the run, which is
-# the one act this script gates behind --destructive.
-LEFT_EXPORTED=""
+# Pass 2 has a live run holding that same pin, so the handler must not
+# unexport it there — that is the act this script gates behind
+# --destructive. But disarming outright loses the pin when pass 1 never
+# reached its own clear, which is exactly what the handler is for. So
+# the pin stays recorded and the phase decides whether to act on it.
+PHASE=2
 
 echo
 echo "=============================================================="
@@ -244,6 +259,17 @@ ssh -o ConnectTimeout=10 "$HOST" "
   echo
   exit \$probe_status
 " || with_run_status=$?
+
+# The run has ended, so a pin pass 1 meant to clear and did not is ours
+# to give back after all.
+PHASE=3
+if [ -n "$LEFT_EXPORTED" ]; then
+  # shellcheck disable=SC2029
+  ssh -o ConnectTimeout=10 "$HOST" \
+    "test -e /sys/class/gpio/gpio$LEFT_EXPORTED &&
+     echo $LEFT_EXPORTED > /sys/class/gpio/unexport &&
+     echo '(gpio$LEFT_EXPORTED was still exported after pass 2; cleared)'" 2>/dev/null || true
+fi
 
 echo
 if [ "$alone_status" -ne 0 ] || [ "$with_run_status" -ne 0 ]; then

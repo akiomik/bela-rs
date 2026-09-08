@@ -332,12 +332,15 @@ mod imp {
             }
         }
 
-        // The three the questions above never reach — `gpio_fd_close`
-        // is not among them, question 3 having closed its descriptor.
+        // The four this pass's questions never reach. `gpio_fd_close`
+        // is not among them, question 3 having closed its descriptor;
+        // `gpio_set_value` is, being reached only by the with-run
+        // pass, and only there under a condition — so without it here
+        // an operator who ran pass 1 alone would have linked twelve.
         // Nothing here is a question: they are called so that a probe
         // which links and runs is evidence for all thirteen symbols
-        // rather than the ten the questions need.
-        println!("\n-- the remaining three, called only to link them --");
+        // rather than for the nine this pass needs.
+        println!("\n-- the remaining four, called only to link them --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 >= 0 {
             println!("  gpio_set_dir(INPUT) = {}", unsafe {
@@ -349,6 +352,10 @@ mod imp {
             let ro = unsafe { gpio_fd_open(LED_RUNNING, 0) };
             println!("  gpio_fd_open(O_RDONLY) = {ro}");
             println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
+            // An input, so this cannot take; the point is the link.
+            println!("  gpio_set_value(LOW) = {}", unsafe {
+                gpio_set_value(LED_RUNNING, arg::LOW)
+            });
             let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
         } else {
             // Two of `gpio_setup`'s three failure paths leave the pin
