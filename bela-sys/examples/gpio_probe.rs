@@ -600,15 +600,31 @@ mod imp {
             };
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
             trigger_called = true;
-            if ret != 0 {
-                println!("  lednum {n}: ret {ret} (unchanged, so nothing to restore)");
-                // Nothing was changed, so there is nothing to restore —
-                // and restoring anyway would write the same attribute
-                // that just refused a write, then report a failure to
-                // put back something that never moved.
-                continue;
+            if ret == 0 {
+                println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
+            } else {
+                // `led_set_trigger` answers `-1` for a failed `open` and
+                // for a failed `write` alike (`GPIOcontrol.cpp:335,340`),
+                // and only the first is measured here — usr0, ENOENT. So
+                // ask the file rather than the return: a write that
+                // failed after the attribute had taken `none` would
+                // otherwise be skipped as nothing to restore, which is
+                // the one outcome question 6 has to catch.
+                match current_trigger(n) {
+                    Some(now) if now == before => {
+                        println!("  lednum {n}: ret {ret}, still [{before}] — unchanged");
+                        continue;
+                    }
+                    Some(now) => {
+                        println!("  lednum {n}: ret {ret} but it reads [{now}] — restoring");
+                    }
+                    None => {
+                        // Writing back what it held is the only thing
+                        // that can help; a failure is reported below.
+                        println!("  lednum {n}: ret {ret} and it no longer reads — restoring");
+                    }
+                }
             }
-            println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
             if let Err(e) = fs::write(trigger_path(n), &before) {
                 // Loudly, and naming both, because nothing else will
                 // put it back: the script's handler covers the GPIO
@@ -934,9 +950,26 @@ mod imp {
                     // not what it holds now: `gpio_setup` may have
                     // failed at the export, before touching direction.
                     let now = direction(LED_RUNNING);
+                    let readable = |d: &str| d == "in" || d == "out";
                     if now == direction_before {
                         println!("  its direction is unchanged, so nothing to put back");
-                    } else if direction_before == "out" || direction_before == "in" {
+                    } else if !readable(&now) {
+                        // `direction` reports a read failure as its own
+                        // message, so `now` is not a direction here and
+                        // the branch below would call `gpio_set_dir` on
+                        // a pin it cannot address, then describe the
+                        // failure as an input. Not knowing is not the
+                        // same as nothing having changed: `gpio_setup`
+                        // sets the direction before it opens.
+                        println!("  its direction no longer reads as one ({now}), so whether");
+                        println!("  it was changed cannot be established, let alone put back");
+                        eprintln!(
+                            "LEFT CHANGED: gpio{LED_RUNNING} was {direction_before} and its \
+                             direction cannot be read now ({now}); it is not known to have \
+                             been put back"
+                        );
+                        *left_changed = true;
+                    } else if readable(&direction_before) {
                         let back = if direction_before == "out" {
                             arg::OUTPUT
                         } else {
