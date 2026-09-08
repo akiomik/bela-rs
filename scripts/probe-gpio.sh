@@ -312,7 +312,11 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # 5, not 124: the release below is wrapped in timeout too, so
   # letting the probe own 124 through would leave the two
   # indistinguishable, which is what 3 was before it was split out.
-  if [ \$probe_status -eq 124 ]; then exit 5; fi
+  # 137 as well as 124: measured on the board, GNU timeout 9.1 returns
+  # 124 where its signal took and 137 where the -k SIGKILL had to
+  # finish the job. Only the second can leave a pin claimed, but both
+  # mean the same thing to a reader of the transcript.
+  if [ \$probe_status -eq 124 ] || [ \$probe_status -eq 137 ]; then exit 5; fi
   if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
   exit \$release_status
 " || alone_status=$?
@@ -329,20 +333,25 @@ if [ "$alone_status" -ne 0 ]; then
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
     echo "The tidy-up after it did run." >&2
   elif [ "$alone_status" -eq 6 ]; then
-    echo "Pass 1 asked its questions — the transcript above stands — but an LED" >&2
-    echo "trigger would not go back, so one is left at none. See LEFT CHANGED" >&2
-    echo "above, which names the command to put it back; nothing in this tree" >&2
-    echo "restores a trigger." >&2
-  elif [ "$alone_status" -eq 124 ] || [ "$alone_status" -eq 3 ]; then
-    # Both mean the probe itself returned 0 and only the release after
-    # it went wrong, so question 6 put every trigger back — the probe
-    # fails the pass otherwise. Clear the flag here as well as after a
+    echo "Pass 1 left an LED trigger at none. See LEFT CHANGED above, which" >&2
+    echo "names the command to put it back; nothing in this tree restores a" >&2
+    echo "trigger. A 'could not ask:' line above it, if there is one, says the" >&2
+    echo "pass also stopped short of its last questions." >&2
+  elif [ "$alone_status" -eq 124 ] || [ "$alone_status" -eq 137 ] ||
+    [ "$alone_status" -eq 3 ]; then
+    # All three mean the probe itself returned 0 and only the release
+    # after it went wrong, so question 6 put every trigger back — the
+    # probe reports it otherwise. Clear the flag here as well as after a
     # clean pass, or the handler sends an operator to check four files
     # this run provably did not leave changed.
     PROBE_RAN=no
-    if [ "$alone_status" -eq 124 ]; then
+    if [ "$alone_status" -ne 3 ]; then
       echo "Pass 1's tidy-up hit its own timeout: the questions were asked and" >&2
       echo "the transcript above stands, but a pin may be left exported." >&2
+      if [ "$alone_status" -eq 137 ]; then
+        echo "It did not stop on the signal either and was killed, so it got no" >&2
+        echo "further than wherever it was." >&2
+      fi
     else
       echo "Pass 1 asked its questions — the transcript above stands — but the" >&2
       echo "release that follows them declined, so a pin may be left exported." >&2
@@ -458,7 +467,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # not looking at libbela's pins.
   release_status=0
   timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
-  if [ \$probe_status -eq 124 ]; then exit 5; fi
+  # 137 too; see pass 1.
+  if [ \$probe_status -eq 124 ] || [ \$probe_status -eq 137 ]; then exit 5; fi
   if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
   exit \$release_status
 " || with_run_status=$?
@@ -482,18 +492,22 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "handler will have signalled it — so something may have run after" >&2
     echo "all, and the exports above are the place to look." >&2
   elif [ "$with_run_status" -eq 6 ]; then
-    echo "Pass 2 asked every question — the transcript above stands — but the" >&2
-    echo "write to a digital channel would not go back, so that channel drove" >&2
-    echo "against the PRU for the rest of the run. See LEFT CHANGED above." >&2
-    echo "Nothing here restores a pin's value: --release unexports pins, and" >&2
-    echo "the handler reaches exports, the remote directory and the daemon." >&2
+    echo "Pass 2 left a pin's level changed: see LEFT CHANGED above, which" >&2
+    echo "names it. Nothing here restores a value — --release unexports pins," >&2
+    echo "and the handler reaches exports, the remote directory and the daemon" >&2
+    echo "— so the run's own end is what took it back. A 'could not ask:' line" >&2
+    echo "above it, if there is one, says the pass also stopped short." >&2
   elif [ "$with_run_status" -eq 5 ]; then
     echo "Pass 2's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
     echo "The tidy-up after it did run." >&2
-  elif [ "$with_run_status" -eq 124 ]; then
+  elif [ "$with_run_status" -eq 124 ] || [ "$with_run_status" -eq 137 ]; then
     echo "Pass 2's tidy-up hit its own timeout: the questions were asked and" >&2
     echo "the transcript above stands, but a pin may be left exported." >&2
+    if [ "$with_run_status" -eq 137 ]; then
+      echo "It did not stop on the signal either and was killed, so it got no" >&2
+      echo "further than wherever it was." >&2
+    fi
   elif [ "$with_run_status" -eq 3 ]; then
     echo "Pass 2 asked its questions — the transcript above stands — but the" >&2
     echo "release that follows them declined, so a pin may be left exported." >&2
