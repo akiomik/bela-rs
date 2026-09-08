@@ -760,45 +760,45 @@ mod imp {
         } else {
             let mut before: PIN_VALUE = 0xdead_beef;
             let read_before = unsafe { gpio_get_value(DIGITAL_D0, &raw mut before) };
-            let wrote = unsafe { gpio_set_value(DIGITAL_D0, arg::HIGH) };
-            println!("  gpio_set_value(HIGH) = {wrote}");
-            let mut value: PIN_VALUE = 0xdead_beef;
-            let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
-            println!("  reads back: ret {ret}, *value {value:#x}");
-            // What decides whether a restore is owed is whether the
-            // write took, not whether the pin could be read first: a
-            // write that succeeded after a failed read would otherwise
-            // leave a PRU channel driven for the rest of the run.
-            if wrote == 0 {
-                let restore = if read_before == 0 && before != 0 {
-                    arg::HIGH
-                } else {
-                    arg::LOW
-                };
-                let to = if read_before == 0 {
-                    format!("what it held ({before})")
-                } else {
-                    "LOW, its value not having been readable first".to_owned()
-                };
-                let put_back = unsafe { gpio_set_value(DIGITAL_D0, restore) };
-                println!("  restoring to {to}: {put_back}");
-                if put_back != 0 {
-                    // Reachable only under `--destructive` on a board
-                    // where D0 is an output — this one has it as an
-                    // input, where the write above cannot take. There
-                    // the channel is now driven against the PRU until
-                    // the run ends, which is the same class of thing as
-                    // question 6's trigger and is treated the same way:
-                    // loudly, and the pass fails. Not here, though —
-                    // the pins below are still owed back first.
-                    eprintln!(
-                        "LEFT CHANGED: gpio{DIGITAL_D0} was written HIGH and would not go \
-                         back ({put_back}); it is driving against the PRU until the run ends"
-                    );
-                    *left_changed = true;
-                }
+            if read_before != 0 {
+                // Question 6's rule, and for the same reason: only write
+                // what can be put back. Restoring to `LOW` here — which
+                // is what this did — puts back a level nothing measured,
+                // on a channel the PRU may have been driving high.
+                println!("  not attempted: gpio_get_value returned {read_before}, so the");
+                println!("  level to put back is not known and a write could not be undone");
             } else {
-                println!("  the write did not take, so there is nothing to put back");
+                let wrote = unsafe { gpio_set_value(DIGITAL_D0, arg::HIGH) };
+                println!("  gpio_set_value(HIGH) = {wrote}");
+                let mut value: PIN_VALUE = 0xdead_beef;
+                let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
+                println!("  reads back: ret {ret}, *value {value:#x}");
+                // What decides whether a restore is owed is whether the
+                // write took, not what the pin reads back as: a write that
+                // succeeded and then read back wrong would otherwise leave a
+                // PRU channel driven for the rest of the run.
+                if wrote == 0 {
+                    let restore = if before == 0 { arg::LOW } else { arg::HIGH };
+                    let put_back = unsafe { gpio_set_value(DIGITAL_D0, restore) };
+                    println!("  restoring to what it held ({before}): {put_back}");
+                    if put_back != 0 {
+                        // Reachable only under `--destructive` on a board
+                        // where D0 is an output — this one has it as an
+                        // input, where the write above cannot take. There
+                        // the channel is now driven against the PRU until
+                        // the run ends, which is the same class of thing as
+                        // question 6's trigger and is treated the same way:
+                        // loudly, and the pass fails. Not here, though —
+                        // the pins below are still owed back first.
+                        eprintln!(
+                            "LEFT CHANGED: gpio{DIGITAL_D0} was written HIGH and would not go \
+                         back ({put_back}); it is driving against the PRU until the run ends"
+                        );
+                        *left_changed = true;
+                    }
+                } else {
+                    println!("  the write did not take, so there is nothing to put back");
+                }
             }
         }
 
