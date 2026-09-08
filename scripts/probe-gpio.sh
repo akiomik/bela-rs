@@ -293,8 +293,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # Before the questions, not only after them. Question 8 answers by
   # leaving gpio585 exported, and it can only answer where the pin was
   # free to begin with — so a gpio585 left by an earlier invocation
-  # makes it print "goes unanswered" while the listing below is
-  # byte-for-byte the one a run that answered produces. Its status is
+  # makes it report the question as unanswered while the listing below
+  # is byte-for-byte the one a run that answered produces. (No quotes
+  # in here: this comment is inside the double-quoted ssh string, and
+  # an unescaped pair splits the remote script into two arguments.) Its status is
   # ignored on purpose: where this declines, a run is up, and the
   # probe's own guard says which pin and why a line later.
   echo '-- giving back anything an earlier invocation left --'
