@@ -86,7 +86,14 @@
 //!   line later; a probe killed in between leaves it changed, and
 //!   nothing here restores triggers. The script says so and gives the
 //!   command to check.
-//! - A pin's level. Questions 4 and 11 write one and put it back a line
+//! - A pin's level, and the direction it is latched at. An unexport
+//!   keeps both, measured, so what the last question set is what the
+//!   pin holds afterwards: the alone pass ends with `gpio584` an input,
+//!   the "remaining four" block having set it so to call
+//!   `gpio_set_dir`. Nothing restores that, and nothing can — the state
+//!   before the probe ran is not readable through an unexported pin.
+//!   The next `gpio_setup` writes a direction anyway. Beyond that:
+//!   questions 4 and 11 write a level and put it back a line
 //!   later — the running LED and a digital channel — and a probe killed
 //!   in between leaves the LED lit or the channel driving against the
 //!   PRU for the rest of the run. Question 12's failure branch restores
@@ -458,9 +465,9 @@ mod imp {
         ] {
             if exported(pin) {
                 return Err(format!(
-                    "gpio{pin} ({what}) is exported and nothing else is, so a previous \
-                     probe left it behind; `--release` gives it back, and this script \
-                     runs that before each pass"
+                    "gpio{pin} ({what}) is exported and no pin a run would hold is, so a \
+                     previous probe left it behind; `--release` gives it back, and this \
+                     script runs that before each pass"
                 ));
             }
         }
@@ -629,8 +636,12 @@ mod imp {
                 // Loudly, and naming both, because nothing else will
                 // put it back: the script's handler covers the GPIO
                 // export, the remote directory and the daemon, not this.
+                // What it holds now is read rather than assumed: two
+                // of the three ways here are entered *because* it does
+                // not read `none` — some third value, or nothing.
+                let now = current_trigger(n).unwrap_or_else(|| "unreadable".to_owned());
                 eprintln!(
-                    "LEFT CHANGED: usr{n} is now `none` and was `{before}`; \
+                    "LEFT CHANGED: usr{n} reads `{now}` and was `{before}`; \
                      restore it by hand with: echo {before} > {}",
                     trigger_path(n)
                 );

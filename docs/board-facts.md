@@ -990,7 +990,7 @@ it says nothing about who left it.
 
 With `sine` rendering, in another process:
 
-- **libbela exports 22 pins for the duration of a run.** `gpio584`,
+- **Twenty-two pins are exported while a run is up.** `gpio584`,
   `585`, `586`, `588`, `591`, `592`, `593`, `633`–`637`, `640`, `642`,
   `644`, `647`–`653`. Twenty-one of them are accounted for by what
   this file and `digital_gpio_mapping.h` already name: the two LEDs
@@ -998,7 +998,9 @@ With `sine` rendering, in another process:
   chip select (`GPIO0_49`), the ADC reset (`GPIO0_53`), and the
   sixteen digital channels — fourteen in bank 1 plus `GPIO0_52` and
   `GPIO0_54`, which are `D14` and `D15`. The twenty-second, `gpio644`
-  (`GPIO1_13`), matches nothing named here and is not identified.
+  (`GPIO1_13`), matches nothing named here and is not identified. One
+  of the twenty-two is not the run's doing: `gpio586` is the resting
+  state this file records above and outlives every run.
 - **Nothing refuses.** `gpio_export` returned `0` for the running LED,
   the underrun LED, the stop button and `D0` alike — the fast path
   again, which is the same `0` a fresh export gives. An application
