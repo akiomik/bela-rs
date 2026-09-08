@@ -897,7 +897,32 @@ mod imp {
                     println!("  gpio_dismiss = {}", unsafe {
                         gpio_dismiss(fd, LED_RUNNING)
                     });
-                    println!("  still exported: {}", exported(LED_RUNNING));
+                    // `gpio_dismiss` returns `0` whatever happened, so
+                    // the pin says whether it took and the call does
+                    // not — question 5 measures the silent unexport
+                    // failure inside it. Still exported here is not the
+                    // destruction this question asks about: it is the
+                    // run's LED claimed *and* forced to an input by the
+                    // `gpio_setup` above, while the run drives it as an
+                    // output. So act on the answer rather than print
+                    // it, as the two sibling dismiss sites do.
+                    let mut survived = exported(LED_RUNNING);
+                    println!("  still exported: {survived}");
+                    if survived {
+                        println!("  gpio_unexport = {}", unsafe {
+                            gpio_unexport(LED_RUNNING)
+                        });
+                        survived = exported(LED_RUNNING);
+                        println!("  still exported after that: {survived}");
+                    }
+                    if survived {
+                        eprintln!(
+                            "LEFT CHANGED: gpio{LED_RUNNING} survived gpio_dismiss and \
+                             gpio_unexport both; it is exported and an input for the rest \
+                             of the run, which drives it as an output"
+                        );
+                        *left_changed = true;
+                    }
                     println!("  what this did to the run is the script's to report");
                 }
             }
