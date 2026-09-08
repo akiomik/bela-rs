@@ -225,21 +225,42 @@ mod imp {
             // still there. Silently returning `0` from that is how a
             // board is left claimed with nobody told.
             return Err(format!(
-                "NOT released: gpio{DIGITAL_D0} is exported, so something is rendering \
-                 and two of these three are its. Any pin of this probe's is still \
-                 exported; unexport it by hand."
+                "NOT released: gpio{DIGITAL_D0} is exported. Either a run is up and \
+                 two of these three are its, or one was killed hard enough to skip \
+                 libbela's teardown and its exports are orphaned. Either way this \
+                 declines rather than guess; unexport by hand what is left."
             ));
         }
+        let mut still_held = Vec::new();
         for &pin in RELEASABLE {
             let was = exported(pin);
             let ret = unsafe { gpio_unexport(pin) };
+            let now = exported(pin);
             println!(
                 "  gpio_unexport({pin}) = {ret} (was {}, now {})",
                 if was { "exported" } else { "free" },
-                if exported(pin) { "exported" } else { "free" }
+                if now { "exported" } else { "free" }
             );
+            if now {
+                still_held.push(pin);
+            }
         }
-        Ok(())
+        // The pin, not the return value: `gpio_unexport` opens the
+        // `unexport` file and can then fail only in the write, which
+        // it reports as `-1` and nothing else. A pin that stayed
+        // claimed here is one the next run will abort on, and this is
+        // the only place that can say which run left it.
+        if still_held.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "still exported after being asked to go: {}",
+            still_held
+                .iter()
+                .map(|pin| format!("gpio{pin}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     }
 
     fn exported(pin: u32) -> bool {
@@ -647,16 +668,27 @@ mod imp {
                     // Only what it actually held, and only if that is
                     // not what it holds now: `gpio_setup` may have
                     // failed at the export, before touching direction.
-                    if direction(LED_RUNNING) == direction_before {
+                    let now = direction(LED_RUNNING);
+                    if now == direction_before {
                         println!("  its direction is unchanged, so nothing to put back");
-                    } else if direction_before == "out" {
-                        println!("  restoring its direction to out: {}", unsafe {
-                            gpio_set_dir(LED_RUNNING, arg::OUTPUT)
-                        });
+                    } else if direction_before == "out" || direction_before == "in" {
+                        let back = if direction_before == "out" {
+                            arg::OUTPUT
+                        } else {
+                            arg::INPUT
+                        };
+                        println!(
+                            "  restoring its direction to {direction_before}: {}",
+                            unsafe { gpio_set_dir(LED_RUNNING, back) }
+                        );
                     } else {
-                        println!("  restoring its direction to in: {}", unsafe {
-                            gpio_set_dir(LED_RUNNING, arg::INPUT)
-                        });
+                        // `direction` reports a read failure as its own
+                        // message rather than a direction, and there is
+                        // nothing to restore to. Saying so beats
+                        // setting it to a guess and calling that a
+                        // restore.
+                        println!("  its direction could not be read before this, so there");
+                        println!("  is nothing to put it back to; it now reads {now}");
                     }
                 } else {
                     println!("  gpio_dismiss = {}", unsafe {

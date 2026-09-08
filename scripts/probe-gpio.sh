@@ -333,7 +333,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
   echo '-- question 13: what is claimed after both processes exited --'
   ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
   echo
-  exit \$probe_status
+  # After the listing, so question 13 answers before anything is
+  # tidied, and after the wait, so the run is gone and the release is
+  # not looking at libbela's pins.
+  release_status=0
+  timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
+  if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
+  exit \$release_status
 " || with_run_status=$?
 
 echo
