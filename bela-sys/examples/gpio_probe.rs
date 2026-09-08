@@ -179,7 +179,7 @@ mod imp {
         Some(contents[start..end].to_owned())
     }
 
-    /// Every pin this probe can ever export, and so every pin
+    /// Every pin this probe can leave exported, and so every pin
     /// `--release` gives back.
     ///
     /// `STOP_BUTTON` is deliberately not here. libbela opens it with
@@ -187,7 +187,15 @@ mod imp {
     /// runs and expected to stay — `docs/board-facts.md` records that
     /// as the board's resting state, and unexporting it would change
     /// what a later run measures.
-    const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN, DIGITAL_D0];
+    /// `DIGITAL_D0` is not here either, for a different reason from
+    /// the stop button's: `release_all` returns before the loop
+    /// whenever that pin is exported, so the loop could only ever be
+    /// reached with it already free. Neither pass can leak it — the
+    /// alone pass never touches it, and the with-run pass refuses to
+    /// start unless libbela has already exported it — so listing it
+    /// would only print `was free, now free` on every release, in a
+    /// transcript whose point is telling claimed pins from free ones.
+    const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN];
 
     /// Gives back every pin this probe can claim, whether or not this
     /// invocation claimed it.

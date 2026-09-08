@@ -80,14 +80,39 @@ BOARD_PREPARED=no
 
 # Modelled on scripts/probe-io.sh's `restore`, which had all of this
 # right already.
+# Set by the INT/TERM traps, because `$?` at the moment a signal lands
+# is whatever the last command left — `0` if it arrived between two
+# `echo`s. Without this an interrupted run exits `0` and suppresses its
+# own "an LED trigger may be left" advice, which is written for exactly
+# that run.
+INTERRUPTED=no
+# Whether the handler has already run. On a signal it runs, exits, and
+# the EXIT trap runs it again; without this the second pass opens
+# another restore ssh — whose failure would report pins and a daemon
+# the first pass had already put back — and repeats the advice below.
+CLEANED=no
+
 cleanup() {
   status=$?
+  if [ "$INTERRUPTED" = yes ] && [ "$status" -eq 0 ]; then
+    status=130
+  fi
+  if [ "$CLEANED" = yes ]; then
+    exit "$status"
+  fi
+  CLEANED=yes
   if [ "$BOARD_PREPARED" = yes ]; then
     # One connection, because an unreachable board makes each of these
     # cost a full ConnectTimeout, and one WARNING naming everything
     # that may be left rather than three swallowed failures.
     #
-    # The kill comes first, by pid, and it is graceful *and* bounded.
+    # The kill comes first, by pid — both pids — and it is graceful
+    # *and* bounded. Both, because `run.pid` exists for the case where
+    # the wrapper died without taking the run with it, and that is
+    # exactly the case where `sine.pid` has been removed: aiming `-9`
+    # straight at the run there would skip libbela's teardown and
+    # orphan all twenty-two of its exports, which is what the rest of
+    # this comment is about avoiding.
     #
     # By pid because nothing else works here. libbela renames the
     # process — `comm` becomes `sine:<pid>:<n>`, measured — so
@@ -106,12 +131,13 @@ cleanup() {
     # `timeout` relays the signal to the run it manages, measured.
     undo="p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null)"
     undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
-    undo="$undo; if [ -n \"\$p\" ]; then kill -INT \$p 2>/dev/null"
+    undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ]; }"
+    undo="$undo; for t in \$p \$r; do kill -INT \$t 2>/dev/null; done"
     undo="$undo; n=0"
-    undo="$undo; while [ -d /proc/\$p ] && [ \$n -lt 6 ]"
+    undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; if [ -d /proc/\$p ]; then kill -9 \$p 2>/dev/null; fi; fi"
-    undo="$undo; if [ -n \"\$r\" ] && [ -d /proc/\$r ]; then kill -9 \$r 2>/dev/null; fi"
+    undo="$undo; for t in \$p \$r; do"
+    undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
     # And give back every pin the probe can claim. After the kill
     # above, so no run is holding one. This does not ask which pins
     # this invocation actually took — see the probe's own notes on why
@@ -180,7 +206,8 @@ done
 # Only now: until the build has succeeded this invocation has no
 # business touching a board, and a trap set earlier would answer a
 # cross-compile failure by stopping whatever the board was running.
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'INTERRUPTED=yes; cleanup' INT TERM
 
 echo "Preparing $HOST..."
 if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>/dev/null; then
@@ -280,9 +307,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # After the sleep, not before it: the glob is expanded once, and at
   # the moment the shell forks the wrapper that wrapper has still to
   # execve and fork, so the run has no /proc entry to find yet. The
-  # ppid comes from /proc/<pid>/stat's fourth field counted from the
-  # closing parenthesis, because a comm containing a space would shift
-  # every field read positionally — and libbela renames the run.
+  # ppid is the second field after the closing parenthesis — state,
+  # then ppid — which is why the cut below takes -f2. Counting from the
+  # start of the line instead would be shifted by any comm containing a
+  # space, and libbela renames the run to one containing colons.
   for c in /proc/[0-9]*; do
     ppid=\$(sed 's/.*) //' \$c/stat 2>/dev/null | cut -d' ' -f2)
     if [ \"\$ppid\" = \"\$sine_pid\" ]; then
