@@ -22,6 +22,29 @@ on the device are recorded here.
   1.14). `git status` shows the include tree as staged deletions; the
   on-disk files are what the shipped `libbela` was built from and are
   the ground truth for the ABI.
+- **A worked example of that overlay changing an answer**, found while
+  reviewing [#160](https://github.com/akiomik/bela-rs/pull/160), where
+  two readings of upstream reached the opposite conclusion twice.
+  `gpio_export` probes for an existing export before creating one, and
+  the two versions leak a file descriptor on opposite branches:
+
+  ```c
+  // upstream BelaPlatform/Bela        // this board, and bela-sysroot
+  if(fd > 0) {                         if(fd > 0) {
+      return 0;   // leaks fd              close(fd);
+  }                                        return 0;
+  close(fd);      // closes here       }
+                                       fd = open(...); // an fd of 0 leaks
+  ```
+
+  Upstream leaks on every successful "already exported" call and
+  closes on the fall-through; the board closes on the fast path and
+  leaks only the `fd == 0` case, which is the one a program with its
+  standard input closed can reach. `md5sum` says
+  `bela-sysroot/root/Bela/core/GPIOcontrol.cpp` and the board's copy
+  are the same file, and that is the one `bela-sys` links against. So
+  a claim about libbela checked against GitHub can be exactly wrong
+  about the library that runs, and this is what that looks like.
 - Header changelog highlights beyond our current vendored copy (1.14):
   - 1.15.0: `threadCount` in `BelaInitSettings`; `const uint32_t
     thisThread` / `threadCount` in `BelaContext` (multithreaded
@@ -807,6 +830,87 @@ LED (`GPIO0_45`) at `gpio584` and the red underrun LED (`GPIO0_46`) at
   whatever the LED setting was. libbela opens it with
   `Gpio::open(..., unexport = false)`, unlike the LEDs, so the export
   is left behind for the next program rather than cleaned up.
+
+Read again on 2026-09-08, over ssh with nothing running: no audio
+system was created, so this is the board at rest rather than during a
+run.
+
+- **At rest `/sys/class/gpio` holds `gpio586` and nothing else** —
+  that, `export`, `unexport` and the four `gpiochip*` directories. It
+  is the bullet above from the other end: a board that has run Bela is
+  left holding the stop button's export and no other pin.
+- **The two banks a `Gpio::Pin` names are `gpiochip539` and
+  `gpiochip631`.** `600000.gpio` is bank 0, base 539, 92 lines;
+  `601000.gpio` is bank 1, base 631, 52 lines. So `GPIO0_n` is sysfs
+  `539 + n` and `GPIO1_n` is `631 + n`, which is where the three
+  numbers above come from. The other two chips are `tps65219-gpio`
+  (base 512, 3 lines) and `4201000.gpio` (base 515, 24).
+- **`led_set_trigger`'s path exists on a Gem, but the numbering starts
+  at 1.** The function builds
+  `/sys/class/leds/beaglebone:green:usr%d/trigger` from its `lednum`
+  argument — `core/GPIOcontrol.cpp:332`, the `#else` of an `#ifdef
+  IS_AM62_SK` that a Gem build does not take, the `#ifdef` side being
+  a single fixed path that ignores `lednum` altogether. On this board
+  `/sys/class/leds` holds `beaglebone:green:usr1` through `usr4`,
+  `blue:bela-power`, `mmc0::` and `mmc1::`. So `lednum` 1 to 4 name a
+  file that is there and 0 names nothing, where the BeagleBone the
+  path is written for has `usr0` to `usr3`. At rest the four triggers
+  were `heartbeat`, `mmc1`, `activity` and `none`, and
+  `blue:bela-power` was `heartbeat`. What is measured here is that the
+  file is there to write, not what writing it does.
+- **`gpio_read` is correct once per descriptor, then wrong, then
+  broken — and not even once if anything has written.** It reads one
+  byte and never rewinds (`core/GPIOcontrol.cpp:269-286`), and a sysfs
+  `value` file holds `"0\n"` or `"1\n"`. Three bare one-byte reads of
+  an exported `gpio584` held high, with no `lseek` between them,
+  returned `'1'`, `'\n'` and then nothing:
+
+  | read | byte | what `gpio_read` reports |
+  |---:|---|---|
+  | 1 | `'1'` | high — correct |
+  | 2 | `'\n'` | high, because `'\n'` is not `'0'` — whatever the pin is doing |
+  | 3 | — (0 bytes) | `-1`, and so does every call after it |
+
+  With `lseek(fd, 0, SEEK_SET)` before each read the same three
+  returned `'1'`, `'1'`, `'1'`. So a descriptor from `gpio_setup` or
+  `gpio_fd_open` answers one `gpio_read` and needs rewinding by the
+  caller after that; the defect is libbela's, and nothing in the
+  header says so. `gpio_get_value` is unaffected, opening and closing
+  the file around each reading, and libbela's own `Gpio` never reaches
+  either, going to the mapped registers instead.
+
+The bullets above were read by hand. A throwaway binary (not in the
+repository) linked against `bela-sys` then asked through the real
+functions, so that what is recorded is what libbela does rather than
+what a re-implementation of it does. It created no audio system, and
+`gpio584` and the `usr1` trigger were put back afterwards.
+
+- **All thirteen are in the library the crate links.** `nm -D
+  --defined-only /root/Bela/lib/libbela.so` lists `gpio_setup`,
+  `gpio_export`, `gpio_unexport`, `gpio_set_dir`, `gpio_set_value`,
+  `gpio_get_value`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`,
+  `gpio_write`, `gpio_read`, `gpio_dismiss` and `led_set_trigger`, all
+  as `T`. The binary linked and ran, so this is a link as much as a
+  listing. Nothing in the workspace calls them, so no build here would
+  otherwise find out.
+- **A `gpio_write` leaves the next `gpio_read` nothing to read.** The
+  two share the descriptor's file offset and neither rewinds, and
+  `gpio_write` puts two bytes (`core/GPIOcontrol.cpp:296-303`) into a
+  two-byte file. `gpio_setup(584, OUTPUT_PIN as c_int)` returned
+  descriptor 3, `gpio_write(fd, HIGH as c_int)` returned 0, and the
+  next `gpio_read` returned `-1` with its `unsigned int *value` still
+  holding the `0xdeadbeef` it had been given — so the failure is
+  fail-fast rather than a stale reading, and a pin cannot be written
+  and read back on one descriptor at all.
+- **`led_set_trigger(0, ...)` fails and says so; `1` works.** The first
+  returned `-1` and printed `gpio/led-set-trigger: No such file or
+  directory`, which is the `usr0` a Gem does not have. The second
+  returned 0 and changed the trigger.
+- **A second unexport fails silently.** `gpio_dismiss(fd, 584)`
+  returned 0 and removed the export; the `gpio_unexport(584)` after it
+  returned `-1` and printed nothing, the `unexport` file having opened
+  and only the write into it having failed. That is the silent-failure
+  path in the small.
 
 ## The Multiplexer Capelet
 

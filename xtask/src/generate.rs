@@ -44,6 +44,19 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
         .allowlist_type("AuxiliaryTask")
         .allowlist_function("Bela_.*")
         .allowlist_function("rt_.*")
+        // The sysfs GPIO and LED family from `GPIOcontrol.h`, which
+        // `Bela.h` includes and `libbela` exports. It is the only way
+        // this crate offers to reach a pin that is not one of the
+        // sixteen digital channels a `BelaContext` carries, or to
+        // reach any pin at all outside a render callback; libbela's
+        // own `Gpio` reaches one through the registers instead, which
+        // is a different thing and not bound here. `PIN_DIRECTION`
+        // and `PIN_VALUE` are the vocabulary its `out_flag` and
+        // `value` arguments are written in, so they come with the
+        // functions.
+        .allowlist_function("gpio_.*")
+        .allowlist_function("led_set_trigger")
+        .allowlist_type("PIN_.*")
         .allowlist_var("BELA_.*")
         .allowlist_var("DEFAULT_.*")
         .prepend_enum_name(false)

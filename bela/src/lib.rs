@@ -145,19 +145,24 @@
 //! records what a Gem does with the multiplexer settings regardless.
 //!
 //! `Midi` is the one C++ library of Bela's own that this crate wraps;
-//! the browser scope, Trill, the GUI and the rest are not. Neither are
-//! the sysfs GPIO functions `libbela` exports, so an arbitrary pin
-//! cannot be read or driven from here. What a callback reaches are the
-//! digital channels of a block — [`RenderContext`] in
-//! [`render`](BelaApplication::render), [`BlockContext`] in
-//! [`render_pre`](BelaApplication::render_pre) and
-//! [`render_post`](BelaApplication::render_post). The pins libbela
-//! keeps for itself, the two LEDs and the stop button, are not an
-//! alternative: [`Settings::enable_led`] and
+//! the browser scope, Trill, the GUI and the rest are not. Nor is
+//! there a safe wrapper over the sysfs GPIO functions `libbela`
+//! exports — though [`bela_sys`] binds them and this crate re-exports
+//! it, so `gpio_setup` and its neighbours will reach any pin by
+//! number from here: unsafely, with the traps that crate documents,
+//! and with nothing on this side keeping the call out of `render`.
+//! What a callback reaches are the digital channels of a block —
+//! [`RenderContext`] in [`render`](BelaApplication::render),
+//! [`BlockContext`] in [`render_pre`](BelaApplication::render_pre)
+//! and [`render_post`](BelaApplication::render_post). The pins
+//! libbela keeps for itself, the two LEDs and the stop button, are
+//! not a further kind of channel a callback writes through.
+//! [`Settings::enable_led`] and
 //! [`Settings::stop_button_pin`] choose whether libbela claims them,
-//! and declining does not hand them over — which
-//! [`Settings::enable_led`] is the one of the two that argues at
-//! length.
+//! and declining only stops libbela using them; there is still no
+//! safe API for a pin, and what a sysfs write reaches while libbela
+//! is driving one has not been measured. [`Settings::enable_led`] is
+//! the one of the two that argues that at length.
 //!
 //! `docs/scope.md` in the repository lists what is absent with the
 //! reason beside each. It follows the repository rather than a

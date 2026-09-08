@@ -107,11 +107,13 @@ side of it:
   `Gpio` is not: it `mmap`s the GPIO bank and reads and writes the
   registers directly (`Gpio.h:3,57,64,70`), reaching sysfs only to claim
   the pin — `Gpio::open` calls `gpio_export` and then maps the bank
-  (`Gpio.cpp:99,108-109`), and nothing after that is a file. That
-  distinction matters for
-  [#156](https://github.com/akiomik/bela-rs/issues/156), which is about
-  the sysfs functions in `GPIOcontrol.h`: binding them would give a Rust
-  program a pin, but not the path libbela's own `Gpio` takes to one.
+  (`Gpio.cpp:99,108-109`), and nothing after that is a file. So the
+  sysfs functions in `GPIOcontrol.h` are one path to a pin and this
+  class is the other, and they are not interchangeable. `bela-sys`
+  binds the first, and a safe wrapper over it is
+  [#156](https://github.com/akiomik/bela-rs/issues/156); whether `bela`
+  should also reach the register path — which means `Gpio` and `Mmap`
+  rather than those functions — is a question nothing has asked yet.
 - **Block-size adaptation**: `BelaContextFifo`, `BelaContextSplitter`,
   `BelaContextManager`. These are libbela's own, not an application's,
   but what the first one does to digital output persistence is
@@ -179,7 +181,7 @@ it is the core API, and none of it changes the grouping.
 | Libraries | Why not |
 |---|---|
 | `ADSR`, `Biquad` (`QuadBiquad`), `Convolver`, `DelayLine`, `EnvelopeDetector`, `OnePole`, `Oscillator`, `OscillatorBank`, `math_neon` | Ordinary DSP with no Bela hardware in it. Rust has these, or they are a few lines in the application, and either way they keep the borrow checker. `QuadBiquad` (`arm_neon.h`), `OscillatorBank` ("highly optimized, written in NEON assembly"), `Convolver` and `math_neon` are the NEON-tuned ones, and so the likeliest to be overturned by a measurement — `OscillatorBank` above all, having no Rust equivalent to lose to. |
-| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has, and no others: `digitalRead` and `pinMode` in all four of the digital ones, `digitalWriteOnce` in `ShiftRegister`, `analogRead` in `SteppedPot`, which touches no digital pin at all — and `digitalWrite` in none of them. Those, over frame and channel counts a `RenderContext` reports, are the whole of what they ask Bela for. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so it waits on the same gap as [#156](https://github.com/akiomik/bela-rs/issues/156). |
+| `Debounce` (`BelaDebounce`, `GpioDebounce`), `Encoder` (`BelaEncoder`), `PulseIn`, `ShiftRegister`, `SteppedPot` | Logic over accessors the crate already has, and no others: `digitalRead` and `pinMode` in all four of the digital ones, `digitalWriteOnce` in `ShiftRegister`, `analogRead` in `SteppedPot`, which touches no digital pin at all — and `digitalWrite` in none of them. Those, over frame and channel counts a `RenderContext` reports, are the whole of what they ask Bela for. What they need from Bela is what a `RenderContext` already is, and each is small enough that wrapping it would cost more than writing it. `GpioDebounce` is the one exception in the row: it debounces a `Gpio` rather than a context channel (`GpioDebounce.h:2`), so what it waits on is the register path — the `Gpio` bullet under [Not written yet](#not-written-yet) — which the sysfs functions `bela-sys` binds do not reach, and which no issue tracks. |
 | `UdpClient`, `UdpServer`, `OscReceiver`, `Serial` | Protocols, not hardware. `std::net`, a serial crate and an OSC crate cover them; `Serial` in particular is a termios wrapper over `/dev/ttyS*` with nothing Bela-specific in it. |
 | `WriteFile`, `Spi`, `Eeprom` | Linux interfaces with a thread or an `ioctl` in front of them: `WriteFile` is a ring drained by a `std::thread` it puts on `SCHED_FIFO`, `Spi` is `linux/spi/spidev.h`, `Eeprom` is the `24cXXX` driver's sysfs files. The one thing any of them takes from Bela is `WriteFile`'s overrun warning, an `rt_fprintf` inside `log()` (`WriteFile.cpp:277-292`) — which is to say on the audio thread, that being the method a render callback calls, and which is why it is `rt_fprintf` and not `fprintf`. A Rust program has `rt_println!` for exactly that, so this is a line the crate already covers rather than one it lacks. Rust reaches all three. What Bela's versions carry that a Rust program cannot write for itself is not code but board facts — which bus, which device node, what libbela has already claimed — and those belong in [board-facts.md](board-facts.md). |
 | `AudioFile`, `sndfile` | File I/O. The utility half is libsndfile, which Rust has several answers for. `AudioFileReader`'s streaming mode does use a thread of the library's own, and is the part of this row that could be argued back the other way. |
@@ -209,7 +211,7 @@ reader who suspects an entry has gone missing can recompute them.
 ### Bound, with no safe wrapper
 
 Every `pub fn` in `bela-sys/src/bindings.rs` that no `bela_sys::` call
-site in `bela/src` names — nineteen of the forty-three:
+site in `bela/src` names — thirty-two of the fifty-six:
 
 | Function | What it is for |
 |---|---|
@@ -223,14 +225,16 @@ site in `bela/src` names — nineteen of the forty-three:
 | `Bela_HwConfig_new`, `Bela_HwConfig_delete` | The hardware configuration object — which libbela's own comment says cannot be obtained: "this will always return error because of nullptr. Codec detection needs to be factored out of `Bela_initAudio`" (`RTAudio.cpp:114-125`). A wrapper would return `None` every time until that is fixed upstream. |
 | `Bela_userSettings` | Not a call the program makes but a hook it may define: `Bela.h:742` marks it `#pragma weak`, and `Bela_defaultSettings` calls it if it is there. A Rust program can define it for itself; the crate neither does nor offers a way to, because where a program does hold the call, `Settings` and `validate_settings` cover the same ground with the types checked. |
 | `Bela_deleteAllAuxiliaryTasks`, `rt_printf` | Left alone for reasons the crate already records. `task.rs:36` has the first: it frees every task at once and leaves the handles dangling, which is what `AuxiliaryTask`'s generation counter exists to survive. `print.rs:165` has the second: `rt_println!` calls `Bela_printf` instead, the header describing the `Bela_*` spellings as the future-proof wrappers. |
+| `gpio_setup`, `gpio_export`, `gpio_unexport`, `gpio_set_dir`, `gpio_set_value`, `gpio_get_value`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`, `gpio_write`, `gpio_read`, `gpio_dismiss`, `led_set_trigger` | The whole of `GPIOcontrol.h`: sysfs GPIO, one pin at a time, and the only path this crate offers to a pin outside a render callback, or to one that is not among the sixteen digital channels. libbela reaches a pin a second way, through the registers, which is the `Gpio` bullet under [Not written yet](#not-written-yet) and is not this. Several of the thirteen behave unexpectedly, all of it libbela's rather than the binding's. An export is not owned by whoever made it: `gpio_export` returns `0` for a pin it merely found already exported, indistinguishably from one it created (`core/GPIOcontrol.cpp:75-82`), and `gpio_unexport` and `gpio_dismiss` will remove one whoever made it — libbela's own pins included. `gpio_read` has no rewind, so a second read on one descriptor succeeds and reports the pin *high* whatever it is doing — only the third fails — and after a `gpio_write` even the first has nothing to read. `gpio_dismiss` returns `0` whatever happened. A failed `gpio_setup` can leave the pin exported and returns no descriptor, so undoing it means `gpio_unexport`, which takes none, rather than `gpio_dismiss`, which does. `led_set_trigger` numbers this board's LEDs from 1, where the path it builds is written for a `BeagleBone` numbering from 0. And built without `BELA_HAS_GPIO` every one of them is `{ return 0; }` instead (`:348-363`), which inverts all of it. [board-facts.md](board-facts.md) has the measurements, and the safe wrapper is [#156](https://github.com/akiomik/bela-rs/issues/156). |
 
 ### Not bound at all
 
-Forty-four *function declarations* in the three Bela headers reach no
+Thirty-one *function declarations* in the three Bela headers reach no
 binding — `NE10_dsp.h` and `NE10_types.h` are vendored too, and what
 they declare is counted with `ne10` above rather than here. They fall
-into four groups, every member is named below, and only one group could
-be answered by changing the generator. Four things that are not function
+into three groups, and every member is named below. There were four:
+the fourth was the `GPIOcontrol.h` family, which the allowlist alone
+kept out, and it is now bound. Things that are not function
 declarations follow them.
 
 **Twenty-one are `static inline`.** bindgen skips those whatever the
@@ -258,16 +262,6 @@ link either. Having them in Rust means writing them in Rust:
   them, they could not have been bound. See above for why they are not
   written.
 
-**Thirteen are the `GPIOcontrol.h` family** — `gpio_setup`,
-`gpio_export`, `gpio_unexport`, `gpio_set_dir`, `gpio_set_value`,
-`gpio_get_value`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`,
-`gpio_write`, `gpio_read`, `gpio_dismiss` and `led_set_trigger` — and
-these are the ones the allowlist alone accounts for. Every one of them
-is exported from the `libbela` the crate already links, the header is
-vendored, and `Bela.h` includes it, so the allowlist is the only thing
-between them and Rust. That is an oversight rather than a decision:
-[#156](https://github.com/akiomik/bela-rs/issues/156).
-
 **Six are the `FILE*` and `va_list` printf variants** — `Bela_fprintf`,
 `Bela_vfprintf`, `Bela_vprintf`, `rt_fprintf`, `rt_vfprintf` and
 `rt_vprintf` — blocklisted in `xtask/src/generate.rs` with the reason
@@ -275,21 +269,20 @@ beside them: they would drag glibc internals into the bindings and are
 not usable from Rust anyway.
 
 **Four are none of those.** `setup`, `render` and `cleanup`
-(`Bela.h:663`, `:679`, `:696`) are ordinary prototypes and the
-allowlist drops them exactly as it drops the GPIO family — but they are
-what a C Bela program *defines* rather than calls, and this crate
-defines its own trampolines and hands them to `Bela_initAudio` as
-`BelaInitSettings` fields, so nothing is missing. `Bela_runAuxiliaryTask`
-is declared inside an `#ifdef __cplusplus` (`Bela.h:1182`), for the
-sake of its default arguments, so bindgen — which parses `wrapper.h` as
-C — never sees it. The symbol itself is ordinary: `Bela.h`'s
-`extern "C"` block spans the declaration, and `libbela` exports
-`Bela_runAuxiliaryTask` unmangled, so a hand-written `extern` would
-link. It is not worth writing one: the function is
+(`Bela.h:663`, `:679`, `:696`) are ordinary prototypes the allowlist
+drops — but they are what a C Bela program *defines* rather than calls,
+and this crate defines its own trampolines and hands them to
+`Bela_initAudio` as `BelaInitSettings` fields, so nothing is missing.
+`Bela_runAuxiliaryTask` is declared inside an `#ifdef __cplusplus`
+(`Bela.h:1182`), for the sake of its default arguments, so bindgen —
+which parses `wrapper.h` as C — never sees it. The symbol itself is
+ordinary: `Bela.h`'s `extern "C"` block spans the declaration, and
+`libbela` exports `Bela_runAuxiliaryTask` unmangled, so a hand-written
+`extern` would link. It is not worth writing one: the function is
 `Bela_createAuxiliaryTask` followed by `Bela_scheduleAuxiliaryTask`,
 and `AuxiliaryTask` wraps both.
 
-Beyond those forty-four, **four names in `Bela.h` are function-like
+Beyond those thirty-one, **four names in `Bela.h` are function-like
 macros rather than declarations**, which bindgen does not translate:
 `Bela_setBit`, `Bela_clearBit`, `Bela_getBit` and `Bela_changeBit`
 (`Bela.h:1223-1232`). They are bit twiddling on a `uint32_t` — `Bela.h`
@@ -298,6 +291,17 @@ channel + 16)` — so a Rust program writes the shift and mask where a C
 one writes the macro, which is what `digital_read` does. `_ATTRIBUTE`
 is the only other function-like macro in the three headers, and it is
 the `printf`-attribute plumbing rather than API.
+
+`GPIOcontrol.h`'s **object-like macros** are outside both
+`allowlist_var` patterns and so are absent as well. A `grep` for
+`#define` in it finds five; the fifth is the include guard,
+`SIMPLEGPIO_H_`, which is not API. Of the other four,
+`SYSFS_GPIO_DIR` and `SYSFS_LED_DIR` are the two directories the
+family's own `snprintf` calls build paths in, `MAX_BUF` is the size of
+the buffer they build them in, and `POLL_TIMEOUT` is defined in the
+header and used nowhere on the board. None of them is an argument to
+anything bound here. The two enums beside them, `PIN_DIRECTION` and
+`PIN_VALUE`, are arguments, so those are bound.
 
 ## Settings and context fields not exposed
 

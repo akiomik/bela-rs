@@ -10,6 +10,25 @@ and this project adheres to
 
 ### Added
 
+- `bela-sys` binds the sysfs GPIO and LED family from `GPIOcontrol.h`:
+  the twelve `gpio_*` functions and `led_set_trigger`, with the
+  `PIN_DIRECTION` and `PIN_VALUE` enums their arguments are written
+  in. The header was already vendored and `Bela.h` already includes
+  it, so the generator's allowlist was the only thing between these
+  and Rust, and it recorded no reason; it does now.
+
+  This is the mechanism that reaches a pin when the audio context
+  cannot. `RenderContext::digital_read` and `digital_write` are the
+  PRU path and exist only while a block is being rendered; these are
+  file I/O, one pin at a time, and are the only way to a pin that is
+  not one of the sixteen digital channels. They are unsafe and
+  unwrapped: `docs/scope.md` lists what they do that is surprising,
+  and `docs/board-facts.md` has the measurements behind it. A safe
+  API is [#156](https://github.com/akiomik/bela-rs/issues/156).
+
+  Nothing a device build links or needs changes: `libbela` exports all
+  thirteen already.
+
 - Documentation of what these crates cover.
   [docs/scope.md](docs/scope.md) is one place that answers what is
   wrapped, what is left out on purpose and why, and what is merely not
@@ -35,6 +54,28 @@ and this project adheres to
   Both crate READMEs and `bela`'s crate documentation point at it, and
   the scope prose they carried in pieces now has one home. No API,
   behaviour or build requirement changes.
+
+### Changed
+
+- Breaking: `bela_sys::*` brings in nineteen names it did not — the
+  thirteen functions above, the `INPUT_PIN`, `OUTPUT_PIN`, `LOW` and
+  `HIGH` constants, and the two aliases they are typed as. A crate
+  glob-importing `bela_sys` alongside another glob that provides one
+  of those names has an ambiguity where it had none, and `E0659` when
+  it uses the name. `bela` re-exports the crate, so a program that
+  never names `bela-sys` in its `Cargo.toml` is reached the same way.
+
+  Narrow — it takes two globs, one contested name, and code that uses
+  it — but `LOW` and `HIGH` are names any embedded crate might export,
+  and the thirteen functions are a gap this crate's own README named,
+  which is a gap somebody had reason to fill with an `extern` block of
+  their own. See "Minor or patch: the drop-in test" in
+  [docs/release.md](docs/release.md).
+
+  `bela`'s documentation is corrected with them, in the two places it
+  claimed a pin "cannot be read or driven from here" and that the
+  crate "offers no API" for the LED pins. The re-export makes both
+  false; what is still true is that there is no *safe* API for a pin.
 
 ## [0.8.1] - 2026-09-08
 
