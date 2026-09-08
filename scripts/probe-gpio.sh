@@ -33,11 +33,14 @@
 # they are opt-in.
 #
 # What is put back: `bela_daemon`, the remote directory, the run, and
-# every pin the probe can claim — `gpio_probe --release`, called after
-# each pass and from the handler. It does not ask which pins this run
-# actually took; the probe's own documentation says why not and what
-# that costs. What is not put back is an LED trigger, if the probe was
-# killed between setting one and restoring it; the handler says so.
+# the two pins the probe can leave exported — `gpio_probe --release`,
+# called after each pass and from the handler. It does not ask which
+# pins this run actually took, and it declines outright where a pin a
+# run would hold is claimed; the probe's own documentation says why
+# both, and what they cost. What is not put back is an LED trigger, if
+# the probe was killed between setting one and restoring it, or a pin
+# left where the release declined — the handler says so in both
+# cases.
 #
 # `bela_daemon` is stopped for the duration and restarted afterwards,
 # as in scripts/smoke-test.sh: it would otherwise take the audio device
@@ -371,9 +374,11 @@ ssh -o ConnectTimeout=10 "$HOST" "
 " || with_run_status=$?
 
 echo
-if [ "$alone_status" -ne 0 ] || [ "$with_run_status" -ne 0 ]; then
-  echo "A pass exited non-zero (alone $alone_status, with-run $with_run_status):" >&2
-  echo "it could not ask, rather than getting a surprising answer." >&2
+# Pass 1's own failure exits above, at the point where continuing
+# would corrupt pass 2, so only pass 2's status can reach here.
+if [ "$with_run_status" -ne 0 ]; then
+  echo "Pass 2 exited $with_run_status: it could not ask, rather than" >&2
+  echo "getting a surprising answer." >&2
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."

@@ -87,9 +87,11 @@
 //!   nothing here restores triggers. The script says so and gives the
 //!   command to check.
 //! - A pin exported by something else. `--release` will unexport one
-//!   of its three whoever claimed it. The script only calls it where
-//!   no run is up, and they are Bela's own two LEDs and its first
-//!   digital channel, which nothing else holds on an idle board.
+//!   of its two whoever claimed it — Bela's own two LEDs, which
+//!   nothing else takes on an idle board. It declines outright where
+//!   `gpio584` or `gpio637` is exported, since either says a run may
+//!   be holding them; the cost of that is a pin the probe itself left
+//!   being reported rather than cleared.
 
 fn main() {
     imp::main();
@@ -210,11 +212,11 @@ mod imp {
     /// releases what it held — with this as the backstop, which is the
     /// same shape `scripts/probe-io.sh` has always had.
     ///
-    /// The cost is that it will unexport one of these three even if
-    /// something else exported it. The script only calls it where no
-    /// run is up, and these are Bela's own two LEDs and its first
-    /// digital channel, which nothing else on this board holds while
-    /// nothing is running.
+    /// The cost is that it will unexport one of its two even if
+    /// something else exported it. It declines where either of the
+    /// pins a run holds is claimed, and they are Bela's own two LEDs,
+    /// which nothing else on this board takes while nothing is
+    /// running.
     fn release_all() -> Result<(), String> {
         println!("== releasing every pin this probe can claim ==");
         // The precondition, checked here rather than trusted to every
@@ -225,7 +227,21 @@ mod imp {
         // with digital I/O off is not detected by it — the script's
         // own calls are made where it has just ended the run it
         // started, which is what covers that.
-        if exported(DIGITAL_D0) {
+        // The same two pins the alone pass refuses on, and for the
+        // reason written there: a run with digital I/O off exports no
+        // channel, and one with `enable_led` off exports no LED, so
+        // neither alone covers every configuration. Checking only
+        // `DIGITAL_D0` let this take the LEDs from a run that had
+        // digital off.
+        //
+        // The cost is that `LED_RUNNING` is in the list below *and* in
+        // this check, so a run holding it makes the release decline
+        // rather than give back a pin the probe itself may have left.
+        // That is the ambiguity this design accepts: an export says
+        // the pin is claimed, never by whom. Declining and saying so
+        // is the safe half of it — the operator unexports one pin by
+        // hand, where the other way round takes two from a live run.
+        if exported(DIGITAL_D0) || exported(LED_RUNNING) {
             // Through `Err` rather than a printed line, because the
             // caller that most needs to know is the script's handler,
             // which runs this after a `kill -9` — where libbela's
@@ -233,9 +249,10 @@ mod imp {
             // still there. Silently returning `0` from that is how a
             // board is left claimed with nobody told.
             return Err(format!(
-                "NOT released: gpio{DIGITAL_D0} is exported. Either a run is up and \
-                 two of these three are its, or one was killed hard enough to skip \
-                 libbela's teardown and its exports are orphaned. Either way this \
+                "NOT released: gpio{DIGITAL_D0} or gpio{LED_RUNNING} is exported. \
+                 Either a run is up and these are its, or one was killed hard \
+                 enough to skip libbela's teardown and its exports are orphaned. \
+                 An export says a pin is claimed and never by whom, so this \
                  declines rather than guess; unexport by hand what is left."
             ));
         }
@@ -481,7 +498,14 @@ mod imp {
             });
             let ro = unsafe { gpio_fd_open(LED_RUNNING, 0) };
             println!("  gpio_fd_open(O_RDONLY) = {ro}");
-            println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
+            if ro < 0 {
+                // `close(-1)` is `EBADF`, and printing that as
+                // `gpio_fd_close = -1` reads as a close that failed
+                // rather than as one there was nothing to do.
+                println!("  gpio_fd_close: not called, there is no descriptor");
+            } else {
+                println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
+            }
             // An input, so this cannot take; the point is the link.
             println!("  gpio_set_value(LOW) = {}", unsafe {
                 gpio_set_value(LED_RUNNING, arg::LOW)
