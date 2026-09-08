@@ -304,11 +304,14 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # would be libbela's.
   release_status=0
   timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
-  # The probe's own status first, then the tidy-up's. Letting the
-  # second be overwritten by the first is how a failed release lets
-  # pass 2 start with gpio585 still exported — which it would then
-  # report as a pin libbela is holding, the distinction every answer in
-  # that pass turns on.
+  # The probe's own status first, and the tidy-up's wherever the probe
+  # returned 0 — which is the case this ordering is for. Discarding the
+  # release's status there is how a failed release lets pass 2 start
+  # with gpio585 still exported, which it would then report as a pin
+  # libbela is holding, the distinction every answer in that pass turns
+  # on. Under a probe that also failed the release's status is dropped,
+  # and that is fine: its message is in the transcript, the pass after
+  # this one does not run, and the handler releases again.
   # 5, not 124: the release below is wrapped in timeout too, so
   # letting the probe own 124 through would leave the two
   # indistinguishable, which is what 3 was before it was split out.
