@@ -401,8 +401,9 @@ if [ "$alone_status" -ne 0 ]; then
     # changed nothing, and the advice below would send an operator to
     # check four files this run did not touch.
     PROBE_RAN=no
-    echo "Pass 1's probe declined to ask; see its message above. Nothing was" >&2
-    echo "changed, and nothing is left to put back." >&2
+    echo "Pass 1's probe declined to ask; see its message above. Nothing needs" >&2
+    echo "a hand: a pin it had claimed is one --release gives back, and it" >&2
+    echo "reports anything else as LEFT CHANGED and exits 6 rather than 2." >&2
   else
     # Not cleared here: an unexpected status is a probe that died
     # without saying so, and question 6 sets a trigger to `none` a line
