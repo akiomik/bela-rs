@@ -528,6 +528,11 @@ mod imp {
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };
         println!("  putting it back to LOW: {put_back}");
         if put_back != 0 {
+            // "Nothing here turns it off" includes question 5's
+            // `gpio_dismiss` three lines down, which unexports the pin:
+            // measured on this board, a line unexported while driven
+            // keeps its direction and its level, so the LED stays lit.
+            // See "Reaching a pin through sysfs" in docs/board-facts.md.
             eprintln!(
                 "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
                  ({put_back}); the running LED is lit and nothing here turns it off"
@@ -690,6 +695,18 @@ mod imp {
         println!("gpio_export({NO_SUCH_PIN}) = {}", unsafe {
             gpio_export(NO_SUCH_PIN)
         });
+        // The return is not the answer here either. On this board no
+        // chip covers 99999 — the highest is 631 plus its lines — so
+        // the write fails and there is nothing to give back. Asked
+        // anyway because `--release` cannot: `NO_SUCH_PIN` is not in
+        // `RELEASABLE`, and one exported pin outside the three
+        // `a_run_is_up` exempts makes every later `--release` decline,
+        // after which nothing in this tree can give back the LEDs.
+        if exported(NO_SUCH_PIN) {
+            println!("  it took after all; gpio_unexport = {}", unsafe {
+                gpio_unexport(NO_SUCH_PIN)
+            });
+        }
 
         // 8. The question the wrapper's shape turns on. Everything
         // above tidied up after itself, which is exactly why none of
@@ -776,9 +793,14 @@ mod imp {
         let mut ours: Vec<u32> = Vec::new();
         for (name, pin) in claimed {
             println!("\n-- {name} (gpio{pin}) --");
-            println!("  exported before we ask: {}", exported(pin));
-            println!("  direction: {}", direction(pin));
+            // One read, used twice. The run can end between two of
+            // them — `sine` reaching its own timeout while this is on
+            // the fourth pin — and then the line printed and the fact
+            // `ours` is built from would disagree about who held the
+            // pin, which is the distinction every answer here turns on.
             let was_exported = exported(pin);
+            println!("  exported before we ask: {was_exported}");
+            println!("  direction: {}", direction(pin));
             println!("  gpio_export = {}", unsafe { gpio_export(pin) });
             if !was_exported && exported(pin) {
                 ours.push(pin);
