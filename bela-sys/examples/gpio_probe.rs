@@ -64,6 +64,30 @@
 //! what is claimed once this process has gone — and the script answers
 //! them, by listing `/sys/class/gpio` after the probe exits, which is
 //! the only place it can be seen from. It clears what 8 leaves.
+//!
+//! # What is put back, and what is not
+//!
+//! `--release` unexports every pin this probe can claim, and the
+//! script calls it after each pass and from its handler. It does not
+//! ask whether *this* invocation claimed them, and that is deliberate:
+//! knowing would need a ledger written before each export and unwound
+//! after it, and an interrupt could still land between two
+//! instructions. What keeps a pin from leaking is the layering the
+//! script already has — `timeout -s INT` bounds every run, a bounded
+//! run ends normally, and a normal end gives back what it held — with
+//! `--release` as the backstop. That is the shape
+//! `scripts/probe-io.sh` has always had, and it is enough.
+//!
+//! Two things it does not cover, said rather than left to be found:
+//!
+//! - An LED trigger. Question 6 sets one to `none` and puts it back a
+//!   line later; a probe killed in between leaves it changed, and
+//!   nothing here restores triggers. The script says so and gives the
+//!   command to check.
+//! - A pin exported by something else. `--release` will unexport one
+//!   of its three whoever claimed it. The script only calls it where
+//!   no run is up, and they are Bela's own two LEDs and its first
+//!   digital channel, which nothing else holds on an idle board.
 
 fn main() {
     imp::main();
@@ -153,91 +177,44 @@ mod imp {
         Some(contents[start..end].to_owned())
     }
 
-    /// Where the ledger lives: a relative path, so in the working
-    /// directory, which `scripts/probe-gpio.sh` sets to the directory
-    /// it copied this binary into. The script and its handler read it
-    /// there, the handler running in another connection. Run by hand
-    /// from somewhere else and the recovery paths will not find it.
-    const LEDGER: &str = "claimed.pins";
-
-    /// Every pin this process has exported and not yet given back.
+    /// Every pin this probe can ever export, and so every pin
+    /// `--release` gives back.
     ///
-    /// One ledger rather than a record per situation. Each situation
-    /// that had its own — the pin question 8 leaves, the pins the
-    /// with-run pass takes — turned out to be one that could be
-    /// interrupted somewhere else, and every situation without one
-    /// leaked a pin that nothing then knew was ours. What is written
-    /// here is only ever a pin this process exported: `gpio_export`
-    /// answers `0` for a pin it merely found, so every claim is
-    /// checked against `exported` first.
-    #[derive(Debug, Default)]
-    struct Ledger(Vec<u32>);
+    /// `STOP_BUTTON` is deliberately not here. libbela opens it with
+    /// `unexport = false` and it is exported before this probe ever
+    /// runs and expected to stay — `docs/board-facts.md` records that
+    /// as the board's resting state, and unexporting it would change
+    /// what a later run measures.
+    const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN, DIGITAL_D0];
 
-    /// What a claim turned out to be, which the three call sites need
-    /// to tell apart and one of them reports on.
-    #[derive(Debug, PartialEq, Eq)]
-    enum Claim {
-        /// Something else was already holding the pin.
-        AlreadyHeld,
-        /// This process exported it, and owes it back.
-        Ours,
-        /// The pin was free and the call did not take it.
-        Failed,
-    }
-
-    impl Ledger {
-        /// Runs an export with the ledger written *first*, and unwound
-        /// if the call did not take.
-        ///
-        /// The order is the point. Recording after the export leaves a
-        /// window in which a pin is claimed and nothing knows it, and
-        /// `timeout -s INT` is how both passes bound this probe, so
-        /// that window is one a signal really lands in. Recording a
-        /// pin that then turns out not to be exported costs nothing:
-        /// `gpio_unexport` on a free pin simply fails.
-        fn claiming<T>(&mut self, pin: u32, export: impl FnOnce() -> T) -> (T, Claim) {
-            if exported(pin) {
-                return (export(), Claim::AlreadyHeld);
-            }
-            self.0.push(pin);
-            self.flush();
-            let out = export();
-            if exported(pin) {
-                return (out, Claim::Ours);
-            }
-            self.0.retain(|&held| held != pin);
-            self.flush();
-            (out, Claim::Failed)
-        }
-
-        /// Forgets a pin only once it is really gone. `gpio_dismiss`
-        /// discards `gpio_unexport`'s result and returns `0` whatever
-        /// happened, and a bare `gpio_unexport` here is not checked
-        /// either, so releasing on the call rather than on the pin
-        /// would drop from the ledger exactly the pins that failed to
-        /// come back — which is the leak it exists to catch.
-        fn release(&mut self, pin: u32) {
-            if exported(pin) {
-                return;
-            }
-            self.0.retain(|&held| held != pin);
-            self.flush();
-        }
-
-        fn flush(&self) {
-            if self.0.is_empty() {
-                drop(fs::remove_file(LEDGER));
-                return;
-            }
-            // Every line terminated, the last included: the handler
-            // reads this with `while read`, which returns non-zero on
-            // an unterminated final line and so drops it.
-            let mut list = String::new();
-            for pin in &self.0 {
-                list.push_str(&pin.to_string());
-                list.push('\n');
-            }
-            drop(fs::write(LEDGER, list));
+    /// Gives back every pin this probe can claim, whether or not this
+    /// invocation claimed it.
+    ///
+    /// That bluntness is the trade-off, and it is the point. Tracking
+    /// which pins were ours needed a ledger written before each export
+    /// and unwound after it, and an interrupt could still land between
+    /// two instructions; three attempts at it were the substance of
+    /// eight review rounds. What actually keeps a pin from leaking is
+    /// the layering the script already has — `timeout -s INT` bounds
+    /// every run, a bounded run ends normally, and a normal end
+    /// releases what it held — with this as the backstop, which is the
+    /// same shape `scripts/probe-io.sh` has always had.
+    ///
+    /// The cost is that it will unexport one of these three even if
+    /// something else exported it. The script only calls it where no
+    /// run is up, and these are Bela's own two LEDs and its first
+    /// digital channel, which nothing else on this board holds while
+    /// nothing is running.
+    fn release_all() {
+        println!("== releasing every pin this probe can claim ==");
+        for &pin in RELEASABLE {
+            let was = exported(pin);
+            let ret = unsafe { gpio_unexport(pin) };
+            println!(
+                "  gpio_unexport({pin}) = {ret} (was {}, now {})",
+                if was { "exported" } else { "free" },
+                if exported(pin) { "exported" } else { "free" }
+            );
         }
     }
 
@@ -256,11 +233,18 @@ mod imp {
         // so a mistyped `--with_run` ran the pass that takes pins.
         if let Some(bad) = args
             .iter()
-            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive"))
+            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive" | "--release"))
         {
             eprintln!("unknown argument: {bad}");
             process::exit(2);
         }
+        // Not a question: the script's tidy-up, which it calls where
+        // no run is up. Does its work and stops.
+        if args.iter().any(|a| a == "--release") {
+            release_all();
+            return;
+        }
+
         let with_run = args.iter().any(|a| a == "--with-run");
         let destructive = args.iter().any(|a| a == "--destructive");
 
@@ -310,11 +294,10 @@ mod imp {
             }
         }
         println!("at rest, /sys/class/gpio holds: {}", listing());
-        let mut held = Ledger::default();
 
         // 1. Exporting a free pin, then the same pin again.
         println!("\n-- 1. export, twice --");
-        let (first, _) = held.claiming(LED_RUNNING, || unsafe { gpio_export(LED_RUNNING) });
+        let first = unsafe { gpio_export(LED_RUNNING) };
         println!(
             "gpio_export({LED_RUNNING}) = {first}, exported now: {}",
             exported(LED_RUNNING)
@@ -322,13 +305,10 @@ mod imp {
         let second = unsafe { gpio_export(LED_RUNNING) };
         println!("gpio_export({LED_RUNNING}) again = {second}");
         let _ = unsafe { gpio_unexport(LED_RUNNING) };
-        held.release(LED_RUNNING);
 
         // 2. What gpio_setup hands back.
         println!("\n-- 2. gpio_setup --");
-        let (fd, _) = held.claiming(LED_RUNNING, || unsafe {
-            gpio_setup(LED_RUNNING, arg::OUTPUT)
-        });
+        let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("gpio_setup({LED_RUNNING}, OUTPUT_PIN) = {fd}");
         println!("  direction file now: {}", direction(LED_RUNNING));
         if fd < 0 {
@@ -336,7 +316,6 @@ mod imp {
             // can leave the pin claimed — the trap this probe exists
             // to document. Give it back before reporting.
             unsafe { gpio_unexport(LED_RUNNING) };
-            held.release(LED_RUNNING);
             return Err(format!("gpio_setup on a free pin returned {fd}"));
         }
 
@@ -362,16 +341,13 @@ mod imp {
 
         // 4. What a write does to the next read.
         println!("\n-- 4. gpio_write, then gpio_read on the same descriptor --");
-        let (fd2, _) = held.claiming(LED_RUNNING, || unsafe {
-            gpio_setup(LED_RUNNING, arg::OUTPUT)
-        });
+        let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("a fresh descriptor: {fd2}");
         if fd2 < 0 {
             // Asking anyway would put `-1` into `write(2)`, and the
             // transcript would record `EBADF` on a bogus descriptor as
             // if it were what these functions do to a pin.
             unsafe { gpio_unexport(LED_RUNNING) };
-            held.release(LED_RUNNING);
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
         println!("gpio_write(fd2, HIGH) = {}", unsafe {
@@ -387,7 +363,6 @@ mod imp {
         println!("gpio_dismiss = {}", unsafe {
             gpio_dismiss(fd2, LED_RUNNING)
         });
-        held.release(LED_RUNNING);
         println!("  still exported: {}", exported(LED_RUNNING));
         println!("gpio_unexport (second time) = {}", unsafe {
             gpio_unexport(LED_RUNNING)
@@ -440,9 +415,7 @@ mod imp {
         // which links and runs is evidence for all thirteen symbols
         // rather than for the nine this pass needs.
         println!("\n-- the remaining four, called only to link them --");
-        let (fd3, _) = held.claiming(LED_RUNNING, || unsafe {
-            gpio_setup(LED_RUNNING, arg::OUTPUT)
-        });
+        let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 >= 0 {
             println!("  gpio_set_dir(INPUT) = {}", unsafe {
                 gpio_set_dir(LED_RUNNING, arg::INPUT)
@@ -468,8 +441,6 @@ mod imp {
                 gpio_unexport(LED_RUNNING)
             });
         }
-        // Either way the pin is back, by `gpio_dismiss` or by hand.
-        held.release(LED_RUNNING);
 
         // 7. A pin number no chip covers.
         println!("\n-- 7. a pin nothing can honour --");
@@ -489,16 +460,17 @@ mod imp {
         // value: `gpio_export` answers `0` for a pin it merely found,
         // which is the finding this whole probe is about. So look
         // first, and only claim what was not there before.
-        let (ret, claim) = held.claiming(LED_UNDERRUN, || unsafe { gpio_export(LED_UNDERRUN) });
+        let was_exported = exported(LED_UNDERRUN);
+        let ret = unsafe { gpio_export(LED_UNDERRUN) };
         println!("gpio_export({LED_UNDERRUN}) = {ret}");
-        if claim == Claim::AlreadyHeld {
+        if was_exported {
             println!("  it was already exported before this probe asked, so there is");
             println!("  nothing of ours here to leave behind, and this question");
             println!("  goes unanswered rather than answered by somebody else's pin");
             println!("\nleaving /sys/class/gpio at: {}", listing());
             return Ok(());
         }
-        if claim == Claim::Failed {
+        if !exported(LED_UNDERRUN) {
             // The pin was free and is still not exported, so the call
             // failed. Saying "already exported" here would report the
             // question as answered when it was never asked.
@@ -511,7 +483,7 @@ mod imp {
         // Not released, so it stays in the ledger — which is what
         // records it. The script reads the ledger, gives the answer,
         // and clears what is in it.
-        println!("leaving-exported: {LED_UNDERRUN} (in {LEDGER})");
+        println!("leaving-exported: {LED_UNDERRUN}");
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())
@@ -548,15 +520,14 @@ mod imp {
         // with `enable_led` off, where it claims neither LED — is ours
         // to give back, or the closing listing reports our own leak as
         // an answer.
-        let mut held = Ledger::default();
         let mut ours: Vec<u32> = Vec::new();
         for (name, pin) in claimed {
             println!("\n-- {name} (gpio{pin}) --");
             println!("  exported before we ask: {}", exported(pin));
             println!("  direction: {}", direction(pin));
-            let (ret, claim) = held.claiming(pin, || unsafe { gpio_export(pin) });
-            println!("  gpio_export = {ret}");
-            if claim == Claim::Ours {
+            let was_exported = exported(pin);
+            println!("  gpio_export = {}", unsafe { gpio_export(pin) });
+            if !was_exported && exported(pin) {
                 ours.push(pin);
             }
             let mut value: PIN_VALUE = 0xdead_beef;
@@ -654,7 +625,6 @@ mod imp {
                 println!("  gpio_unexport({pin}) = {}", unsafe {
                     gpio_unexport(*pin)
                 });
-                held.release(*pin);
             }
         }
 

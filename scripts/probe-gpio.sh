@@ -32,6 +32,13 @@
 # direction reads `out`. Both contend with a live run, which is why
 # they are opt-in.
 #
+# What is put back: `bela_daemon`, the remote directory, the run, and
+# every pin the probe can claim — `gpio_probe --release`, called after
+# each pass and from the handler. It does not ask which pins this run
+# actually took; the probe's own documentation says why not and what
+# that costs. What is not put back is an LED trigger, if the probe was
+# killed between setting one and restoring it; the handler says so.
+#
 # `bela_daemon` is stopped for the duration and restarted afterwards,
 # as in scripts/smoke-test.sh: it would otherwise take the audio device
 # and the pins this is asking about. Every remote run is bounded, an
@@ -105,15 +112,11 @@ cleanup() {
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; if [ -d /proc/\$p ]; then kill -9 \$p 2>/dev/null; fi; fi"
     undo="$undo; if [ -n \"\$r\" ] && [ -d /proc/\$r ]; then kill -9 \$r 2>/dev/null; fi"
-    # The probe keeps one ledger of the pins it has exported and not
-    # given back, in `claimed.pins`, and writes it as it changes. It
-    # lists only pins the probe itself exported — `gpio_export` answers
-    # `0` for a pin it merely found, so every claim is checked against
-    # the pin first — which makes clearing them always right and needs
-    # no reasoning here about which pass is running or what failed.
-    undo="$undo; if [ -r $REMOTE_DIR/claimed.pins ]; then"
-    undo="$undo while read -r o; do echo \$o > /sys/class/gpio/unexport 2>/dev/null"
-    undo="$undo; done < $REMOTE_DIR/claimed.pins; fi"
+    # And give back every pin the probe can claim. After the kill
+    # above, so no run is holding one. This does not ask which pins
+    # this invocation actually took — see the probe's own notes on why
+    # not, and what that costs.
+    undo="$undo; $REMOTE_DIR/gpio_probe --release >/dev/null 2>&1 || true"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -121,8 +124,8 @@ cleanup() {
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not restore $HOST — check for a leftover sine" \
-        "process, the pins named by $REMOTE_DIR/claimed.pins still" \
-        "exported, $REMOTE_DIR, and bela_daemon" >&2
+        "process, an exported gpio584, gpio585 or gpio637," \
+        "$REMOTE_DIR, and bela_daemon" >&2
   fi
   # Question 6 sets an LED trigger to `none` and puts it back a line
   # later, and nothing here can cover a probe killed in between — the
@@ -169,7 +172,7 @@ fi
 #
 # The directory is removed rather than reused. `cleanup`'s single ssh
 # is allowed to fail, so a previous run can have left `sine.pid` and
-# `claimed.pins` behind — and a handler acting on a stale pid would signal
+# behind — and a handler acting on a stale pid would signal
 # whatever has since been given that number.
 BOARD_PREPARED=yes
 ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; rm -rf $REMOTE_DIR; mkdir -p $REMOTE_DIR"
@@ -201,29 +204,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # starts from the board's resting state rather than from this. The
   # pin comes from the probe rather than from a literal here: it
   # derives it from bank bases that are measured and can move.
-  if [ -s claimed.pins ]; then
-    # Keep in the ledger whatever did not actually come back, the way
-    # Ledger::release does on the other side: deleting the file on
-    # the strength of the write having been attempted would drop
-    # exactly the pins that failed, leaving them exported with nothing
-    # recording them — and pass 2 would then read one as libbela's.
-    : > claimed.left
-    while read -r o; do
-      echo \"(clearing gpio\$o, which the probe was still holding)\"
-      echo \"\$o\" > /sys/class/gpio/unexport 2>/dev/null || true
-      if [ -e /sys/class/gpio/gpio\$o ]; then
-        echo \"  gpio\$o did NOT come back\"
-        echo \"\$o\" >> claimed.left
-      fi
-    done < claimed.pins
-    if [ -s claimed.left ]; then
-      mv claimed.left claimed.pins
-    else
-      rm -f claimed.left claimed.pins
-    fi
-  else
-    echo '(the probe was holding no pin to clear)'
-  fi
+  # Question 8 leaves one pin exported on purpose, and the listing
+  # above is its answer. Give back everything the probe can claim, so
+  # that pass 2 starts from the board's resting state.
+  timeout -s INT -k 5 15 ./gpio_probe --release
   exit \$probe_status
 " || alone_status=$?
 
