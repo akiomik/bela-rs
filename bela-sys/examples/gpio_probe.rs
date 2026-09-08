@@ -86,11 +86,13 @@
 //!   line later; a probe killed in between leaves it changed, and
 //!   nothing here restores triggers. The script says so and gives the
 //!   command to check.
-//! - A digital channel left driven. Question 11 writes one and puts
-//!   it back a line later, and a probe killed in between leaves it
-//!   driving against the PRU for the rest of the run. `--release`
-//!   unexports pins; nothing here restores a pin's *value*, and the
-//!   run's own end is what clears it.
+//! - A pin's level. Question 11 writes a digital channel and puts it
+//!   back a line later, and a probe killed in between leaves it driving
+//!   against the PRU for the rest of the run; question 12's failure
+//!   branch restores a direction, which is a write that drives the pin
+//!   low and cannot carry a level back with it. `--release` unexports
+//!   pins; nothing here restores a *value*, and the run's own end is
+//!   what clears it.
 //! - A pin exported by something else. `--release` will unexport one
 //!   of its two whoever claimed it — Bela's own two LEDs, which
 //!   nothing else takes on an idle board. It declines outright where
@@ -358,29 +360,35 @@ mod imp {
             );
         }
 
-        // `true` from a pass means its questions were all put and its
-        // transcript stands, and that it left changed one of the two
-        // things nothing else here reaches: an LED trigger (question 6)
-        // or a driven channel (question 11).
+        // Held here rather than returned, because the two are
+        // independent: a pass can leave something changed and *then*
+        // fail to ask a later question, and returning the flag made
+        // every `Err` after the change drop it. It goes true where a
+        // pass could not put back one of the things nothing else here
+        // reaches — an LED trigger (question 6), a pin's level
+        // (questions 11 and 12).
+        let mut left_changed = false;
         let could_ask = if with_run {
-            with_run_questions(destructive)
+            with_run_questions(destructive, &mut left_changed)
         } else {
-            alone_questions()
+            alone_questions(&mut left_changed)
         };
 
-        // Non-zero means the questions could not be put, never that an
-        // answer was surprising.
-        match could_ask {
-            Err(why) => {
-                eprintln!("could not ask: {why}");
+        // Non-zero means the questions could not be put, or something
+        // was left changed, never that an answer was surprising.
+        if let Err(why) = could_ask {
+            eprintln!("could not ask: {why}");
+            if !left_changed {
                 process::exit(2);
             }
-            // 6 rather than 2, for the same reason 3 is not 2: the
-            // transcript above is a measurement, and saying "could not
-            // ask" of it tells an operator the opposite of what
-            // happened while something is left changed.
-            Ok(true) => process::exit(6),
-            Ok(false) => {}
+        }
+        // 6 takes precedence over 2, for the same reason 3 is not 2: a
+        // pin or a trigger left changed is the thing that needs a hand,
+        // and reporting only that the probe could not ask sends an
+        // operator past it. The message above still prints, so a pass
+        // that did both says so.
+        if left_changed {
+            process::exit(6);
         }
     }
 
@@ -388,10 +396,9 @@ mod imp {
         clippy::too_many_lines,
         reason = "one question per block, in the order the module doc numbers them"
     )]
-    /// `Ok(true)` where every question was put but question 6's LED
-    /// trigger would not go back — the same status question 11's write
-    /// has in the other pass, and for the same reason.
-    fn alone_questions() -> Result<bool, String> {
+    /// Sets `left_changed` where question 6's LED trigger would not go
+    /// back, which is a status of its own rather than a failure to ask.
+    fn alone_questions(left_changed: &mut bool) -> Result<(), String> {
         println!("== alone: nothing else should be running ==");
         // The mirror of the check `with_run_questions` makes, and the
         // more important of the two: this pass dismisses and unexports
@@ -492,11 +499,6 @@ mod imp {
         // it, so a pass in which every number took that branch would be
         // evidence for twelve of the thirteen while exiting 0.
         let mut trigger_called = false;
-        // Carried rather than returned where it happens: the questions
-        // after this one claim nothing a changed trigger affects, and
-        // stopping short of them would throw away measurement for
-        // nothing.
-        let mut left_changed = false;
         for &n in LED_NUMBERS {
             // Read first, and only write what can be put back. A file
             // that exists but cannot be read for its `[selected]`
@@ -540,7 +542,7 @@ mod imp {
                     trigger_path(n)
                 );
                 eprintln!("  the write failed with: {e}");
-                left_changed = true;
+                *left_changed = true;
                 // And stop asking. Whatever made this restore refuse is
                 // as likely to hold for the next number, and going on
                 // would leave four triggers at `none` rather than one.
@@ -646,7 +648,7 @@ mod imp {
             println!("  nothing of ours here to leave behind, and this question");
             println!("  goes unanswered rather than answered by somebody else's pin");
             println!("\nleaving /sys/class/gpio at: {}", listing());
-            return Ok(left_changed);
+            return Ok(());
         }
         if !exported(LED_UNDERRUN) {
             // The pin was free and is still not exported, so the call
@@ -664,17 +666,17 @@ mod imp {
         // probe can claim whether or not it claimed them.
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
-        Ok(left_changed)
+        Ok(())
     }
 
     #[allow(
         clippy::too_many_lines,
         reason = "one question per block, in the order the module doc numbers them"
     )]
-    /// `Ok(true)` where every question was put but question 11's write
-    /// would not go back, which is a status of its own rather than a
-    /// failure to ask.
-    fn with_run_questions(destructive: bool) -> Result<bool, String> {
+    /// Sets `left_changed` where question 11's write or question 12's
+    /// direction restore would not go back, which is a status of its
+    /// own rather than a failure to ask.
+    fn with_run_questions(destructive: bool, left_changed: &mut bool) -> Result<(), String> {
         println!("== with a run up: something else must be holding the audio device ==");
         println!("/sys/class/gpio holds: {}", listing());
 
@@ -722,9 +724,6 @@ mod imp {
         // call would contend with whatever is driving it — the
         // loopback rig in "What a digital pin does" is one — so that
         // case needs the same opt-in the destructive question has.
-        // Carried rather than returned on the spot: the pins below are
-        // owed back first, and a bare `return Err` here would leak them.
-        let mut left_driven = false;
         println!("\n-- writing gpio{DIGITAL_D0} while the PRU drives it --");
         let d0_direction = direction(DIGITAL_D0);
         println!("  its direction is {d0_direction}");
@@ -772,7 +771,7 @@ mod imp {
                         "LEFT CHANGED: gpio{DIGITAL_D0} was written HIGH and would not go \
                          back ({put_back}); it is driving against the PRU until the run ends"
                     );
-                    left_driven = true;
+                    *left_changed = true;
                 }
             } else {
                 println!("  the write did not take, so there is nothing to put back");
@@ -835,6 +834,23 @@ mod imp {
                             "  restoring its direction to {direction_before}: {}",
                             unsafe { gpio_set_dir(LED_RUNNING, back) }
                         );
+                        if direction_before == "out" {
+                            // Writing `out` to the `direction` attribute
+                            // sets the pin low; only `high` and `low`
+                            // carry a level, and `gpio_set_dir` writes
+                            // neither. So the direction is back and the
+                            // level is not — and libbela drives the
+                            // running LED once at the start of a run,
+                            // not every block, so it stays dark for the
+                            // rest of it. Say so, rather than let
+                            // "restoring" stand for both.
+                            eprintln!(
+                                "LEFT CHANGED: gpio{LED_RUNNING} is an output again but writing \
+                                 `out` drove it low, and its level is not restored; the run's \
+                                 LED is dark until it ends"
+                            );
+                            *left_changed = true;
+                        }
                     } else {
                         // `direction` reports a read failure as its own
                         // message rather than a direction, and there is
@@ -879,13 +895,7 @@ mod imp {
         }
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
-        // Carried here rather than returned where it happened, so that
-        // everything above — the give-back and the two reports — has
-        // run first. A restore that refused is the one thing this pass
-        // can leave behind that neither `--release` nor the script's
-        // handler reaches, which is why it reaches the exit status at
-        // all.
-        Ok(left_driven)
+        Ok(())
     }
 
     /// What `/sys/class/gpio` holds, with the `gpiochip*` directories
