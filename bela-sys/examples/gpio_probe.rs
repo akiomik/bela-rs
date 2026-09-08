@@ -89,9 +89,11 @@
 //! - A pin's level. Questions 4 and 11 write one and put it back a line
 //!   later — the running LED and a digital channel — and a probe killed
 //!   in between leaves the LED lit or the channel driving against the
-//!   PRU for the rest of the run; question 12's failure branch restores
+//!   PRU for the rest of the run. Question 12's failure branch restores
 //!   a direction, which is a write that drives the pin low and cannot
-//!   carry a level back with it. `--release` unexports
+//!   carry a level back with it — but the PRU drives that pin every
+//!   block and takes it back, so what lasts there is a direction that
+//!   would not go back, an input being one the PRU cannot drive. `--release` unexports
 //!   pins; nothing here restores a *value*, and the run's own end is
 //!   what clears it.
 //! - A pin exported by something else. `--release` will unexport one
@@ -527,22 +529,35 @@ mod imp {
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // The same rule the rest of the file follows: a restore that
         // refused is a thing left changed, not a line to drop. Question
-        // 5 unexports this pin two lines down, after which nothing is
-        // driving it, so a `HIGH` that stayed would leave the blue
-        // running LED lit on an idle board with the transcript silent.
+        // 5 unexports this pin two lines down, and an unexport keeps
+        // both the direction and the level — measured, and in
+        // docs/board-facts.md — so a `HIGH` that stayed would stay
+        // after the pass ended, on an idle board, with the transcript
+        // silent about it.
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };
         println!("  putting it back to LOW: {put_back}");
         if put_back != 0 {
-            // "Nothing here turns it off" includes question 5's
-            // `gpio_dismiss` three lines down, which unexports the pin:
-            // measured on this board, a line unexported while driven
-            // keeps its direction and its level, so the LED stays lit.
-            // See "Reaching a pin through sysfs" in docs/board-facts.md.
-            eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
-                 ({put_back}); the running LED is lit and nothing here turns it off"
-            );
-            *left_changed = true;
+            // Try the other way in before reporting: `gpio_write` uses
+            // the descriptor question 4 opened, and `gpio_set_value`
+            // opens its own, so a descriptor that has gone bad is not
+            // the same as a pin that will not take a level.
+            println!("  gpio_set_value(LOW) instead = {}", unsafe {
+                gpio_set_value(LED_RUNNING, arg::LOW)
+            });
+            let mut level: PIN_VALUE = 0xdead_beef;
+            let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut level) };
+            println!("  it now reads: ret {read}, *value {level:#x}");
+            // The pin, not the calls. Said as a level rather than as a
+            // lit LED: sysfs reads the line, and whether that lights
+            // the indicator is not something this can see.
+            if read != 0 || level != 0 {
+                eprintln!(
+                    "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go \
+                     back; the line is not known to be low, and an unexport keeps \
+                     whatever it holds"
+                );
+                *left_changed = true;
+            }
         }
 
         // 5. Teardown, and a second unexport.
@@ -941,21 +956,25 @@ mod imp {
                             );
                             *left_changed = true;
                         } else if direction_before == "out" {
-                            // Writing `out` to the `direction` attribute
-                            // sets the pin low; only `high` and `low`
-                            // carry a level, and `gpio_set_dir` writes
-                            // neither. So the direction is back and the
-                            // level is not — and libbela drives the
-                            // running LED once at the start of a run,
-                            // not every block, so it stays dark for the
-                            // rest of it. Say so, rather than let
-                            // "restoring" stand for both.
-                            eprintln!(
-                                "LEFT CHANGED: gpio{LED_RUNNING} is an output again but writing \
-                                 `out` drove it low, and its level is not restored; the run's \
-                                 LED is dark until it ends"
-                            );
-                            *left_changed = true;
+                            // Writing `out` to the `direction`
+                            // attribute drives the pin low — measured,
+                            // and in docs/board-facts.md — since only
+                            // `high` and `low` carry a level and
+                            // `gpio_set_dir` writes neither. So the
+                            // direction is back and the level is not.
+                            // Not LEFT CHANGED, though: "The board
+                            // LEDs" records the PRU blinking this pin
+                            // by writing the GPIO bank directly, ten
+                            // reads at 100 ms giving `1011010101`, so
+                            // an output it drives is one it takes back
+                            // within a block. The branch above, where
+                            // the direction itself would not go back,
+                            // is the one that lasts — the PRU cannot
+                            // drive an input.
+                            println!("  its level is not restored with it: writing `out`");
+                            println!("  drives the pin low, and only the direction came back.");
+                            println!("  The PRU drives this pin every block, so it takes it");
+                            println!("  back; see \"The board LEDs\" in docs/board-facts.md.");
                         }
                     } else {
                         // `direction` reports a read failure as its own
