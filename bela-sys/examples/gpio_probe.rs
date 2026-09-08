@@ -269,6 +269,13 @@ mod imp {
         println!("\n-- 4. gpio_write, then gpio_read on the same descriptor --");
         let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("a fresh descriptor: {fd2}");
+        if fd2 < 0 {
+            // Asking anyway would put `-1` into `write(2)`, and the
+            // transcript would record `EBADF` on a bogus descriptor as
+            // if it were what these functions do to a pin.
+            unsafe { gpio_unexport(LED_RUNNING) };
+            return Err(format!("gpio_setup for question 4 returned {fd2}"));
+        }
         println!("gpio_write(fd2, HIGH) = {}", unsafe {
             gpio_write(fd2, arg::HIGH)
         });
@@ -342,7 +349,15 @@ mod imp {
             println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
             let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
         } else {
+            // Two of `gpio_setup`'s three failure paths leave the pin
+            // exported with no descriptor, which is the trap question 2
+            // handles. Give it back, or question 8's listing reports
+            // two leaked pins and the script only clears the one the
+            // probe named.
             println!("  skipped: gpio_setup returned {fd3}");
+            println!("  gpio_unexport = {}", unsafe {
+                gpio_unexport(LED_RUNNING)
+            });
         }
 
         // 7. A pin number no chip covers.

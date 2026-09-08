@@ -148,7 +148,7 @@ alone_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR
-  probe_out=\$(timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe)
+  probe_out=\$(timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe 2>&1)
   probe_status=\$?
   echo \"\$probe_out\"
   echo
@@ -169,13 +169,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
   exit \$probe_status
 " || alone_status=$?
 
-# Pass 1 clears the pin as its last act, so once it has returned
-# cleanly the handler must stop being armed to clear it again: pass 2
-# has a run holding that same pin, and unexporting it there is the act
-# this script gates behind --destructive.
-if [ "$alone_status" -eq 0 ]; then
-  LEFT_EXPORTED=""
-fi
+# Disarm before pass 2 whatever pass 1 did. Pass 1 clears the pin as
+# its last act, and its failure paths return before question 8 exports
+# anything at all — but neither of those is what decides it. What does
+# is that pass 2 has a live run holding that same pin, so a handler
+# still armed there would unexport it out from under the run, which is
+# the one act this script gates behind --destructive.
+LEFT_EXPORTED=""
 
 echo
 echo "=============================================================="
@@ -237,4 +237,12 @@ echo "The board answered. Record the findings in docs/board-facts.md."
 echo
 echo "If a pin is still exported above that was not before, this probe"
 echo "left it there: that is question 13's answer and not a tidy-up the"
-echo "script forgot. Nothing else here needs putting back."
+echo "script forgot."
+echo
+echo "One thing is not covered by any of this. Question 6 sets an LED"
+echo "trigger to \`none\` and puts it back a line later; a probe killed"
+echo "in between — by its timeout, or by a signal — leaves that LED"
+echo "changed, and the handler here covers the GPIO export, the remote"
+echo "directory and the daemon rather than the triggers. If a run was"
+echo "interrupted, check:"
+echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'"
