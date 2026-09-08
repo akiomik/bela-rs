@@ -518,11 +518,12 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "handler will have signalled it — so something may have run after" >&2
     echo "all, and the exports above are the place to look." >&2
   elif [ "$with_run_status" -eq 6 ]; then
-    echo "Pass 2 left a pin's level changed: see LEFT CHANGED above, which" >&2
-    echo "names it. Nothing here restores a value — --release unexports pins," >&2
-    echo "and the handler reaches exports, the remote directory and the daemon" >&2
-    echo "— so the run's own end is what took it back. A 'could not ask:' line" >&2
-    echo "above it, if there is one, says the pass also stopped short." >&2
+    echo "Pass 2 could not put something back: see LEFT CHANGED above, which" >&2
+    echo "names it and the state it is in. Three things reach this — a digital" >&2
+    echo "channel left driven, gpio584 left an input, and gpio584 left exported" >&2
+    echo "— and only the last is one --release gives back, which the remote" >&2
+    echo "block runs a moment later either way. A 'could not ask:' line above" >&2
+    echo "it, if there is one, says the pass also stopped short." >&2
   elif [ "$with_run_status" -eq 5 ]; then
     echo "Pass 2's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
