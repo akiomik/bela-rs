@@ -462,10 +462,11 @@ echo
 # Pass 1's own failure exits above, at the point where continuing
 # would corrupt pass 2, so only pass 2's status can reach here.
 if [ "$with_run_status" -ne 0 ]; then
-  # The probe exits 2 when it could not ask and 3 when only the
-  # release declined, so these are separable rather than guessed at:
-  # a 3 means the transcript above is a measurement and what failed is
-  # the tidy-up.
+  # The probe exits 2 when it could not ask, 3 when only the release
+  # declined and 6 when it asked everything and could not put a pin's
+  # value back, so these are separable rather than guessed at: a 3 or a
+  # 6 means the transcript above is a measurement and what failed came
+  # after the answer.
   if [ "$with_run_status" -eq 255 ]; then
     echo "Pass 2's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
@@ -475,6 +476,12 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "the run itself kept going, that branch keeps run.pid and the" >&2
     echo "handler will have signalled it — so something may have run after" >&2
     echo "all, and the exports above are the place to look." >&2
+  elif [ "$with_run_status" -eq 6 ]; then
+    echo "Pass 2 asked every question — the transcript above stands — but the" >&2
+    echo "write to a digital channel would not go back, so that channel drove" >&2
+    echo "against the PRU for the rest of the run. See LEFT CHANGED above." >&2
+    echo "Nothing here restores a pin's value: --release unexports pins, and" >&2
+    echo "the handler reaches exports, the remote directory and the daemon." >&2
   elif [ "$with_run_status" -eq 5 ]; then
     echo "Pass 2's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2

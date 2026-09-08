@@ -80,7 +80,7 @@
 //! `--release` as the backstop. That is the shape
 //! `scripts/probe-io.sh` has always had, and it is enough.
 //!
-//! Two things it does not cover, said rather than left to be found:
+//! Three things it does not cover, said rather than left to be found:
 //!
 //! - An LED trigger. Question 6 sets one to `none` and puts it back a
 //!   line later; a probe killed in between leaves it changed, and
@@ -358,17 +358,28 @@ mod imp {
             );
         }
 
+        // `true` from a pass means its questions were all put and its
+        // transcript stands, and that it could not put back the one
+        // thing here nothing else reaches — see question 11.
         let could_ask = if with_run {
             with_run_questions(destructive)
         } else {
-            alone_questions()
+            alone_questions().map(|()| false)
         };
 
         // Non-zero means the questions could not be put, never that an
         // answer was surprising.
-        if let Err(why) = could_ask {
-            eprintln!("could not ask: {why}");
-            process::exit(2);
+        match could_ask {
+            Err(why) => {
+                eprintln!("could not ask: {why}");
+                process::exit(2);
+            }
+            // 6 rather than 2, for the same reason 3 is not 2: the
+            // transcript above is a complete measurement, and saying
+            // "could not ask" of it tells an operator the opposite of
+            // what happened while a channel is left driven.
+            Ok(true) => process::exit(6),
+            Ok(false) => {}
         }
     }
 
@@ -648,7 +659,10 @@ mod imp {
         clippy::too_many_lines,
         reason = "one question per block, in the order the module doc numbers them"
     )]
-    fn with_run_questions(destructive: bool) -> Result<(), String> {
+    /// `Ok(true)` where every question was put but question 11's write
+    /// would not go back, which is a status of its own rather than a
+    /// failure to ask.
+    fn with_run_questions(destructive: bool) -> Result<bool, String> {
         println!("== with a run up: something else must be holding the audio device ==");
         println!("/sys/class/gpio holds: {}", listing());
 
@@ -853,16 +867,13 @@ mod imp {
         }
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
-        // Last, so that everything above — the give-back and the two
-        // reports — has run first. A restore that refused is the one
-        // thing this pass can leave behind that neither `--release`
-        // nor the script's handler reaches.
-        if left_driven {
-            return Err(format!(
-                "gpio{DIGITAL_D0} was left driven; see LEFT CHANGED above"
-            ));
-        }
-        Ok(())
+        // Carried here rather than returned where it happened, so that
+        // everything above — the give-back and the two reports — has
+        // run first. A restore that refused is the one thing this pass
+        // can leave behind that neither `--release` nor the script's
+        // handler reaches, which is why it reaches the exit status at
+        // all.
+        Ok(left_driven)
     }
 
     /// What `/sys/class/gpio` holds, with the `gpiochip*` directories
