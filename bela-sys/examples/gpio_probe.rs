@@ -164,21 +164,13 @@ mod imp {
         // so a mistyped `--with_run` ran the pass that takes pins.
         if let Some(bad) = args
             .iter()
-            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive" | "--will-leave"))
+            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive"))
         {
             eprintln!("unknown argument: {bad}");
             process::exit(2);
         }
         let with_run = args.iter().any(|a| a == "--with-run");
         let destructive = args.iter().any(|a| a == "--destructive");
-
-        // Asked by the script before anything runs, so that its
-        // handler can give the pin back even if this process never
-        // reaches the line that says it left one.
-        if args.iter().any(|a| a == "--will-leave") {
-            println!("{LED_UNDERRUN}");
-            return;
-        }
 
         if destructive && !with_run {
             eprintln!(
@@ -393,10 +385,16 @@ mod imp {
             gpio_export(LED_UNDERRUN)
         });
         println!("  exiting now WITHOUT unexporting it, on purpose");
-        // The script clears this after reading the answer, and reads
-        // the number from here rather than repeating it: the bases it
-        // is derived from are measured and can move with a board image.
-        println!("leaving-exported: {LED_UNDERRUN}");
+        // Written beside the binary, and read by the script and by its
+        // handler, which runs in another connection. A file rather than
+        // a number the script works out in advance: this exists only
+        // once the pin has actually been exported, so an interrupt
+        // before that leaves nothing for anyone to give back, and an
+        // interrupt after it leaves exactly one thing.
+        if let Err(e) = fs::write("left.pin", format!("{LED_UNDERRUN}\n")) {
+            return Err(format!("could not record the pin left exported: {e}"));
+        }
+        println!("leaving-exported: {LED_UNDERRUN} (recorded in left.pin)");
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())
@@ -463,21 +461,31 @@ mod imp {
         } else {
             let mut before: PIN_VALUE = 0xdead_beef;
             let read_before = unsafe { gpio_get_value(DIGITAL_D0, &raw mut before) };
-            println!("  gpio_set_value(HIGH) = {}", unsafe {
-                gpio_set_value(DIGITAL_D0, arg::HIGH)
-            });
+            let wrote = unsafe { gpio_set_value(DIGITAL_D0, arg::HIGH) };
+            println!("  gpio_set_value(HIGH) = {wrote}");
             let mut value: PIN_VALUE = 0xdead_beef;
             let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
             println!("  reads back: ret {ret}, *value {value:#x}");
-            // Back to what it held, rather than to LOW: a pin this
-            // probe could drive is one it has to put back.
-            if read_before == 0 {
-                let restore = if before == 0 { arg::LOW } else { arg::HIGH };
-                println!("  restoring to {before}: {}", unsafe {
+            // What decides whether a restore is owed is whether the
+            // write took, not whether the pin could be read first: a
+            // write that succeeded after a failed read would otherwise
+            // leave a PRU channel driven for the rest of the run.
+            if wrote == 0 {
+                let restore = if read_before == 0 && before != 0 {
+                    arg::HIGH
+                } else {
+                    arg::LOW
+                };
+                let to = if read_before == 0 {
+                    format!("what it held ({before})")
+                } else {
+                    "LOW, its value not having been readable first".to_owned()
+                };
+                println!("  restoring to {to}: {}", unsafe {
                     gpio_set_value(DIGITAL_D0, restore)
                 });
             } else {
-                println!("  its value could not be read first, so nothing to restore to");
+                println!("  the write did not take, so there is nothing to put back");
             }
         }
 

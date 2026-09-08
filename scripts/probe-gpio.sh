@@ -67,16 +67,6 @@ PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
 
 DAEMON_WAS_RUNNING=0
-# The pin question 8 leaves exported on purpose. Pass 1 clears it
-# itself on the happy path; this is so that an interrupted run, or one
-# whose probe died before it could say, gives the pin back too. The
-# probe is asked for the number rather than it being written here: it
-# derives it from bank bases that are measured and can move.
-LEFT_EXPORTED=""
-# Which pass is running, because it decides whether the handler may
-# give `$LEFT_EXPORTED` back: in pass 2 that pin is libbela's.
-PHASE=1
-
 BOARD_PREPARED=no
 
 # Modelled on scripts/probe-io.sh's `restore`, which had all of this
@@ -111,10 +101,15 @@ cleanup() {
     undo="$undo; while [ -d /proc/\$p ] && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; kill -9 \$p 2>/dev/null; fi"
-    # Only outside pass 2: in it, this pin is libbela's.
-    if [ -n "$LEFT_EXPORTED" ] && [ "$PHASE" != 2 ]; then
-      undo="$undo; echo $LEFT_EXPORTED > /sys/class/gpio/unexport"
-    fi
+    # Question 8 leaves one pin exported on purpose, and the probe
+    # writes the number into `left.pin` at the moment it does. So the
+    # file exists exactly when there is a pin of *ours* to give back:
+    # not when the probe stopped before exporting one, and not when
+    # some other run happens to be holding that pin. Pass 1 removes it
+    # once it has cleared the pin itself, which is why nothing here
+    # needs to know which pass is running.
+    undo="$undo; l=\$(cat $REMOTE_DIR/left.pin 2>/dev/null)"
+    undo="$undo; if [ -n \"\$l\" ]; then echo \$l > /sys/class/gpio/unexport 2>/dev/null; fi"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -122,8 +117,8 @@ cleanup() {
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not restore $HOST — check for a leftover sine" \
-        "process, an exported gpio${LEFT_EXPORTED:-<none>}, $REMOTE_DIR," \
-        "and bela_daemon" >&2
+        "process, a pin named by $REMOTE_DIR/left.pin still exported," \
+        "$REMOTE_DIR, and bela_daemon" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and then walk into
@@ -156,26 +151,18 @@ fi
 # do: an interrupt or a dropped connection *during* this call can leave
 # the daemon stopped, and a handler that had not been armed yet would
 # exit silently without putting it back.
+#
+# The directory is removed rather than reused. `cleanup`'s single ssh
+# is allowed to fail, so a previous run can have left `sine.pid` and
+# `left.pin` behind — and a handler acting on a stale pid would signal
+# whatever has since been given that number.
 BOARD_PREPARED=yes
-ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
+ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; rm -rf $REMOTE_DIR; mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
   scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
 # shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/gpio_probe $REMOTE_DIR/sine"
-
-# Ask before running anything, so that the handler can give the pin back
-# even if pass 1 never reaches the line that clears it.
-# shellcheck disable=SC2029
-LEFT_EXPORTED="$(ssh -o ConnectTimeout=10 "$HOST" "timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --will-leave" 2>/dev/null || true)"
-case "$LEFT_EXPORTED" in
-[0-9]*) echo "Question 8 will leave gpio$LEFT_EXPORTED exported; it will be cleared." ;;
-*)
-  echo "WARNING: the probe did not say which pin it leaves; an interrupted" >&2
-  echo "pass 1 will leave one exported. Its output said: $LEFT_EXPORTED" >&2
-  LEFT_EXPORTED=""
-  ;;
-esac
 
 echo
 echo "=============================================================="
@@ -199,22 +186,16 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # starts from the board's resting state rather than from this. The
   # pin comes from the probe rather than from a literal here: it
   # derives it from bank bases that are measured and can move.
-  left=\$(echo \"\$probe_out\" | sed -n 's/^leaving-exported: //p')
+  left=\$(cat left.pin 2>/dev/null)
   if [ -n \"\$left\" ]; then
     echo \"(clearing gpio\$left, which question 8 left on purpose)\"
     echo \"\$left\" > /sys/class/gpio/unexport 2>/dev/null || true
+    rm -f left.pin
   else
-    echo '(the probe named no pin to clear)'
+    echo '(the probe left no pin to clear)'
   fi
   exit \$probe_status
 " || alone_status=$?
-
-# Pass 2 has a live run holding that same pin, so the handler must not
-# unexport it there — that is the act this script gates behind
-# --destructive. But disarming outright loses the pin when pass 1 never
-# reached its own clear, which is exactly what the handler is for. So
-# the pin stays recorded and the phase decides whether to act on it.
-PHASE=2
 
 echo
 echo "=============================================================="
@@ -275,28 +256,6 @@ ssh -o ConnectTimeout=10 "$HOST" "
   echo
   exit \$probe_status
 " || with_run_status=$?
-
-# A pin pass 1 meant to clear and did not is ours to give back — but
-# only once the run has actually ended, and the ssh above returning
-# does not say that: only its normal path reaches `wait`, so a dropped
-# connection leaves `sine` rendering for the rest of its bound. Ask the
-# board rather than assume, or this unexports a live pin, which is the
-# act PHASE exists to prevent.
-# shellcheck disable=SC2029
-if ssh -o ConnectTimeout=10 "$HOST" \
-  "p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null); [ -n \"\$p\" ] && [ -d /proc/\$p ]" 2>/dev/null; then
-  echo "sine is still running, so gpio${LEFT_EXPORTED:-<none>} is left alone;" >&2
-  echo "check for it once that run has ended." >&2
-else
-  PHASE=3
-  if [ -n "$LEFT_EXPORTED" ]; then
-    # shellcheck disable=SC2029
-    ssh -o ConnectTimeout=10 "$HOST" \
-      "test -e /sys/class/gpio/gpio$LEFT_EXPORTED &&
-       echo $LEFT_EXPORTED > /sys/class/gpio/unexport &&
-       echo '(gpio$LEFT_EXPORTED was still exported after pass 2; cleared)'" 2>/dev/null || true
-  fi
-fi
 
 echo
 if [ "$alone_status" -ne 0 ] || [ "$with_run_status" -ne 0 ]; then
