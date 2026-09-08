@@ -68,11 +68,20 @@ impl ParseCallbacks for DropFamilyBanner {
 /// spells an attribute `# [doc = "..."]` with the space — hence
 /// matching on `[doc` rather than the `#[doc` the formatted file ends
 /// up with.
+///
+/// A missing anchor is fatal rather than a `false`. Either of them
+/// absent would otherwise report "no doc comment" for a file that has
+/// one, which is the guard passing on the case it exists to catch —
+/// and `unsafe extern` is not a given, bindgen emitting the `unsafe`
+/// only for a Rust target of 1.82 or newer.
 fn gpio_setup_is_documented(generated: &str) -> bool {
-    generated
+    let (before, _) = generated
         .split_once("pub fn gpio_setup")
-        .and_then(|(before, _)| before.rsplit_once("unsafe extern"))
-        .is_some_and(|(_, attrs)| attrs.contains("[doc"))
+        .expect("the gpio_* family is not generated; the allowlist puts it in");
+    let (_, attributes) = before
+        .rsplit_once("unsafe extern")
+        .expect("bindgen stopped opening the block with `unsafe extern`");
+    attributes.contains("[doc")
 }
 
 pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
@@ -142,14 +151,8 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     // is an error to bindgen, and no CI job regenerates this file to
     // notice. See `gpio_setup_is_documented` for why that is the
     // condition tested rather than the banner's text.
-    let generated = bindings.to_string();
     assert!(
-        generated.contains("pub fn gpio_setup"),
-        "the gpio_* family is not being generated; the allowlist above \
-         is what puts it in"
-    );
-    assert!(
-        !gpio_setup_is_documented(&generated),
+        !gpio_setup_is_documented(&bindings.to_string()),
         "gpio_setup came out with a doc comment, which is GPIOcontrol.h's \
          banner for the whole family: DropFamilyBanner has been displaced \
          by a later parse_callbacks, or the banner was reworded"
