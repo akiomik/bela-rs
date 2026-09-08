@@ -403,6 +403,10 @@ mod imp {
         // before that leaves nothing for anyone to give back, and an
         // interrupt after it leaves exactly one thing.
         if let Err(e) = fs::write("left.pin", format!("{LED_UNDERRUN}\n")) {
+            // The export has already happened. Without the file nothing
+            // knows the pin is ours, so leaving it exported would break
+            // the very invariant the file exists to keep.
+            unsafe { gpio_unexport(LED_UNDERRUN) };
             return Err(format!("could not record the pin left exported: {e}"));
         }
         println!("leaving-exported: {LED_UNDERRUN} (recorded in left.pin)");
@@ -447,11 +451,16 @@ mod imp {
         // records its one: a probe killed part way through leaves
         // these exported and nothing else knows they were its.
         let record_ours = |ours: &[u32]| {
-            let list = ours
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join("\n");
+            // A newline after every line, the last included: the
+            // handler reads this with `while read`, which returns
+            // non-zero on an unterminated final line and so drops it.
+            // One pin is the common case, and dropping it makes the
+            // whole file useless.
+            let mut list = String::new();
+            for pin in ours {
+                list.push_str(&pin.to_string());
+                list.push('\n');
+            }
             drop(fs::write("ours.pins", list));
         };
         for (name, pin) in claimed {

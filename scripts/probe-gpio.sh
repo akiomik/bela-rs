@@ -228,17 +228,24 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # orphaned and still holding the audio device. The run is the
   # wrapper's only child.
   echo \$sine_pid > sine.pid
-  for c in /proc/[0-9]*; do
-    if [ \"\$(awk '{print \$4}' \$c/stat 2>/dev/null)\" = \"\$sine_pid\" ]; then
-      basename \$c > run.pid
-    fi
-  done
   sleep 4
   # By pid, and through /proc rather than a signal-0: under a shell
   # which reaps only at wait, a run that died a second ago is still
   # a zombie that a signal-0 succeeds on. Not by name either: libbela
   # renames the process, so nothing here is called sine.
   alive() { [ -d /proc/\$1 ] && ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }
+  # After the sleep, not before it: the glob is expanded once, and at
+  # the moment the shell forks the wrapper that wrapper has still to
+  # execve and fork, so the run has no /proc entry to find yet. The
+  # ppid comes from /proc/<pid>/stat's fourth field counted from the
+  # closing parenthesis, because a comm containing a space would shift
+  # every field read positionally — and libbela renames the run.
+  for c in /proc/[0-9]*; do
+    ppid=\$(sed 's/.*) //' \$c/stat 2>/dev/null | cut -d' ' -f2)
+    if [ \"\$ppid\" = \"\$sine_pid\" ]; then
+      basename \$c > run.pid
+    fi
+  done
   if ! alive \$sine_pid; then
     echo 'sine did not stay up; its output was:'
     cat sine.log

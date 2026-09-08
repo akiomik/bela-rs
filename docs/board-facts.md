@@ -863,7 +863,8 @@ run.
 ## What a Bela program is called while it runs
 
 Collected 2026-09-08 while writing `scripts/probe-gpio.sh`, whose
-cleanup depended on getting this wrong.
+cleanup depends on getting this right and did not, for several
+rounds.
 
 - **libbela renames the process, so nothing is called what it was
   built as.** `bela/examples/sine`, run as `./sine`, has
