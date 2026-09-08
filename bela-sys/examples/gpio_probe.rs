@@ -665,7 +665,14 @@ mod imp {
             println!("  nothing of ours here to leave behind, and this question");
             println!("  goes unanswered rather than answered by somebody else's pin");
             println!("\nleaving /sys/class/gpio at: {}", listing());
-            return Ok(());
+            // And fail the pass, for the same reason the "remaining
+            // four" block does: the listing the script prints after
+            // this process exits is the same either way, so a pass that
+            // could not ask this and still returned 0 would be read as
+            // one that answered it.
+            return Err(format!(
+                "gpio{LED_UNDERRUN} was already exported, so question 8 could not be put"
+            ));
         }
         if !exported(LED_UNDERRUN) {
             // The pin was free and is still not exported, so the call
