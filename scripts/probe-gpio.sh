@@ -141,12 +141,20 @@ cleanup() {
     undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
     undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
     undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
-    undo="$undo; for t in \$p \$r; do kill -INT \$t 2>/dev/null; done"
+    # The group before the pid. `timeout` leads a process group with
+    # the run in it — measured: wrapper pid 18246 with pgid 18246, run
+    # 18248 with pgid 18246 — so signalling the group reaches the run
+    # even in the first seconds of pass 2, before `run.pid` has been
+    # written. The per-pid signal stays behind it for a wrapper that
+    # is not a group leader.
+    undo="$undo; for t in \$p \$r; do [ -n \"\$t\" ] || continue"
+    undo="$undo; kill -INT -\$t 2>/dev/null; kill -INT \$t 2>/dev/null; done"
     undo="$undo; n=0"
     undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; for t in \$p \$r; do"
-    undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
+    undo="$undo if alive \$t; then kill -9 -\$t 2>/dev/null"
+    undo="$undo; kill -9 \$t 2>/dev/null; fi; done"
     # And any probe of ours still running, or the release below would
     # give back pins it then exports again. Matched on the executable
     # rather than the name: exact, needs no pid written down, and does
@@ -434,8 +442,11 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "Pass 2's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
   elif [ "$with_run_status" -eq 4 ]; then
-    echo "Pass 2 could not start a run to ask beside: see sine's output above." >&2
-    echo "No question was put and nothing was tidied, because nothing ran." >&2
+    echo "Pass 2 found no run to ask beside: see sine's output above. No" >&2
+    echo "question was put and nothing was tidied. If its wrapper died while" >&2
+    echo "the run itself kept going, that branch keeps run.pid and the" >&2
+    echo "handler will have signalled it — so something may have run after" >&2
+    echo "all, and the exports above are the place to look." >&2
   elif [ "$with_run_status" -eq 5 ]; then
     echo "Pass 2's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
