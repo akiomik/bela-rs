@@ -96,11 +96,13 @@ cleanup() {
     # (smoke-test.sh budgets five for the same teardown), then insist.
     # `timeout` relays the signal to the run it manages, measured.
     undo="p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null)"
+    undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
     undo="$undo; if [ -n \"\$p\" ]; then kill -INT \$p 2>/dev/null"
     undo="$undo; n=0"
     undo="$undo; while [ -d /proc/\$p ] && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; kill -9 \$p 2>/dev/null; fi"
+    undo="$undo; if [ -n \"\$r\" ]; then kill -9 \$r 2>/dev/null; fi"
     # Question 8 leaves one pin exported on purpose, and the probe
     # writes the number into `left.pin` at the moment it does. So the
     # file exists exactly when there is a pin of *ours* to give back:
@@ -110,6 +112,11 @@ cleanup() {
     # needs to know which pass is running.
     undo="$undo; l=\$(cat $REMOTE_DIR/left.pin 2>/dev/null)"
     undo="$undo; if [ -n \"\$l\" ]; then echo \$l > /sys/class/gpio/unexport 2>/dev/null; fi"
+    # And the pins the with-run pass exported for itself, which it
+    # records as it takes them and removes once it has given them back.
+    undo="$undo; if [ -r $REMOTE_DIR/ours.pins ]; then"
+    undo="$undo while read -r o; do echo \$o > /sys/class/gpio/unexport 2>/dev/null"
+    undo="$undo; done < $REMOTE_DIR/ours.pins; fi"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -216,7 +223,16 @@ ssh -o ConnectTimeout=10 "$HOST" "
   sine_pid=\$!
   # For the handler, which runs in another connection and cannot see
   # this shell's job table — and cannot find the run by name either.
+  # Both pids: \$sine_pid is the timeout wrapper, and SIGKILL is not
+  # forwarded, so an escalation aimed only at it would leave the run
+  # orphaned and still holding the audio device. The run is the
+  # wrapper's only child.
   echo \$sine_pid > sine.pid
+  for c in /proc/[0-9]*; do
+    if [ \"\$(awk '{print \$4}' \$c/stat 2>/dev/null)\" = \"\$sine_pid\" ]; then
+      basename \$c > run.pid
+    fi
+  done
   sleep 4
   # By pid, and through /proc rather than a signal-0: under a shell
   # which reaps only at wait, a run that died a second ago is still
@@ -243,6 +259,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # did not notice. 124 is timeout ending it, the undisturbed end here.
   wait \$sine_pid
   sine_status=\$?
+  # The pids are dead and reaped now, so the files must stop naming
+  # them: the handler runs on the normal exit path too, and a number
+  # the kernel has since reissued is not one to signal.
+  rm -f sine.pid run.pid
   case \$sine_status in
   124) echo '   ended at 124: its own timeout, which is the undisturbed end' ;;
   0) echo '   ended at 0' ;;

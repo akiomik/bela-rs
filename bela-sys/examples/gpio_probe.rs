@@ -381,9 +381,20 @@ mod imp {
         // without unexporting leaves the pin claimed for whatever runs
         // next. Left deliberately; the script reports it and clears it.
         println!("\n-- 8. does an export outlive the process that made it? --");
+        // Whether this export is *ours* cannot be read off the return
+        // value: `gpio_export` answers `0` for a pin it merely found,
+        // which is the finding this whole probe is about. So look
+        // first, and only claim what was not there before.
+        let was_exported = exported(LED_UNDERRUN);
         println!("gpio_export({LED_UNDERRUN}) = {}", unsafe {
             gpio_export(LED_UNDERRUN)
         });
+        if was_exported {
+            println!("  it was already exported before this probe asked, so there is");
+            println!("  nothing of ours here to leave behind or to give back");
+            println!("\nleaving /sys/class/gpio at: {}", listing());
+            return Ok(());
+        }
         println!("  exiting now WITHOUT unexporting it, on purpose");
         // Written beside the binary, and read by the script and by its
         // handler, which runs in another connection. A file rather than
@@ -432,6 +443,17 @@ mod imp {
         // to give back, or the closing listing reports our own leak as
         // an answer.
         let mut ours: Vec<u32> = Vec::new();
+        // Recorded as they are taken, for the same reason question 8
+        // records its one: a probe killed part way through leaves
+        // these exported and nothing else knows they were its.
+        let record_ours = |ours: &[u32]| {
+            let list = ours
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            drop(fs::write("ours.pins", list));
+        };
         for (name, pin) in claimed {
             println!("\n-- {name} (gpio{pin}) --");
             let was_exported = exported(pin);
@@ -440,6 +462,7 @@ mod imp {
             println!("  gpio_export = {}", unsafe { gpio_export(pin) });
             if !was_exported && exported(pin) {
                 ours.push(pin);
+                record_ours(&ours);
             }
             let mut value: PIN_VALUE = 0xdead_beef;
             let ret = unsafe { gpio_get_value(pin, &raw mut value) };
@@ -532,10 +555,13 @@ mod imp {
             println!("\n(libbela had already exported every pin asked about)");
         } else {
             println!("\n-- giving back the pins libbela had not exported --");
-            for pin in ours {
-                println!("  gpio_unexport({pin}) = {}", unsafe { gpio_unexport(pin) });
+            for pin in &ours {
+                println!("  gpio_unexport({pin}) = {}", unsafe {
+                    gpio_unexport(*pin)
+                });
             }
         }
+        drop(fs::remove_file("ours.pins"));
 
         // The entry check said a run was up. Say whether one still is,
         // so that a probe which outlived the run cannot have its
