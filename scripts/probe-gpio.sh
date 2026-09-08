@@ -518,12 +518,16 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "handler will have signalled it — so something may have run after" >&2
     echo "all, and the exports above are the place to look." >&2
   elif [ "$with_run_status" -eq 6 ]; then
+    # Not a list of the causes: there are four in the probe today, one
+    # rewrite of this message has already fallen behind them, and the
+    # LEFT CHANGED line names the one that happened anyway. What an
+    # operator cannot read off that line is which of them the tidy-up
+    # covers, so say only that.
     echo "Pass 2 could not put something back: see LEFT CHANGED above, which" >&2
-    echo "names it and the state it is in. Three things reach this — a digital" >&2
-    echo "channel left driven, gpio584 left an input, and gpio584 left exported" >&2
-    echo "— and only the last is one --release gives back, which the remote" >&2
-    echo "block runs a moment later either way. A 'could not ask:' line above" >&2
-    echo "it, if there is one, says the pass also stopped short." >&2
+    echo "names it and the state it is in. --release gives back an export and" >&2
+    echo "nothing else — not a pin's level, not its direction — and the remote" >&2
+    echo "block runs it a moment later either way. A 'could not ask:' line" >&2
+    echo "above it, if there is one, says the pass also stopped short." >&2
   elif [ "$with_run_status" -eq 5 ]; then
     echo "Pass 2's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
