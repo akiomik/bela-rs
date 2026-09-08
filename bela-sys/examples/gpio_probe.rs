@@ -7,8 +7,10 @@
 //!
 //! This is an experiment, not a check, the way `scripts/probe-io.sh`
 //! is: nothing here passes or fails. It exits non-zero only when it
-//! could not ask — a pin it could not claim at all, a trigger it could
-//! not read back before changing.
+//! could not ask, or could not put something back — a pin it could not
+//! claim at all, a trigger it changed and then could not restore. A
+//! trigger it could not *read* first is skipped rather than an error,
+//! precisely so that it is never changed without a way back.
 //!
 //! It creates **no audio system**. That is the point of it rather than
 //! an economy: the interesting questions are what an application gets
@@ -207,6 +209,20 @@ mod imp {
     /// nothing is running.
     fn release_all() {
         println!("== releasing every pin this probe can claim ==");
+        // The precondition, checked here rather than trusted to every
+        // caller: two of these three are libbela's while a run is up,
+        // and the alone pass refuses for the same reason. `DIGITAL_D0`
+        // is the signal because libbela exports the sixteen channels
+        // for the PRU and gives them back when the run ends. A run
+        // with digital I/O off is not detected by it — the script's
+        // own calls are made where it has just ended the run it
+        // started, which is what covers that.
+        if exported(DIGITAL_D0) {
+            println!("  NOT released: gpio{DIGITAL_D0} is exported, so something is");
+            println!("  rendering and two of these three are its. A pin of this");
+            println!("  probe's may be left exported; unexport it by hand.");
+            return;
+        }
         for &pin in RELEASABLE {
             let was = exported(pin);
             let ret = unsafe { gpio_unexport(pin) };
@@ -480,10 +496,10 @@ mod imp {
             ));
         }
         println!("  exiting now WITHOUT unexporting it, on purpose");
-        // Not released, so it stays in the ledger — which is what
-        // records it. The script reads the ledger, gives the answer,
-        // and clears what is in it.
-        println!("leaving-exported: {LED_UNDERRUN}");
+        // Nothing records it: the script answers this question by
+        // listing `/sys/class/gpio` once this process has gone, and
+        // then calls `--release`, which gives back every pin this
+        // probe can claim whether or not it claimed them.
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())

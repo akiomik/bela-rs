@@ -116,7 +116,7 @@ cleanup() {
     # above, so no run is holding one. This does not ask which pins
     # this invocation actually took — see the probe's own notes on why
     # not, and what that costs.
-    undo="$undo; $REMOTE_DIR/gpio_probe --release >/dev/null 2>&1 || true"
+    undo="$undo; timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release >/dev/null 2>&1 || true"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -172,7 +172,7 @@ fi
 #
 # The directory is removed rather than reused. `cleanup`'s single ssh
 # is allowed to fail, so a previous run can have left `sine.pid` and
-# behind — and a handler acting on a stale pid would signal
+# `run.pid` behind — and a handler acting on a stale pid would signal
 # whatever has since been given that number.
 BOARD_PREPARED=yes
 ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; rm -rf $REMOTE_DIR; mkdir -p $REMOTE_DIR"
@@ -200,13 +200,11 @@ ssh -o ConnectTimeout=10 "$HOST" "
   echo '-- question 8: what is claimed now the probe has exited --'
   ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
   echo
-  # Question 8 leaves one behind on purpose. Clear it, so that pass 2
-  # starts from the board's resting state rather than from this. The
-  # pin comes from the probe rather than from a literal here: it
-  # derives it from bank bases that are measured and can move.
   # Question 8 leaves one pin exported on purpose, and the listing
   # above is its answer. Give back everything the probe can claim, so
-  # that pass 2 starts from the board's resting state.
+  # that pass 2 starts from the board's resting state. The probe
+  # refuses this where a run is up, which is where two of the three
+  # would be libbela's.
   timeout -s INT -k 5 15 ./gpio_probe --release
   exit \$probe_status
 " || alone_status=$?
