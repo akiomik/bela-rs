@@ -141,6 +141,20 @@ cleanup() {
     undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
     undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
     undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
+    # And a fallback for the one window neither pid file covers: pass 2
+    # backgrounds the run and writes `sine.pid` on the next line, so an
+    # interrupt in between leaves both files absent and the ladder below
+    # with nothing to aim at — after which `rm -rf` removes the
+    # directory and the daemon starts while the run still holds the
+    # audio device. Found the same way the probe is, one loop down, and
+    # only when there is no pid: this finds the run itself rather than
+    # its `timeout` wrapper, whose exe is not here, which is why it
+    # feeds the graceful ladder rather than replacing it.
+    undo="$undo; if [ -z \"\$p\" ] && [ -z \"\$r\" ]; then"
+    undo="$undo for c in /proc/[0-9]*; do"
+    undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
+    undo="$undo $REMOTE_DIR/sine*) p=\${c#/proc/} ;;"
+    undo="$undo esac; done; fi"
     # The group before the pid. `timeout` leads a process group with
     # the run in it — measured: wrapper pid 18246 with pgid 18246, run
     # 18248 with pgid 18246 — so signalling the group reaches the run
@@ -308,13 +322,21 @@ if [ "$alone_status" -ne 0 ]; then
     echo "Pass 1's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
     echo "The tidy-up after it did run." >&2
-  elif [ "$alone_status" -eq 124 ]; then
-    echo "Pass 1's tidy-up hit its own timeout: the questions were asked and" >&2
-    echo "the transcript above stands, but a pin may be left exported." >&2
-  elif [ "$alone_status" -eq 3 ]; then
-    echo "Pass 1 asked its questions — the transcript above stands — but the" >&2
-    echo "release that follows them declined, so a pin may be left exported." >&2
-    echo "See its message above." >&2
+  elif [ "$alone_status" -eq 124 ] || [ "$alone_status" -eq 3 ]; then
+    # Both mean the probe itself returned 0 and only the release after
+    # it went wrong, so question 6 put every trigger back — the probe
+    # fails the pass otherwise. Clear the flag here as well as after a
+    # clean pass, or the handler sends an operator to check four files
+    # this run provably did not leave changed.
+    PROBE_RAN=no
+    if [ "$alone_status" -eq 124 ]; then
+      echo "Pass 1's tidy-up hit its own timeout: the questions were asked and" >&2
+      echo "the transcript above stands, but a pin may be left exported." >&2
+    else
+      echo "Pass 1 asked its questions — the transcript above stands — but the" >&2
+      echo "release that follows them declined, so a pin may be left exported." >&2
+      echo "See its message above." >&2
+    fi
   else
     echo "Pass 1 exited $alone_status: the probe could not ask." >&2
   fi
