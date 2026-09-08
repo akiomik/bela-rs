@@ -573,7 +573,7 @@ mod imp {
             // calls every one, and a green run is what stands behind
             // that sentence.
             return Err(format!(
-                "gpio_setup({LED_RUNNING}) returned {fd3}, so four of the thirteen went \\
+                "gpio_setup({LED_RUNNING}) returned {fd3}, so four of the thirteen went \
                  uncalled and this pass is not evidence for them"
             ));
         }
