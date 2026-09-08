@@ -324,10 +324,16 @@ mod imp {
         }
         // Not a question: the script's tidy-up, which it calls where
         // no run is up. Does its work and stops.
+        //
+        // `3`, not `2`, when it declines. `2` is "could not ask", and
+        // a caller that cannot tell the two apart has to guess whether
+        // the transcript above it is a measurement — which the script
+        // did, and told the operator the opposite of what happened,
+        // whichever way round it was.
         if args.iter().any(|a| a == "--release") {
             if let Err(why) = release_all() {
                 eprintln!("{why}");
-                process::exit(2);
+                process::exit(3);
             }
             return;
         }
@@ -479,6 +485,16 @@ mod imp {
                 continue;
             };
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+            if ret != 0 {
+                // Nothing was changed, so there is nothing to restore
+                // — and restoring anyway would write the same
+                // attribute that just refused a write, then report a
+                // failure to put back something that never moved. That
+                // `Err` aborts pass 1 and so stops pass 2 running at
+                // all.
+                println!("  lednum {n}: ret {ret} (unchanged, so nothing to restore)");
+                continue;
+            }
             println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
             if let Err(e) = fs::write(trigger_path(n), &before) {
                 // Loudly, and naming both, because nothing else will

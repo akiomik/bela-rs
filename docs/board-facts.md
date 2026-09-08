@@ -935,9 +935,10 @@ the *cause* rather than a guess that fits: the same descriptor, the
 same three calls, rewound before each, answers correctly every time.
 And on both failing rows the `unsigned int *value` still held the
 `0xdeadbeef` the probe put there, which is the measurement behind the
-soundness condition `bela-sys`'s documentation states — a caller
-handing either reader an uninitialised location has nothing written to
-it when the call fails.
+soundness condition `bela-sys`'s documentation states. That is
+`gpio_read` only: no `gpio_get_value` was seen to fail in either pass,
+so the same claim for it is read off `core/GPIOcontrol.cpp` rather
+than off this board.
 
 With `sine` rendering, in another process:
 

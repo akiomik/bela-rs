@@ -280,6 +280,10 @@ if [ "$alone_status" -ne 0 ]; then
   if [ "$alone_status" -eq 255 ]; then
     echo "Pass 1's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
+  elif [ "$alone_status" -eq 3 ]; then
+    echo "Pass 1 asked its questions — the transcript above stands — but the" >&2
+    echo "release that follows them declined, so a pin may be left exported." >&2
+    echo "See its message above." >&2
   else
     echo "Pass 1 exited $alone_status: the probe could not ask." >&2
   fi
@@ -390,14 +394,14 @@ echo
 # Pass 1's own failure exits above, at the point where continuing
 # would corrupt pass 2, so only pass 2's status can reach here.
 if [ "$with_run_status" -ne 0 ]; then
-  # The remote block returns the probe's status where that is non-zero
-  # and the release's otherwise, so `2` here is the release declining
-  # after every question was asked and printed. That transcript is a
-  # measurement; what failed is the tidy-up.
+  # The probe exits 2 when it could not ask and 3 when only the
+  # release declined, so these are separable rather than guessed at:
+  # a 3 means the transcript above is a measurement and what failed is
+  # the tidy-up.
   if [ "$with_run_status" -eq 255 ]; then
     echo "Pass 2's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
-  elif [ "$with_run_status" -eq 2 ]; then
+  elif [ "$with_run_status" -eq 3 ]; then
     echo "Pass 2 asked its questions — the transcript above stands — but the" >&2
     echo "release that follows them declined, so a pin may be left exported." >&2
     echo "See its message above." >&2
