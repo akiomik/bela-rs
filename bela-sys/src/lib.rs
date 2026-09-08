@@ -19,27 +19,45 @@
 //! of those sixteen, or to any pin at all while no block is being
 //! rendered.
 //!
-//! Three things about the bindings themselves, which a caller has to
-//! honour to be sound or to compile at all:
+//! Four things about the signatures, which a caller has to honour to
+//! call these correctly at all:
 //!
-//! - [`PIN_DIRECTION`] and [`PIN_VALUE`] come out `c_uint` where every
-//!   parameter that takes one is `c_int`, so `gpio_set_dir(pin,
-//!   OUTPUT_PIN as c_int)` is the spelling that compiles.
-//! - `gpio_set_edge` and `led_set_trigger` write `strlen(s) + 1`
-//!   bytes, so both want a [`CStr`](core::ffi::CStr) — `c"rising"` and
-//!   the like. `gpio_set_edge` taking `*mut c_char` is a missing
-//!   `const` in the header rather than a pointer it writes through.
-//! - `gpio_get_value` and `gpio_read` leave their `*mut c_uint`
-//!   untouched on every failure path, so handing either an
-//!   uninitialised location and reading it back afterwards is unsound.
+//! - **The return value is not uniform.** `gpio_setup` and
+//!   `gpio_fd_open` return a file descriptor; the other eleven return
+//!   `0` for success and a negative value for failure. So the idiom
+//!   that suits eleven of them, `if ret != 0 { ... }`, rejects every
+//!   successful `gpio_setup` — a descriptor is rarely `0` — and
+//!   reading one of those two as a status leaks the descriptor.
+//! - **`writeFlag` is not a flag.** `gpio_fd_open`'s second argument
+//!   is the second argument of `open(2)`; `gpio_setup` passes
+//!   `O_RDWR`, which is `2`. This crate is `no_std` and depends on no
+//!   `libc`, so that constant is the caller's to bring.
+//! - **The constants are the wrong integer type.** [`PIN_DIRECTION`]
+//!   and [`PIN_VALUE`] come out `c_uint` where every parameter that
+//!   takes one is `c_int`, so `gpio_set_dir(pin, OUTPUT_PIN as
+//!   c_int)` is the spelling that compiles.
+//! - **The string arguments have to be NUL-terminated.**
+//!   `gpio_set_edge` and `led_set_trigger` write `strlen(s) + 1`
+//!   bytes, so both want a [`CStr`](core::ffi::CStr):
+//!   `led_set_trigger(1, c"heartbeat".as_ptr())`, and — because the
+//!   header declares that one `char *` where it means `const char *`
+//!   — `gpio_set_edge(pin, c"rising".as_ptr().cast_mut())`. Neither
+//!   writes through the pointer.
+//!
+//! And one that is a soundness condition rather than a signature:
+//! `gpio_get_value` and `gpio_read` leave their `*mut c_uint`
+//! untouched on every failure path, so handing either an uninitialised
+//! location and reading it back afterwards is unsound.
 //!
 //! What the functions *do* is libbela's, not this crate's, and several
 //! of them do it surprisingly: an export is not owned by whoever made
 //! it, so `gpio_unexport` and `gpio_dismiss` will take a pin from
-//! another program; `gpio_read` answers at most once per descriptor;
-//! and `led_set_trigger` numbers the board's LEDs from 1. `docs/scope.md` in the repository lists them
-//! beside the other bound calls that behave unexpectedly, and
-//! `docs/board-facts.md` has the measurements.
+//! another program; a second `gpio_read` on one descriptor succeeds
+//! and reports the pin *high* whatever it is doing, only the third
+//! failing; and `led_set_trigger` numbers the board's LEDs from 1.
+//! `docs/scope.md` in the repository lists them beside the other bound
+//! calls that behave unexpectedly, and `docs/board-facts.md` has the
+//! measurements.
 //!
 //! Two things here are neither the core API nor generated, and they
 //! are two different kinds of thing:
