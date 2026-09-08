@@ -139,6 +139,9 @@ cleanup() {
     # `timeout` relays the signal to the run it manages, measured.
     undo="p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null)"
     undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
+    # The wrapper, kept apart because it is the only pid here that
+    # leads a process group. The fallback below may overwrite `p`.
+    undo="$undo; w=\$p"
     undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
     undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
     # And a fallback for the one window neither pid file covers: pass 2
@@ -155,20 +158,23 @@ cleanup() {
     undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
     undo="$undo $REMOTE_DIR/sine*) p=\${c#/proc/} ;;"
     undo="$undo esac; done; fi"
-    # The group before the pid. `timeout` leads a process group with
+    # The group before the pids. `timeout` leads a process group with
     # the run in it — measured: wrapper pid 18246 with pgid 18246, run
     # 18248 with pgid 18246 — so signalling the group reaches the run
     # even in the first seconds of pass 2, before `run.pid` has been
-    # written. The per-pid signal stays behind it for a wrapper that
-    # is not a group leader.
+    # written. Only `$w`, and not the other two: a group signal to a
+    # pid that leads no group is an `ESRCH` no-op today, but a pid
+    # recycled onto a group leader would make it signal strangers.
+    undo="$undo; [ -n \"\$w\" ] && kill -INT -\$w 2>/dev/null"
     undo="$undo; for t in \$p \$r; do [ -n \"\$t\" ] || continue"
-    undo="$undo; kill -INT -\$t 2>/dev/null; kill -INT \$t 2>/dev/null; done"
+    undo="$undo; kill -INT \$t 2>/dev/null; done"
     undo="$undo; n=0"
     undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
+    undo="$undo; if { alive \$p || alive \$r; } && [ -n \"\$w\" ]"
+    undo="$undo; then kill -9 -\$w 2>/dev/null; fi"
     undo="$undo; for t in \$p \$r; do"
-    undo="$undo if alive \$t; then kill -9 -\$t 2>/dev/null"
-    undo="$undo; kill -9 \$t 2>/dev/null; fi; done"
+    undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
     # And any probe of ours still running, or the release below would
     # give back pins it then exports again. Matched on the executable
     # rather than the name: exact, needs no pid written down, and does
