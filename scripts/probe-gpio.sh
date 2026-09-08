@@ -116,7 +116,16 @@ cleanup() {
     # above, so no run is holding one. This does not ask which pins
     # this invocation actually took — see the probe's own notes on why
     # not, and what that costs.
-    undo="$undo; timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release >/dev/null 2>&1 || true"
+    #
+    # Its stdout is dropped, because on the ordinary path it is three
+    # lines saying nothing was exported. Its stderr and its status are
+    # not: the kill above escalates to `-9` when the graceful signal
+    # did not take within six seconds, and a run killed that way never
+    # runs libbela's teardown, so all twenty-two of its pins are still
+    # exported and this declines. That is the case an operator has to
+    # be told about, and it was the case this silenced.
+    undo="$undo; timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release >/dev/null"
+    undo="$undo || echo 'WARNING: pins were not released; see the message above' >&2"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"

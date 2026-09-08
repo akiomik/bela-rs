@@ -207,7 +207,7 @@ mod imp {
     /// run is up, and these are Bela's own two LEDs and its first
     /// digital channel, which nothing else on this board holds while
     /// nothing is running.
-    fn release_all() {
+    fn release_all() -> Result<(), String> {
         println!("== releasing every pin this probe can claim ==");
         // The precondition, checked here rather than trusted to every
         // caller: two of these three are libbela's while a run is up,
@@ -218,10 +218,17 @@ mod imp {
         // own calls are made where it has just ended the run it
         // started, which is what covers that.
         if exported(DIGITAL_D0) {
-            println!("  NOT released: gpio{DIGITAL_D0} is exported, so something is");
-            println!("  rendering and two of these three are its. A pin of this");
-            println!("  probe's may be left exported; unexport it by hand.");
-            return;
+            // Through `Err` rather than a printed line, because the
+            // caller that most needs to know is the script's handler,
+            // which runs this after a `kill -9` — where libbela's
+            // teardown never ran and all twenty-two of its exports are
+            // still there. Silently returning `0` from that is how a
+            // board is left claimed with nobody told.
+            return Err(format!(
+                "NOT released: gpio{DIGITAL_D0} is exported, so something is rendering \
+                 and two of these three are its. Any pin of this probe's is still \
+                 exported; unexport it by hand."
+            ));
         }
         for &pin in RELEASABLE {
             let was = exported(pin);
@@ -232,6 +239,7 @@ mod imp {
                 if exported(pin) { "exported" } else { "free" }
             );
         }
+        Ok(())
     }
 
     fn exported(pin: u32) -> bool {
@@ -257,7 +265,10 @@ mod imp {
         // Not a question: the script's tidy-up, which it calls where
         // no run is up. Does its work and stops.
         if args.iter().any(|a| a == "--release") {
-            release_all();
+            if let Err(why) = release_all() {
+                eprintln!("{why}");
+                process::exit(2);
+            }
             return;
         }
 
@@ -446,7 +457,17 @@ mod imp {
             println!("  gpio_set_value(LOW) = {}", unsafe {
                 gpio_set_value(LED_RUNNING, arg::LOW)
             });
+            // `gpio_dismiss` returns `0` whatever happened, so the
+            // pin is what to check, not the call. Left exported it
+            // would show up in question 8's listing as a second leak
+            // and be read as part of the one that is deliberate.
             let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
+            if exported(LED_RUNNING) {
+                println!(
+                    "  gpio_dismiss left it exported; gpio_unexport = {}",
+                    unsafe { gpio_unexport(LED_RUNNING) }
+                );
+            }
         } else {
             // Two of `gpio_setup`'s three failure paths leave the pin
             // exported with no descriptor, which is the trap question 2
@@ -558,9 +579,9 @@ mod imp {
         // loopback rig in "What a digital pin does" is one — so that
         // case needs the same opt-in the destructive question has.
         println!("\n-- writing gpio{DIGITAL_D0} while the PRU drives it --");
-        let direction = direction(DIGITAL_D0);
-        println!("  its direction is {direction}");
-        if direction != "in" && !destructive {
+        let d0_direction = direction(DIGITAL_D0);
+        println!("  its direction is {d0_direction}");
+        if d0_direction != "in" && !destructive {
             println!("  not attempted: writing an output pin contends with its driver,");
             println!("  which is what --destructive is for");
         } else {
@@ -606,8 +627,13 @@ mod imp {
                 println!("  probe did it, so libbela is not holding it and there is");
                 println!("  nothing here to take from the run");
             } else {
+                // Read before the call, because `gpio_setup` sets the
+                // direction before it opens: the failure branch below
+                // has to put back what the pin held, and cannot know
+                // that afterwards.
+                let direction_before = direction(LED_RUNNING);
                 let fd = unsafe { gpio_setup(LED_RUNNING, arg::INPUT) };
-                println!("  gpio_setup = {fd}");
+                println!("  gpio_setup = {fd} (its direction was {direction_before})");
                 if fd < 0 {
                     // `gpio_dismiss` would unexport the pin anyway, so
                     // the destructive act would still happen — but as a
@@ -618,9 +644,20 @@ mod imp {
                     // `gpio_setup` sets the direction before it opens,
                     // so this branch is reached with the run's LED
                     // already flipped to an input. Put it back.
-                    println!("  restoring its direction to out: {}", unsafe {
-                        gpio_set_dir(LED_RUNNING, arg::OUTPUT)
-                    });
+                    // Only what it actually held, and only if that is
+                    // not what it holds now: `gpio_setup` may have
+                    // failed at the export, before touching direction.
+                    if direction(LED_RUNNING) == direction_before {
+                        println!("  its direction is unchanged, so nothing to put back");
+                    } else if direction_before == "out" {
+                        println!("  restoring its direction to out: {}", unsafe {
+                            gpio_set_dir(LED_RUNNING, arg::OUTPUT)
+                        });
+                    } else {
+                        println!("  restoring its direction to in: {}", unsafe {
+                            gpio_set_dir(LED_RUNNING, arg::INPUT)
+                        });
+                    }
                 } else {
                     println!("  gpio_dismiss = {}", unsafe {
                         gpio_dismiss(fd, LED_RUNNING)
