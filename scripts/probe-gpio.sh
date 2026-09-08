@@ -26,9 +26,11 @@
 # the second pass possible at all: libbela refuses a second one in
 # another process, so a probe that brought its own could not ask.
 #
-# `--destructive` adds one more question to the second pass — what
-# unexporting one of libbela's pins does to the run holding it — and is
-# opt-in because the answer may be a stopped audio system.
+# `--destructive` adds one question to the second pass — what
+# unexporting one of libbela's pins does to the run holding it — and
+# widens another, letting the probe write a digital channel whose
+# direction reads `out`. Both contend with a live run, which is why
+# they are opt-in.
 #
 # `bela_daemon` is stopped for the duration and restarted afterwards,
 # as in scripts/smoke-test.sh: it would otherwise take the audio device
@@ -103,20 +105,15 @@ cleanup() {
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; kill -9 \$p 2>/dev/null; fi"
     undo="$undo; if [ -n \"\$r\" ]; then kill -9 \$r 2>/dev/null; fi"
-    # Question 8 leaves one pin exported on purpose, and the probe
-    # writes the number into `left.pin` at the moment it does. So the
-    # file exists exactly when there is a pin of *ours* to give back:
-    # not when the probe stopped before exporting one, and not when
-    # some other run happens to be holding that pin. Pass 1 removes it
-    # once it has cleared the pin itself, which is why nothing here
-    # needs to know which pass is running.
-    undo="$undo; l=\$(cat $REMOTE_DIR/left.pin 2>/dev/null)"
-    undo="$undo; if [ -n \"\$l\" ]; then echo \$l > /sys/class/gpio/unexport 2>/dev/null; fi"
-    # And the pins the with-run pass exported for itself, which it
-    # records as it takes them and removes once it has given them back.
-    undo="$undo; if [ -r $REMOTE_DIR/ours.pins ]; then"
+    # The probe keeps one ledger of the pins it has exported and not
+    # given back, in `claimed.pins`, and writes it as it changes. It
+    # lists only pins the probe itself exported — `gpio_export` answers
+    # `0` for a pin it merely found, so every claim is checked against
+    # the pin first — which makes clearing them always right and needs
+    # no reasoning here about which pass is running or what failed.
+    undo="$undo; if [ -r $REMOTE_DIR/claimed.pins ]; then"
     undo="$undo while read -r o; do echo \$o > /sys/class/gpio/unexport 2>/dev/null"
-    undo="$undo; done < $REMOTE_DIR/ours.pins; fi"
+    undo="$undo; done < $REMOTE_DIR/claimed.pins; fi"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -124,8 +121,8 @@ cleanup() {
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not restore $HOST — check for a leftover sine" \
-        "process, a pin named by $REMOTE_DIR/left.pin still exported," \
-        "$REMOTE_DIR, and bela_daemon" >&2
+        "process, the pins named by $REMOTE_DIR/claimed.pins still" \
+        "exported, $REMOTE_DIR, and bela_daemon" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and then walk into
@@ -161,7 +158,7 @@ fi
 #
 # The directory is removed rather than reused. `cleanup`'s single ssh
 # is allowed to fail, so a previous run can have left `sine.pid` and
-# `left.pin` behind — and a handler acting on a stale pid would signal
+# `claimed.pins` behind — and a handler acting on a stale pid would signal
 # whatever has since been given that number.
 BOARD_PREPARED=yes
 ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; rm -rf $REMOTE_DIR; mkdir -p $REMOTE_DIR"
@@ -193,16 +190,27 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # starts from the board's resting state rather than from this. The
   # pin comes from the probe rather than from a literal here: it
   # derives it from bank bases that are measured and can move.
-  left=\$(cat left.pin 2>/dev/null)
-  if [ -n \"\$left\" ]; then
-    echo \"(clearing gpio\$left, which question 8 left on purpose)\"
-    echo \"\$left\" > /sys/class/gpio/unexport 2>/dev/null || true
-    rm -f left.pin
+  if [ -s claimed.pins ]; then
+    while read -r o; do
+      echo \"(clearing gpio\$o, which the probe was still holding)\"
+      echo \"\$o\" > /sys/class/gpio/unexport 2>/dev/null || true
+    done < claimed.pins
+    rm -f claimed.pins
   else
-    echo '(the probe left no pin to clear)'
+    echo '(the probe was holding no pin to clear)'
   fi
   exit \$probe_status
 " || alone_status=$?
+
+if [ "$alone_status" -ne 0 ]; then
+  echo
+  echo "Pass 1 exited $alone_status, so pass 2 is not run: a pass 1 that" >&2
+  echo "stopped part way can leave a pin of its own exported, and pass 2" >&2
+  echo "would then report it as one libbela is holding — which is the" >&2
+  echo "distinction its answers turn on. The handler gives back whatever" >&2
+  echo "the probe was still holding." >&2
+  exit 1
+fi
 
 echo
 echo "=============================================================="
@@ -249,6 +257,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   if ! alive \$sine_pid; then
     echo 'sine did not stay up; its output was:'
     cat sine.log
+    # Both pids are about to be reaped and their numbers reissued, and
+    # the handler runs on this path too.
+    rm -f sine.pid run.pid
     exit 3
   fi
   timeout -s INT -k 5 $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE

@@ -27,9 +27,13 @@
 //! - `--with-run`, which asks what it does to pins libbela is holding,
 //!   and is meaningless unless something else is running.
 //!
-//! `--destructive` adds one more question to `--with-run`, and is
-//! separate because the answer may be a stopped audio system: what
-//! happens when a program unexports a pin libbela still holds.
+//! `--destructive` is separate because what it allows may stop a
+//! running audio system. It adds question 12 — unexporting a pin
+//! libbela still holds — and it also widens question 11: without it,
+//! that question is asked only where the channel's direction reads
+//! `in` and a write cannot take, which is the harmless case and the
+//! one this board answers. With it, a channel that reads `out` is
+//! written too, which is contending with whatever drives it.
 //!
 //! What it answers, alone:
 //!
@@ -149,6 +153,56 @@ mod imp {
         Some(contents[start..end].to_owned())
     }
 
+    /// Where the ledger lives, beside the binary. The script and its
+    /// handler read it, the handler running in another connection.
+    const LEDGER: &str = "claimed.pins";
+
+    /// Every pin this process has exported and not yet given back.
+    ///
+    /// One ledger rather than a record per situation. Each situation
+    /// that had its own — the pin question 8 leaves, the pins the
+    /// with-run pass takes — turned out to be one that could be
+    /// interrupted somewhere else, and every situation without one
+    /// leaked a pin that nothing then knew was ours. What is written
+    /// here is only ever a pin this process exported: `gpio_export`
+    /// answers `0` for a pin it merely found, so every claim is
+    /// checked against `exported` first.
+    #[derive(Debug, Default)]
+    struct Ledger(Vec<u32>);
+
+    impl Ledger {
+        /// Records a pin if this call is what exported it.
+        fn claim(&mut self, pin: u32, was_exported: bool) -> bool {
+            let ours = !was_exported && exported(pin);
+            if ours {
+                self.0.push(pin);
+                self.flush();
+            }
+            ours
+        }
+
+        fn release(&mut self, pin: u32) {
+            self.0.retain(|&held| held != pin);
+            self.flush();
+        }
+
+        fn flush(&self) {
+            if self.0.is_empty() {
+                drop(fs::remove_file(LEDGER));
+                return;
+            }
+            // Every line terminated, the last included: the handler
+            // reads this with `while read`, which returns non-zero on
+            // an unterminated final line and so drops it.
+            let mut list = String::new();
+            for pin in &self.0 {
+                list.push_str(&pin.to_string());
+                list.push('\n');
+            }
+            drop(fs::write(LEDGER, list));
+        }
+    }
+
     fn exported(pin: u32) -> bool {
         fs::metadata(format!("/sys/class/gpio/gpio{pin}")).is_ok()
     }
@@ -218,10 +272,13 @@ mod imp {
             }
         }
         println!("at rest, /sys/class/gpio holds: {}", listing());
+        let mut held = Ledger::default();
 
         // 1. Exporting a free pin, then the same pin again.
         println!("\n-- 1. export, twice --");
+        let before_first = exported(LED_RUNNING);
         let first = unsafe { gpio_export(LED_RUNNING) };
+        held.claim(LED_RUNNING, before_first);
         println!(
             "gpio_export({LED_RUNNING}) = {first}, exported now: {}",
             exported(LED_RUNNING)
@@ -229,10 +286,13 @@ mod imp {
         let second = unsafe { gpio_export(LED_RUNNING) };
         println!("gpio_export({LED_RUNNING}) again = {second}");
         let _ = unsafe { gpio_unexport(LED_RUNNING) };
+        held.release(LED_RUNNING);
 
         // 2. What gpio_setup hands back.
         println!("\n-- 2. gpio_setup --");
+        let before_setup = exported(LED_RUNNING);
         let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
+        held.claim(LED_RUNNING, before_setup);
         println!("gpio_setup({LED_RUNNING}, OUTPUT_PIN) = {fd}");
         println!("  direction file now: {}", direction(LED_RUNNING));
         if fd < 0 {
@@ -240,6 +300,7 @@ mod imp {
             // can leave the pin claimed — the trap this probe exists
             // to document. Give it back before reporting.
             unsafe { gpio_unexport(LED_RUNNING) };
+            held.release(LED_RUNNING);
             return Err(format!("gpio_setup on a free pin returned {fd}"));
         }
 
@@ -265,13 +326,16 @@ mod imp {
 
         // 4. What a write does to the next read.
         println!("\n-- 4. gpio_write, then gpio_read on the same descriptor --");
+        let before_fd2 = exported(LED_RUNNING);
         let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
+        held.claim(LED_RUNNING, before_fd2);
         println!("a fresh descriptor: {fd2}");
         if fd2 < 0 {
             // Asking anyway would put `-1` into `write(2)`, and the
             // transcript would record `EBADF` on a bogus descriptor as
             // if it were what these functions do to a pin.
             unsafe { gpio_unexport(LED_RUNNING) };
+            held.release(LED_RUNNING);
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
         println!("gpio_write(fd2, HIGH) = {}", unsafe {
@@ -287,6 +351,7 @@ mod imp {
         println!("gpio_dismiss = {}", unsafe {
             gpio_dismiss(fd2, LED_RUNNING)
         });
+        held.release(LED_RUNNING);
         println!("  still exported: {}", exported(LED_RUNNING));
         println!("gpio_unexport (second time) = {}", unsafe {
             gpio_unexport(LED_RUNNING)
@@ -339,7 +404,9 @@ mod imp {
         // which links and runs is evidence for all thirteen symbols
         // rather than for the nine this pass needs.
         println!("\n-- the remaining four, called only to link them --");
+        let before_fd3 = exported(LED_RUNNING);
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
+        held.claim(LED_RUNNING, before_fd3);
         if fd3 >= 0 {
             println!("  gpio_set_dir(INPUT) = {}", unsafe {
                 gpio_set_dir(LED_RUNNING, arg::INPUT)
@@ -359,13 +426,14 @@ mod imp {
             // Two of `gpio_setup`'s three failure paths leave the pin
             // exported with no descriptor, which is the trap question 2
             // handles. Give it back, or question 8's listing reports
-            // two leaked pins and the script only clears the one the
-            // probe named.
+            // two leaked pins rather than the one it means.
             println!("  skipped: gpio_setup returned {fd3}");
             println!("  gpio_unexport = {}", unsafe {
                 gpio_unexport(LED_RUNNING)
             });
         }
+        // Either way the pin is back, by `gpio_dismiss` or by hand.
+        held.release(LED_RUNNING);
 
         // 7. A pin number no chip covers.
         println!("\n-- 7. a pin nothing can honour --");
@@ -389,27 +457,18 @@ mod imp {
         println!("gpio_export({LED_UNDERRUN}) = {}", unsafe {
             gpio_export(LED_UNDERRUN)
         });
-        if was_exported {
+        let ours = held.claim(LED_UNDERRUN, was_exported);
+        if was_exported || !ours {
             println!("  it was already exported before this probe asked, so there is");
             println!("  nothing of ours here to leave behind or to give back");
             println!("\nleaving /sys/class/gpio at: {}", listing());
             return Ok(());
         }
         println!("  exiting now WITHOUT unexporting it, on purpose");
-        // Written beside the binary, and read by the script and by its
-        // handler, which runs in another connection. A file rather than
-        // a number the script works out in advance: this exists only
-        // once the pin has actually been exported, so an interrupt
-        // before that leaves nothing for anyone to give back, and an
-        // interrupt after it leaves exactly one thing.
-        if let Err(e) = fs::write("left.pin", format!("{LED_UNDERRUN}\n")) {
-            // The export has already happened. Without the file nothing
-            // knows the pin is ours, so leaving it exported would break
-            // the very invariant the file exists to keep.
-            unsafe { gpio_unexport(LED_UNDERRUN) };
-            return Err(format!("could not record the pin left exported: {e}"));
-        }
-        println!("leaving-exported: {LED_UNDERRUN} (recorded in left.pin)");
+        // Not released, so it stays in the ledger — which is what
+        // records it. The script reads the ledger, gives the answer,
+        // and clears what is in it.
+        println!("leaving-exported: {LED_UNDERRUN} (in {LEDGER})");
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())
@@ -446,32 +505,16 @@ mod imp {
         // with `enable_led` off, where it claims neither LED — is ours
         // to give back, or the closing listing reports our own leak as
         // an answer.
+        let mut held = Ledger::default();
         let mut ours: Vec<u32> = Vec::new();
-        // Recorded as they are taken, for the same reason question 8
-        // records its one: a probe killed part way through leaves
-        // these exported and nothing else knows they were its.
-        let record_ours = |ours: &[u32]| {
-            // A newline after every line, the last included: the
-            // handler reads this with `while read`, which returns
-            // non-zero on an unterminated final line and so drops it.
-            // One pin is the common case, and dropping it makes the
-            // whole file useless.
-            let mut list = String::new();
-            for pin in ours {
-                list.push_str(&pin.to_string());
-                list.push('\n');
-            }
-            drop(fs::write("ours.pins", list));
-        };
         for (name, pin) in claimed {
             println!("\n-- {name} (gpio{pin}) --");
             let was_exported = exported(pin);
             println!("  exported before we ask: {was_exported}");
             println!("  direction: {}", direction(pin));
             println!("  gpio_export = {}", unsafe { gpio_export(pin) });
-            if !was_exported && exported(pin) {
+            if held.claim(pin, was_exported) {
                 ours.push(pin);
-                record_ours(&ours);
             }
             let mut value: PIN_VALUE = 0xdead_beef;
             let ret = unsafe { gpio_get_value(pin, &raw mut value) };
@@ -568,9 +611,9 @@ mod imp {
                 println!("  gpio_unexport({pin}) = {}", unsafe {
                     gpio_unexport(*pin)
                 });
+                held.release(*pin);
             }
         }
-        drop(fs::remove_file("ours.pins"));
 
         // The entry check said a run was up. Say whether one still is,
         // so that a probe which outlived the run cannot have its

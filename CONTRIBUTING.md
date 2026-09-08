@@ -162,8 +162,10 @@ while a run is up, which is what the safe API in
 probe creates no audio system either, and that is what lets it run
 beside one: the script starts `bela/examples/sine` for it to reach
 past. `--destructive` adds the question of what unexporting one of
-libbela's own pins does to the run holding it, and is opt-in because
-the answer might have been a stopped audio system. Nothing about any
+libbela's own pins does to the run holding it, and it also lets the
+probe write a digital channel whose direction reads `out`, which
+contends with whatever drives it. Both are opt-in because either can
+stop a running audio system. Nothing about any
 of them passes or fails — they answer questions, and the answers
 belong in [docs/board-facts.md](docs/board-facts.md), or in
 [docs/fft.md](docs/fft.md) for the FFT, which is why they are separate
