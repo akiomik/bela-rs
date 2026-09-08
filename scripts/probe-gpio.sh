@@ -74,21 +74,38 @@ DAEMON_WAS_RUNNING=0
 # derives it from bank bases that are measured and can move.
 LEFT_EXPORTED=""
 
+BOARD_PREPARED=no
+
+# Modelled on scripts/probe-io.sh's `restore`, which had all of this
+# right already.
 cleanup() {
   status=$?
-  # Stop any run still holding the audio device before the daemon is
-  # started again, or it comes up unable to claim it. Matched by exact
-  # process name: the remote cmdline is `./sine`, so a pattern built
-  # from $REMOTE_DIR would match nothing and report success.
-  ssh -o ConnectTimeout=10 "$HOST" "pkill -INT -x sine" 2>/dev/null || true
-  if [ -n "$LEFT_EXPORTED" ]; then
-    ssh -o ConnectTimeout=10 "$HOST" \
-      "echo $LEFT_EXPORTED > /sys/class/gpio/unexport" 2>/dev/null || true
-  fi
-  ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR" 2>/dev/null || true
-  if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
-    ssh -o ConnectTimeout=10 "$HOST" "systemctl start bela_daemon" 2>/dev/null ||
-      echo "WARNING: could not restart bela_daemon on $HOST" >&2
+  if [ "$BOARD_PREPARED" = yes ]; then
+    # One connection, because an unreachable board makes each of these
+    # cost a full ConnectTimeout, and one WARNING naming everything
+    # that may be left rather than three swallowed failures.
+    #
+    # The kill is `-9` and comes first. `-INT` is the graceful path:
+    # libbela's handler tears the audio system down, and `pkill`
+    # returns as soon as the signal is queued rather than when the
+    # process is gone — so the daemon below would start while `sine`
+    # still held the audio device, which is the one thing killing it
+    # is for. `-x` matches the exact name: the remote cmdline is
+    # `./sine`, so a pattern built from $REMOTE_DIR would match
+    # nothing and report success.
+    undo="pkill -9 -x sine"
+    if [ -n "$LEFT_EXPORTED" ]; then
+      undo="$undo; echo $LEFT_EXPORTED > /sys/class/gpio/unexport"
+    fi
+    undo="$undo; rm -rf $REMOTE_DIR"
+    if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
+      undo="$undo; systemctl start bela_daemon"
+    fi
+    # shellcheck disable=SC2029 # the remote paths are meant to expand here
+    ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
+      echo "WARNING: could not restore $HOST — check for a leftover sine" \
+        "process, an exported gpio${LEFT_EXPORTED:-<none>}, $REMOTE_DIR," \
+        "and bela_daemon" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and then walk into
@@ -118,6 +135,7 @@ if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>
   DAEMON_WAS_RUNNING=1
 fi
 ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
+BOARD_PREPARED=yes
 for binary in gpio_probe sine; do
   scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
@@ -127,7 +145,7 @@ ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/gpio_probe $REMOTE_DIR/si
 # Ask before running anything, so that the handler can give the pin back
 # even if pass 1 never reaches the line that clears it.
 # shellcheck disable=SC2029
-LEFT_EXPORTED="$(ssh -o ConnectTimeout=10 "$HOST" "$REMOTE_DIR/gpio_probe --will-leave" 2>/dev/null || true)"
+LEFT_EXPORTED="$(ssh -o ConnectTimeout=10 "$HOST" "timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --will-leave" 2>/dev/null || true)"
 case "$LEFT_EXPORTED" in
 [0-9]*) echo "Question 8 will leave gpio$LEFT_EXPORTED exported; it will be cleared." ;;
 *)

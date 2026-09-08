@@ -873,10 +873,10 @@ application gets while a run is up. The answers here are what
 
 **All thirteen are in the library the crate links**, which the probe
 establishes by linking: `nm -D --defined-only /root/Bela/lib/libbela.so`
-lists every one as `T`, and the probe calls every one — four of them
-(`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`) only
-so that it does, since an `extern` nothing references is not a symbol
-the link has to resolve. Nothing else in the workspace calls them, so
+lists every one as `T`, and the probe calls every one — three of them
+(`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`) only so that it does,
+since an `extern` nothing references is not a symbol the link has to
+resolve. The questions themselves need the other ten. Nothing else in the workspace calls them, so
 no other build here would find out.
 
 Alone, on a board where nothing had claimed anything, the family

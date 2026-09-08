@@ -332,10 +332,12 @@ mod imp {
             }
         }
 
-        // The four the questions above never reach. Nothing here is a
-        // question — they are called so that a probe that links and
-        // runs is evidence for all thirteen symbols rather than nine.
-        println!("\n-- the remaining four, called only to link them --");
+        // The three the questions above never reach — `gpio_fd_close`
+        // is not among them, question 3 having closed its descriptor.
+        // Nothing here is a question: they are called so that a probe
+        // which links and runs is evidence for all thirteen symbols
+        // rather than the ten the questions need.
+        println!("\n-- the remaining three, called only to link them --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 >= 0 {
             println!("  gpio_set_dir(INPUT) = {}", unsafe {
@@ -483,21 +485,31 @@ mod imp {
         // 12: the destructive one.
         if destructive {
             println!("\n-- DESTRUCTIVE: unexporting the running LED out from under the run --");
-            let fd = unsafe { gpio_setup(LED_RUNNING, arg::INPUT) };
-            println!("  gpio_setup = {fd}");
-            if fd < 0 {
-                // `gpio_dismiss` would unexport the pin anyway, so the
-                // destructive act would still happen — but it would be
-                // a bare unexport rather than a claim followed by a
-                // release, and the transcript would not say which.
-                println!("  NOT proceeding: what follows would be a bare unexport,");
-                println!("  which is a different thing from taking a pin we held");
+            if ours.contains(&LED_RUNNING) {
+                // This export is the probe's own — a run with
+                // `enable_led` off claims neither LED — so dismissing
+                // it would measure the probe taking a pin from itself
+                // while the transcript read as one taken from libbela.
+                println!("  NOT asked: gpio{LED_RUNNING} was not exported until this");
+                println!("  probe did it, so libbela is not holding it and there is");
+                println!("  nothing here to take from the run");
             } else {
-                println!("  gpio_dismiss = {}", unsafe {
-                    gpio_dismiss(fd, LED_RUNNING)
-                });
-                println!("  still exported: {}", exported(LED_RUNNING));
-                println!("  what this did to the run is the script's to report");
+                let fd = unsafe { gpio_setup(LED_RUNNING, arg::INPUT) };
+                println!("  gpio_setup = {fd}");
+                if fd < 0 {
+                    // `gpio_dismiss` would unexport the pin anyway, so
+                    // the destructive act would still happen — but as a
+                    // bare unexport rather than a claim then a release,
+                    // and the transcript would not say which.
+                    println!("  NOT proceeding: what follows would be a bare unexport,");
+                    println!("  which is a different thing from taking a pin we held");
+                } else {
+                    println!("  gpio_dismiss = {}", unsafe {
+                        gpio_dismiss(fd, LED_RUNNING)
+                    });
+                    println!("  still exported: {}", exported(LED_RUNNING));
+                    println!("  what this did to the run is the script's to report");
+                }
             }
         } else {
             println!("\n(skipping the destructive question; pass --destructive for it)");
