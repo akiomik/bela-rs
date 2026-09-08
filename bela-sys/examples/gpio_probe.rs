@@ -86,11 +86,12 @@
 //!   line later; a probe killed in between leaves it changed, and
 //!   nothing here restores triggers. The script says so and gives the
 //!   command to check.
-//! - A pin's level. Question 11 writes a digital channel and puts it
-//!   back a line later, and a probe killed in between leaves it driving
-//!   against the PRU for the rest of the run; question 12's failure
-//!   branch restores a direction, which is a write that drives the pin
-//!   low and cannot carry a level back with it. `--release` unexports
+//! - A pin's level. Questions 4 and 11 write one and put it back a line
+//!   later — the running LED and a digital channel — and a probe killed
+//!   in between leaves the LED lit or the channel driving against the
+//!   PRU for the rest of the run; question 12's failure branch restores
+//!   a direction, which is a write that drives the pin low and cannot
+//!   carry a level back with it. `--release` unexports
 //!   pins; nothing here restores a *value*, and the run's own end is
 //!   what clears it.
 //! - A pin exported by something else. `--release` will unexport one
@@ -498,7 +499,20 @@ mod imp {
         let mut value: PIN_VALUE = 0xdead_beef;
         let ret = unsafe { gpio_read(fd2, &raw mut value) };
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
-        let _ = unsafe { gpio_write(fd2, arg::LOW) };
+        // The same rule the rest of the file follows: a restore that
+        // refused is a thing left changed, not a line to drop. Question
+        // 5 unexports this pin two lines down, after which nothing is
+        // driving it, so a `HIGH` that stayed would leave the blue
+        // running LED lit on an idle board with the transcript silent.
+        let put_back = unsafe { gpio_write(fd2, arg::LOW) };
+        println!("  putting it back to LOW: {put_back}");
+        if put_back != 0 {
+            eprintln!(
+                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
+                 ({put_back}); the running LED is lit and nothing here turns it off"
+            );
+            *left_changed = true;
+        }
 
         // 5. Teardown, and a second unexport.
         println!("\n-- 5. gpio_dismiss, then unexport again --");
@@ -892,6 +906,19 @@ mod imp {
                         // restore.
                         println!("  its direction could not be read before this, so there");
                         println!("  is nothing to put it back to; it now reads {now}");
+                        // Not knowing what was changed is not the same
+                        // as nothing having been: `gpio_setup` sets the
+                        // direction before it opens, so the reachable
+                        // way here is a pre-read that failed, a
+                        // `gpio_set_dir` that took and an open that did
+                        // not. Its two sibling branches call exactly
+                        // that state LEFT CHANGED.
+                        eprintln!(
+                            "LEFT CHANGED: gpio{LED_RUNNING} reads {now} and what it held \
+                             before could not be read, so it is not restored; the run \
+                             drives it as an output"
+                        );
+                        *left_changed = true;
                     }
                 } else {
                     println!("  gpio_dismiss = {}", unsafe {
