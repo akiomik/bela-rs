@@ -223,11 +223,11 @@ mod imp {
         let entries = fs::read_dir("/sys/class/gpio").map_err(|e| {
             // Declining is still right — nothing here can be trusted —
             // but saying "pins are exported" would be a claim about a
-            // directory that could not be read at all.
+            // directory that could not be read at all. Said without the
+            // caller's framing, both callers having their own.
             format!(
-                "NOT released: /sys/class/gpio could not be read ({e}), so whether \
-                 anything is holding a pin is unknown. This declines rather than \
-                 guess, and nothing is known to be left exported."
+                "/sys/class/gpio could not be read ({e}), so whether anything is \
+                 holding a pin is unknown"
             )
         })?;
         Ok(entries.filter_map(Result::ok).any(|entry| {
@@ -267,7 +267,9 @@ mod imp {
         // missed a run with digital I/O off; `a_run_is_up` sees one,
         // that run still exporting the ADC reset and the SPI DAC chip
         // select among the twenty.
-        if a_run_is_up()? {
+        if a_run_is_up().map_err(|e| {
+            format!("NOT released: {e}. This declines rather than guess, and nothing is known to be left exported.")
+        })? {
             // Through `Err` rather than a printed line, because the
             // caller that most needs to know is the script's handler,
             // which runs this after a `kill -9` — where libbela's
@@ -412,9 +414,24 @@ mod imp {
         // nothing for this pass to take.
         for (what, pin) in [("digital D0", DIGITAL_D0), ("the running LED", LED_RUNNING)] {
             if exported(pin) {
+                // Refusing is right either way — these questions claim
+                // and release both pins — but the cause is not. An
+                // operator meets this most often after a probe was
+                // killed hard and left `gpio584` behind, and `--release`
+                // treats exactly that as a pin to give back, so blaming
+                // another process sends them looking for one that is
+                // not there.
+                let cause = if a_run_is_up()? {
+                    "a pin outside the two this probe can give back is exported, so \
+                     something else is holding them"
+                } else {
+                    "nothing else is exported, so this is a pin a previous probe left \
+                     behind rather than one a run is holding; `--release` gives it back, \
+                     and this script runs that after each pass"
+                };
                 return Err(format!(
-                    "gpio{pin} ({what}) is exported, so something else is holding pins; \
-                     these questions claim and release them and must not run beside a run"
+                    "gpio{pin} ({what}) is exported: {cause}. These questions claim and \
+                     release both pins and must not run beside a run"
                 ));
             }
         }
@@ -830,11 +847,20 @@ mod imp {
                         } else {
                             arg::INPUT
                         };
-                        println!(
-                            "  restoring its direction to {direction_before}: {}",
-                            unsafe { gpio_set_dir(LED_RUNNING, back) }
-                        );
-                        if direction_before == "out" {
+                        let put_back = unsafe { gpio_set_dir(LED_RUNNING, back) };
+                        println!("  restoring its direction to {direction_before}: {put_back}");
+                        if put_back != 0 {
+                            // Said first and instead: the message below
+                            // opens with "is an output again", which
+                            // would tell an operator the direction is
+                            // fine and only the level is wrong.
+                            eprintln!(
+                                "LEFT CHANGED: gpio{LED_RUNNING}'s direction would not go back \
+                                 ({put_back}); it is an input for the rest of the run, and the \
+                                 run drives it as an output"
+                            );
+                            *left_changed = true;
+                        } else if direction_before == "out" {
                             // Writing `out` to the `direction` attribute
                             // sets the pin low; only `high` and `low`
                             // carry a level, and `gpio_set_dir` writes
