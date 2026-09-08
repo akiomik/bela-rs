@@ -6,8 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use bindgen::callbacks::ParseCallbacks;
-
 const TARGET: &str = "aarch64-unknown-linux-gnu";
 
 /// The package the generated file belongs to, and so the one whose
@@ -29,60 +27,6 @@ const BELA_DEFINES: &[&str] = &[
     "-DBELA_EVL",
     "-DNDEBUG",
 ];
-
-/// Drops one comment bindgen would otherwise attach to a function.
-///
-/// `GPIOcontrol.h` puts a banner over the block of `gpio_*`
-/// declarations — a heading for the thirteen, not a description of the
-/// first of them — and bindgen lifts it onto `gpio_setup`, which then
-/// carries `gpio_functions` as its summary line on docs.rs while its
-/// twelve neighbours carry nothing. Every other comment is passed
-/// through untouched.
-#[derive(Debug)]
-struct DropFamilyBanner;
-
-impl ParseCallbacks for DropFamilyBanner {
-    fn process_comment(&self, comment: &str) -> Option<String> {
-        comment.trim().eq("gpio_functions").then(String::new)
-    }
-}
-
-/// Whether the generated `gpio_setup` carries a doc comment.
-///
-/// This is the condition worth asserting rather than the absence of
-/// the banner's text: a banner reworded in the vendored header stops
-/// matching `DropFamilyBanner` and is attached under its new name,
-/// which a search for the old one would pass. It also stays true of
-/// the one benign way the callback can go unused — a bindgen that
-/// stops lifting a block comment onto the declaration after it, which
-/// is the result the callback exists to produce.
-///
-/// Everything between the declaration and the `unsafe extern` opening
-/// its block belongs to that declaration, so that is what it looks in.
-/// Anchoring on the keyword rather than on the block's `{` matters: a
-/// banner reworded to contain a brace would move the start of the
-/// region past its own text, and the guard would pass on precisely
-/// the case it exists to catch.
-///
-/// It runs before `format`, on bindgen's own token output, which
-/// spells an attribute `# [doc = "..."]` with the space — hence
-/// matching on `[doc` rather than the `#[doc` the formatted file ends
-/// up with.
-///
-/// A missing anchor is fatal rather than a `false`. Either of them
-/// absent would otherwise report "no doc comment" for a file that has
-/// one, which is the guard passing on the case it exists to catch —
-/// and `unsafe extern` is not a given, bindgen emitting the `unsafe`
-/// only for a Rust target of 1.82 or newer.
-fn gpio_setup_is_documented(generated: &str) -> bool {
-    let (before, _) = generated
-        .split_once("pub fn gpio_setup")
-        .expect("the gpio_* family is not generated; the allowlist puts it in");
-    let (_, attributes) = before
-        .rsplit_once("unsafe extern")
-        .expect("bindgen stopped opening the block with `unsafe extern`");
-    attributes.contains("[doc")
-}
 
 pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     let vendor = root.join("bela-sys/vendor/bela");
@@ -132,7 +76,6 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
         .blocklist_type("^__gnuc_va_list$")
         .blocklist_type("^__BindgenOpaqueArray$")
         .derive_default(true)
-        .parse_callbacks(Box::new(DropFamilyBanner))
         // Formatting is left to `cargo fmt`; see `format`.
         .formatter(bindgen::Formatter::None)
         .raw_line(format!(
@@ -144,19 +87,6 @@ pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {
     }
 
     let bindings = builder.generate().expect("bindgen failed");
-    // `DropFamilyBanner` goes wrong silently — bindgen consults only
-    // the *last* registered `parse_callbacks` for comments, so one
-    // added after it wins, and the match is on the banner's exact
-    // text, so rewording it in the vendored header is enough. Neither
-    // is an error to bindgen, and no CI job regenerates this file to
-    // notice. See `gpio_setup_is_documented` for why that is the
-    // condition tested rather than the banner's text.
-    assert!(
-        !gpio_setup_is_documented(&bindings.to_string()),
-        "gpio_setup came out with a doc comment, which is GPIOcontrol.h's \
-         banner for the whole family: DropFamilyBanner has been displaced \
-         by a later parse_callbacks, or the banner was reworded"
-    );
     bindings.write_to_file(&out).expect("write bindings.rs");
     format(root);
     println!("wrote {}", out.display());

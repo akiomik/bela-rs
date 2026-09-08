@@ -160,12 +160,9 @@
 //! fourth kind of channel a callback writes through.
 //! [`Settings::enable_led`] and
 //! [`Settings::stop_button_pin`] choose whether libbela claims them,
-//! and declining only stops libbela using them: there is still no
-//! safe API for a pin. What declining costs libbela is measured — an
-//! LED it was told to leave alone is one it never exports — and what
-//! an application driving that pin during a live run gets is not.
-//! [`Settings::enable_led`] is the one of the two that argues that at
-//! length.
+//! and declining only stops libbela using them; there is still no
+//! safe API for a pin. [`Settings::enable_led`] is the one of the two
+//! that argues that at length.
 //!
 //! `docs/scope.md` in the repository lists what is absent with the
 //! reason beside each. It follows the repository rather than a

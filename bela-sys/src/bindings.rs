@@ -114,6 +114,7 @@ pub const LOW: PIN_VALUE = 0;
 pub const HIGH: PIN_VALUE = 1;
 pub type PIN_VALUE = ::core::ffi::c_uint;
 unsafe extern "C" {
+    #[doc = " gpio_functions"]
     pub fn gpio_setup(
         gpio: ::core::ffi::c_uint,
         out_flag: ::core::ffi::c_int,

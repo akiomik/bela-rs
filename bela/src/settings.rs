@@ -293,11 +293,9 @@ impl Settings {
     /// family [`bela_sys`](crate::bela_sys) binds, which will reach
     /// any pin by number, these two included — with the traps that
     /// crate documents, and still as file I/O, so still not from a
-    /// callback. What a run whose LEDs were declined does with those
-    /// pins is measured, in "The board LEDs": it exports neither of
-    /// them, where it exports every other pin of the same run. What
-    /// is not measured is what an application driving one of them
-    /// during a live run gets. An indicator a callback can
+    /// callback. Declining leaves the two pins unexported rather than
+    /// handing them over, which "The board LEDs" in
+    /// `docs/board-facts.md` measured. An indicator a callback can
     /// drive is an LED on a digital channel, where [`pin_mode`] and
     /// [`digital_write`] are real-time safe and need nothing else —
     /// those two on [`RenderContext`] in [`render`], and their

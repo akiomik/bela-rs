@@ -11,38 +11,23 @@ and this project adheres to
 ### Added
 
 - `bela-sys` binds the sysfs GPIO and LED family from `GPIOcontrol.h`:
-  the twelve `gpio_*` functions and `led_set_trigger`, together with
-  the `PIN_DIRECTION` and `PIN_VALUE` enums their arguments are
-  written in. The header was already vendored and `Bela.h` already
-  includes it, so the only thing between these and Rust was the
-  generator's allowlist, which took `Bela_*` and `rt_*` and nothing
-  else. That was an oversight rather than a decision, and it left no
-  record either way; the allowlist now carries the reason it takes
-  them, beside the blocklist that already carried its own.
+  the twelve `gpio_*` functions and `led_set_trigger`, with the
+  `PIN_DIRECTION` and `PIN_VALUE` enums their arguments are written
+  in. The header was already vendored and `Bela.h` already includes
+  it, so the generator's allowlist was the only thing between these
+  and Rust, and it recorded no reason; it does now.
 
   This is the mechanism that reaches a pin when the audio context
   cannot. `RenderContext::digital_read` and `digital_write` are the
-  PRU path, and it exists only while a block is being rendered; these
-  are file I/O under `/sys/class/gpio` and `/sys/class/leds`, one pin
-  at a time, callable from `setup`, from `cleanup`, from an
-  `AuxiliaryTask` or from a thread of the program's own — and never
-  from a render callback, which is what the crate documentation says
-  about them. It is also the only path here to a pin that is not one
-  of the sixteen digital channels, and `led_set_trigger` has no other
-  path at all.
-
-  There is no safe wrapper in `bela` yet, and what one waits on is
-  measurement rather than design: libbela claims `gpio584`, `gpio585`
-  and `gpio586` through this same interface, and what an application
-  asking for one of those gets has to be measured; the stop button's
-  export outlives a run where the LEDs' does not, so an RAII shape has
-  to choose between them; and nothing yet maps a GPIO number to a Gem
-  header pin, so there is nothing to check an argument against.
-  [docs/scope.md](docs/scope.md) records all of it, in the table of
-  what is bound with no safe wrapper.
+  PRU path and exist only while a block is being rendered; these are
+  file I/O, one pin at a time, and are the only way to a pin that is
+  not one of the sixteen digital channels. They are unsafe and
+  unwrapped: `docs/scope.md` lists what they do that is surprising,
+  and `docs/board-facts.md` has the measurements behind it. A safe
+  API is [#156](https://github.com/akiomik/bela-rs/issues/156).
 
   Nothing a device build links or needs changes: `libbela` exports all
-  thirteen already; what it does to the glob re-export is below.
+  thirteen already.
 
 - Documentation of what these crates cover.
   [docs/scope.md](docs/scope.md) is one place that answers what is
@@ -72,33 +57,25 @@ and this project adheres to
 
 ### Changed
 
-- Breaking: `bela_sys::*` now brings in nineteen names it did not — the
+- Breaking: `bela_sys::*` brings in nineteen names it did not — the
   thirteen functions above, the `INPUT_PIN`, `OUTPUT_PIN`, `LOW` and
-  `HIGH` constants, and the `PIN_DIRECTION` and `PIN_VALUE` aliases
-  they are typed as. A crate that glob-imports `bela_sys` alongside
-  another glob providing one of those names has an ambiguity where it
-  had none, and using the name is then `E0659`. `bela` re-exports the
-  crate, so `bela::bela_sys::*` gains them too and a program that
+  `HIGH` constants, and the two aliases they are typed as. A crate
+  glob-importing `bela_sys` alongside another glob that provides one
+  of those names has an ambiguity where it had none, and `E0659` when
+  it uses the name. `bela` re-exports the crate, so a program that
   never names `bela-sys` in its `Cargo.toml` is reached the same way.
 
-  What breaks is narrower than it sounds: it takes two globs, one
-  contested name, and code that uses it, and an item a crate defines
-  itself still shadows a glob rather than colliding with it. It is
-  worth the marker anyway. `LOW` and `HIGH` are names any embedded
-  crate might export; and the thirteen functions are the gap this
-  crate's own README and `docs/scope.md` named, which is a gap
-  somebody had a documented reason to fill with an `extern` block of
+  Narrow — it takes two globs, one contested name, and code that uses
+  it — but `LOW` and `HIGH` are names any embedded crate might export,
+  and the thirteen functions are a gap this crate's own README named,
+  which is a gap somebody had reason to fill with an `extern` block of
   their own. See "Minor or patch: the drop-in test" in
   [docs/release.md](docs/release.md).
 
-  Nothing else about them is a change: they are new declarations,
-  nothing calls them, and no behaviour on a board differs. What `bela`'s
-  own documentation said about them was wrong, though, and is corrected
-  with them, in both of the two places that said it: the crate page
-  claimed an arbitrary pin "cannot be read or driven from here", and
-  `Settings::enable_led` claimed the crate "offers no API" for the LED
-  pins. The re-export above makes both false. What is still true, and
-  what they say now, is that there is no *safe* API for a pin.
+  `bela`'s documentation is corrected with them, in the two places it
+  claimed a pin "cannot be read or driven from here" and that the
+  crate "offers no API" for the LED pins. The re-export makes both
+  false; what is still true is that there is no *safe* API for a pin.
 
 ## [0.8.1] - 2026-09-08
 

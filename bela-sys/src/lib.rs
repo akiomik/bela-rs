@@ -9,119 +9,37 @@
 //!
 //! It also exposes the sysfs GPIO and LED family that `Bela.h`
 //! includes from `GPIOcontrol.h`: the twelve [`gpio_*`](gpio_setup)
-//! functions and [`led_set_trigger`]. It is a different mechanism
-//! from the digital channels of a [`BelaContext`] rather than a
-//! second spelling of them, and the only path here to a pin that is
-//! not one of those sixteen — or to any pin at all outside the
-//! moment a block is being rendered. It is also file I/O under
-//! `/sys/class/gpio` and `/sys/class/leds`, most of the calls opening
-//! and closing a file to move a single bit; `gpio_read` and
-//! `gpio_write` are the pair that work on a descriptor already open.
-//! So it belongs where a Bela program puts file I/O — in `setup`, in
+//! functions and [`led_set_trigger`]. That is file I/O under
+//! `/sys/class/gpio` and `/sys/class/leds`, one pin at a time, so it
+//! belongs where a Bela program puts file I/O — in `setup`, in
 //! `cleanup`, in an [`AuxiliaryTask`] or on a thread of its own — and
-//! never in `render`. libbela claims some of these pins for itself
-//! while a run is up; `docs/board-facts.md` in the repository records
-//! which, and `docs/scope.md` records what a safe wrapper over these
-//! is still waiting on.
+//! never in `render`. It is a different mechanism from the digital
+//! channels of a [`BelaContext`] rather than a second spelling of
+//! them, and the only path this crate offers to a pin that is not one
+//! of those sixteen, or to any pin at all while no block is being
+//! rendered.
 //!
-//! Nine things about the family are easy to get wrong:
+//! Three things about the bindings themselves, which a caller has to
+//! honour to be sound or to compile at all:
 //!
-//! - **The constants are the wrong integer type.** [`PIN_DIRECTION`]
-//!   and [`PIN_VALUE`] name the values its arguments take, but they
-//!   are `c_uint` where every parameter that consumes one is `c_int`.
-//!   `gpio_set_dir(pin, OUTPUT_PIN as c_int)` is the spelling that
-//!   compiles, and so is `gpio_write(fd, HIGH as c_int)`.
-//! - **`writeFlag` is not a flag.** `gpio_fd_open`'s second argument
-//!   is the second argument of `open(2)`; `gpio_setup` passes
-//!   `O_RDWR`, which is `2` on this board and on Linux generally.
-//!   This crate is `no_std` and depends on no `libc`, so the constant
-//!   is the caller's to bring — `libc::O_RDWR`, or the literal. Both
-//!   `gpio_fd_open` and `gpio_setup` return a descriptor, where the
-//!   rest of the family returns `0` for success and a negative value
-//!   for failure.
-//! - **`gpio_read` needs the descriptor rewound, and `gpio_write`
-//!   moves it.** The two share one file offset and neither resets it,
-//!   and a sysfs `value` file is two bytes — `"0\n"` or `"1\n"`. On a
-//!   descriptor nothing has written to, the first `gpio_read` answers,
-//!   the second reads the newline — which is not `'0'`, so it reports
-//!   the pin *high* whatever the pin is doing — and every one after
-//!   that reads nothing and returns `-1`. After a `gpio_write`, which
-//!   writes two bytes into that two-byte file
-//!   (`core/GPIOcontrol.cpp:296-303`), the offset is already at the
-//!   end, so the very next `gpio_read` is the one that returns `-1`:
-//!   writing a pin and reading it back on the descriptor `gpio_setup`
-//!   gave you does not work at all. Measured through these functions
-//!   rather than reasoned from the source — the reading it fails to
-//!   make is not a wrong one, it is none. Either way the remedy is
-//!   the caller's, an `lseek` back to 0 before each read. Both are
-//!   measured on a board, and `docs/board-facts.md` in the repository
-//!   has the transcripts. `gpio_get_value` has neither problem,
-//!   opening and closing the file around each reading.
-//! - **A reading is written only on success.** `gpio_get_value` and
-//!   `gpio_read` leave their `*mut c_uint` untouched on every failure
-//!   path, so it is not sound to hand either an uninitialised
-//!   location and assume the pointee afterwards. The test is `< 0`
-//!   rather than `== -1`: every failure in this family happens to be
-//!   `-1`, the paths that pass one on getting it from a failed
-//!   `open`, but a negative value is what the family promises.
-//! - **`gpio_dismiss` returns `0` whatever happens.** It closes the
-//!   descriptor and unexports the pin and discards what either of
-//!   them said, so a pin that failed to unexport is reported as one
-//!   that did not. It unexports whether or not this process was what
-//!   exported the pin, too, which on one libbela holds is how a
-//!   program takes an LED or the stop button away from a live run.
-//! - **A failed `gpio_setup` can leave the pin exported.** It exports,
-//!   sets the direction and then opens; if either of the last two
-//!   fails it returns a negative value with the export already done
-//!   and no descriptor to hand `gpio_dismiss`. Undoing that takes a
-//!   `gpio_unexport` from the caller — but only where the export was
-//!   this program's, which `gpio_export` cannot say, succeeding just
-//!   as readily on a pin somebody else had already exported. So the
-//!   cleanup that looks obvious here is the same call that takes
-//!   libbela's pin away from a run. Skipping it instead leaves the
-//!   pin in `/sys/class/gpio` after the process exits.
-//! - **`gpio_export` has one failure that is not one.** The fast path
-//!   above is guarded by `if(fd > 0)` rather than `>= 0`, so a program
-//!   whose standard input is closed can be handed descriptor 0 by the
-//!   probe, miss the path, leak that descriptor and fail the real
-//!   export with `EBUSY` — a failure reported for a pin that is
-//!   exported and perfectly usable.
-//! - **The two string arguments have to be NUL-terminated.**
-//!   `gpio_set_edge` and `led_set_trigger` both write `strlen(s) + 1`
-//!   bytes, so a pointer into a Rust `&str` sends `strlen` off the end
-//!   of it and puts whatever followed into the sysfs file. Pass a
-//!   [`CStr`](core::ffi::CStr): `led_set_trigger(1,
-//!   c"heartbeat".as_ptr())`, and — because `GPIOcontrol.h` declares
-//!   the other one `char *` where it means `const char *` —
-//!   `gpio_set_edge(pin, c"rising".as_ptr().cast_mut())`. Neither
-//!   writes through the pointer.
-//! - **`led_set_trigger`'s `lednum` starts at 1 on a Gem.** It builds
-//!   `/sys/class/leds/beaglebone:green:usr%d/trigger`, a path written
-//!   for a `BeagleBone`, whose user LEDs are `usr0` to `usr3`. This
-//!   board has `usr1` to `usr4`, so `0` — the obvious first guess, and
-//!   the right one on the hardware the path names — reaches no file
-//!   and comes back `-1` with a `perror`. Measured;
-//!   `docs/board-facts.md` has the inventory.
+//! - [`PIN_DIRECTION`] and [`PIN_VALUE`] come out `c_uint` where every
+//!   parameter that takes one is `c_int`, so `gpio_set_dir(pin,
+//!   OUTPUT_PIN as c_int)` is the spelling that compiles.
+//! - `gpio_set_edge` and `led_set_trigger` write `strlen(s) + 1`
+//!   bytes, so both want a [`CStr`](core::ffi::CStr) — `c"rising"` and
+//!   the like. `gpio_set_edge` taking `*mut c_char` is a missing
+//!   `const` in the header rather than a pointer it writes through.
+//! - `gpio_get_value` and `gpio_read` leave their `*mut c_uint`
+//!   untouched on every failure path, so handing either an
+//!   uninitialised location and reading it back afterwards is unsound.
 //!
-//! All of that describes a `libbela` built with `BELA_HAS_GPIO`,
-//! which is what a Bela Gem image ships and what every measurement
-//! behind this page was taken against. Built without it,
-//! `core/GPIOcontrol.cpp:348-363` compiles all thirteen as
-//! `{ return 0; }`, and the contracts above invert rather than
-//! weaken: `gpio_setup` hands back `0`, which no caller can tell from
-//! a valid descriptor, and `gpio_read` reports the success that the
-//! rule above says means a reading was written — having written
-//! nothing. `GPIOcontrol.h` gives no sign of which of the two a
-//! program is linked against.
-//!
-//! Nor does a failure always announce itself. `gpio_setup` prints to
-//! stdout, and every function that cannot open its sysfs file calls
-//! `perror` — but once a file is open a failed `read` or `write` only
-//! becomes a `-1`, and `gpio_read` and `gpio_write`, which are handed
-//! a descriptor rather than opening one, never print at all. And
-//! `gpio_unexport`'s `perror` is labelled `gpio/export`, its
-//! neighbour's label, so a pin that would not go away reports itself
-//! as one that would not arrive.
+//! What the functions *do* is libbela's, not this crate's, and several
+//! of them do it surprisingly: an export is not owned by whoever made
+//! it, so `gpio_unexport` and `gpio_dismiss` will take a pin from
+//! another program; `gpio_read` answers at most once per descriptor;
+//! and `led_set_trigger` numbers the board's LEDs from 1. `docs/scope.md` in the repository lists them
+//! beside the other bound calls that behave unexpectedly, and
+//! `docs/board-facts.md` has the measurements.
 //!
 //! Two things here are neither the core API nor generated, and they
 //! are two different kinds of thing:

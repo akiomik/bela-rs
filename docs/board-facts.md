@@ -879,22 +879,11 @@ run.
   the file around each reading, and libbela's own `Gpio` never reaches
   either, going to the mapped registers instead.
 
-  `gpio_write` shares that offset and moves it, so on the descriptor
-  `gpio_setup` returns — which it opens `O_RDWR`
-  (`core/GPIOcontrol.cpp:63`) — a pin cannot be written and read back
-  at all. Measured on the same pin, made an output: the file offset
-  was 0 after the open, `write(fd, "1\0", 2)` put it at 2, and the
-  next one-byte read returned nothing, which is `gpio_read`'s `-1`
-  with its `unsigned int *value` left untouched. An `lseek` back to 0
-  then read `'1'`. So the first read after a write fails where the
-  first read on an untouched descriptor succeeds.
-
 The bullets above were read by hand. A throwaway binary (not in the
-repository) linked against `bela-sys` then asked the same questions
-through the real functions, so that what is recorded is what libbela
-does rather than what a re-implementation of it does. It created no
-audio system, and `gpio584` and the `usr1` trigger were put back
-afterwards.
+repository) linked against `bela-sys` then asked through the real
+functions, so that what is recorded is what libbela does rather than
+what a re-implementation of it does. It created no audio system, and
+`gpio584` and the `usr1` trigger were put back afterwards.
 
 - **All thirteen are in the library the crate links.** `nm -D
   --defined-only /root/Bela/lib/libbela.so` lists `gpio_setup`,
@@ -904,16 +893,15 @@ afterwards.
   as `T`. The binary linked and ran, so this is a link as much as a
   listing. Nothing in the workspace calls them, so no build here would
   otherwise find out.
-- **`gpio_write` really does leave the next `gpio_read` with nothing.**
-  `gpio_setup(584, OUTPUT_PIN as c_int)` returned descriptor 3;
-  `gpio_write(fd, HIGH as c_int)` returned 0 — the casts being the
-  first of the traps the crate documentation lists, and what the
-  binary actually ran; the next `gpio_read` returned
-  `-1` and left its `unsigned int *value` holding the `0xdeadbeef` it
-  had been given, as did the one after it. So the failure is the
-  fail-fast one rather than a stale or invented reading —
-  `gpio_write` writes two bytes (`core/GPIOcontrol.cpp:296-303`) into
-  a two-byte file, and nothing is left to read.
+- **A `gpio_write` leaves the next `gpio_read` nothing to read.** The
+  two share the descriptor's file offset and neither rewinds, and
+  `gpio_write` puts two bytes (`core/GPIOcontrol.cpp:296-303`) into a
+  two-byte file. `gpio_setup(584, OUTPUT_PIN as c_int)` returned
+  descriptor 3, `gpio_write(fd, HIGH as c_int)` returned 0, and the
+  next `gpio_read` returned `-1` with its `unsigned int *value` still
+  holding the `0xdeadbeef` it had been given — so the failure is
+  fail-fast rather than a stale reading, and a pin cannot be written
+  and read back on one descriptor at all.
 - **`led_set_trigger(0, ...)` fails and says so; `1` works.** The first
   returned `-1` and printed `gpio/led-set-trigger: No such file or
   directory`, which is the `usr0` a Gem does not have. The second
