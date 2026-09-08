@@ -173,15 +173,41 @@ mod imp {
     #[derive(Debug, Default)]
     struct Ledger(Vec<u32>);
 
+    /// What a claim turned out to be, which the three call sites need
+    /// to tell apart and one of them reports on.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Claim {
+        /// Something else was already holding the pin.
+        AlreadyHeld,
+        /// This process exported it, and owes it back.
+        Ours,
+        /// The pin was free and the call did not take it.
+        Failed,
+    }
+
     impl Ledger {
-        /// Records a pin if this call is what exported it.
-        fn claim(&mut self, pin: u32, was_exported: bool) -> bool {
-            let ours = !was_exported && exported(pin);
-            if ours {
-                self.0.push(pin);
-                self.flush();
+        /// Runs an export with the ledger written *first*, and unwound
+        /// if the call did not take.
+        ///
+        /// The order is the point. Recording after the export leaves a
+        /// window in which a pin is claimed and nothing knows it, and
+        /// `timeout -s INT` is how both passes bound this probe, so
+        /// that window is one a signal really lands in. Recording a
+        /// pin that then turns out not to be exported costs nothing:
+        /// `gpio_unexport` on a free pin simply fails.
+        fn claiming<T>(&mut self, pin: u32, export: impl FnOnce() -> T) -> (T, Claim) {
+            if exported(pin) {
+                return (export(), Claim::AlreadyHeld);
             }
-            ours
+            self.0.push(pin);
+            self.flush();
+            let out = export();
+            if exported(pin) {
+                return (out, Claim::Ours);
+            }
+            self.0.retain(|&held| held != pin);
+            self.flush();
+            (out, Claim::Failed)
         }
 
         /// Forgets a pin only once it is really gone. `gpio_dismiss`
@@ -288,9 +314,7 @@ mod imp {
 
         // 1. Exporting a free pin, then the same pin again.
         println!("\n-- 1. export, twice --");
-        let before_first = exported(LED_RUNNING);
-        let first = unsafe { gpio_export(LED_RUNNING) };
-        held.claim(LED_RUNNING, before_first);
+        let (first, _) = held.claiming(LED_RUNNING, || unsafe { gpio_export(LED_RUNNING) });
         println!(
             "gpio_export({LED_RUNNING}) = {first}, exported now: {}",
             exported(LED_RUNNING)
@@ -302,9 +326,9 @@ mod imp {
 
         // 2. What gpio_setup hands back.
         println!("\n-- 2. gpio_setup --");
-        let before_setup = exported(LED_RUNNING);
-        let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
-        held.claim(LED_RUNNING, before_setup);
+        let (fd, _) = held.claiming(LED_RUNNING, || unsafe {
+            gpio_setup(LED_RUNNING, arg::OUTPUT)
+        });
         println!("gpio_setup({LED_RUNNING}, OUTPUT_PIN) = {fd}");
         println!("  direction file now: {}", direction(LED_RUNNING));
         if fd < 0 {
@@ -338,9 +362,9 @@ mod imp {
 
         // 4. What a write does to the next read.
         println!("\n-- 4. gpio_write, then gpio_read on the same descriptor --");
-        let before_fd2 = exported(LED_RUNNING);
-        let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
-        held.claim(LED_RUNNING, before_fd2);
+        let (fd2, _) = held.claiming(LED_RUNNING, || unsafe {
+            gpio_setup(LED_RUNNING, arg::OUTPUT)
+        });
         println!("a fresh descriptor: {fd2}");
         if fd2 < 0 {
             // Asking anyway would put `-1` into `write(2)`, and the
@@ -416,9 +440,9 @@ mod imp {
         // which links and runs is evidence for all thirteen symbols
         // rather than for the nine this pass needs.
         println!("\n-- the remaining four, called only to link them --");
-        let before_fd3 = exported(LED_RUNNING);
-        let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
-        held.claim(LED_RUNNING, before_fd3);
+        let (fd3, _) = held.claiming(LED_RUNNING, || unsafe {
+            gpio_setup(LED_RUNNING, arg::OUTPUT)
+        });
         if fd3 >= 0 {
             println!("  gpio_set_dir(INPUT) = {}", unsafe {
                 gpio_set_dir(LED_RUNNING, arg::INPUT)
@@ -465,19 +489,16 @@ mod imp {
         // value: `gpio_export` answers `0` for a pin it merely found,
         // which is the finding this whole probe is about. So look
         // first, and only claim what was not there before.
-        let was_exported = exported(LED_UNDERRUN);
-        println!("gpio_export({LED_UNDERRUN}) = {}", unsafe {
-            gpio_export(LED_UNDERRUN)
-        });
-        let ours = held.claim(LED_UNDERRUN, was_exported);
-        if was_exported {
+        let (ret, claim) = held.claiming(LED_UNDERRUN, || unsafe { gpio_export(LED_UNDERRUN) });
+        println!("gpio_export({LED_UNDERRUN}) = {ret}");
+        if claim == Claim::AlreadyHeld {
             println!("  it was already exported before this probe asked, so there is");
             println!("  nothing of ours here to leave behind, and this question");
             println!("  goes unanswered rather than answered by somebody else's pin");
             println!("\nleaving /sys/class/gpio at: {}", listing());
             return Ok(());
         }
-        if !ours {
+        if claim == Claim::Failed {
             // The pin was free and is still not exported, so the call
             // failed. Saying "already exported" here would report the
             // question as answered when it was never asked.
@@ -531,11 +552,11 @@ mod imp {
         let mut ours: Vec<u32> = Vec::new();
         for (name, pin) in claimed {
             println!("\n-- {name} (gpio{pin}) --");
-            let was_exported = exported(pin);
-            println!("  exported before we ask: {was_exported}");
+            println!("  exported before we ask: {}", exported(pin));
             println!("  direction: {}", direction(pin));
-            println!("  gpio_export = {}", unsafe { gpio_export(pin) });
-            if held.claim(pin, was_exported) {
+            let (ret, claim) = held.claiming(pin, || unsafe { gpio_export(pin) });
+            println!("  gpio_export = {ret}");
+            if claim == Claim::Ours {
                 ours.push(pin);
             }
             let mut value: PIN_VALUE = 0xdead_beef;

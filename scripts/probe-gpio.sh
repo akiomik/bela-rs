@@ -103,7 +103,7 @@ cleanup() {
     undo="$undo; n=0"
     undo="$undo; while [ -d /proc/\$p ] && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; kill -9 \$p 2>/dev/null; fi"
+    undo="$undo; if [ -d /proc/\$p ]; then kill -9 \$p 2>/dev/null; fi; fi"
     undo="$undo; if [ -n \"\$r\" ] && [ -d /proc/\$r ]; then kill -9 \$r 2>/dev/null; fi"
     # The probe keeps one ledger of the pins it has exported and not
     # given back, in `claimed.pins`, and writes it as it changes. It
@@ -202,11 +202,25 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # pin comes from the probe rather than from a literal here: it
   # derives it from bank bases that are measured and can move.
   if [ -s claimed.pins ]; then
+    # Keep in the ledger whatever did not actually come back, the way
+    # Ledger::release does on the other side: deleting the file on
+    # the strength of the write having been attempted would drop
+    # exactly the pins that failed, leaving them exported with nothing
+    # recording them — and pass 2 would then read one as libbela's.
+    : > claimed.left
     while read -r o; do
       echo \"(clearing gpio\$o, which the probe was still holding)\"
       echo \"\$o\" > /sys/class/gpio/unexport 2>/dev/null || true
+      if [ -e /sys/class/gpio/gpio\$o ]; then
+        echo \"  gpio\$o did NOT come back\"
+        echo \"\$o\" >> claimed.left
+      fi
     done < claimed.pins
-    rm -f claimed.pins
+    if [ -s claimed.left ]; then
+      mv claimed.left claimed.pins
+    else
+      rm -f claimed.left claimed.pins
+    fi
   else
     echo '(the probe was holding no pin to clear)'
   fi
@@ -268,9 +282,15 @@ ssh -o ConnectTimeout=10 "$HOST" "
   if ! alive \$sine_pid; then
     echo 'sine did not stay up; its output was:'
     cat sine.log
-    # Both pids are about to be reaped and their numbers reissued, and
-    # the handler runs on this path too.
-    rm -f sine.pid run.pid
+    # \$sine_pid is this shell's child and is about to be reaped, so
+    # its number is about to be reusable. \$run.pid names the
+    # grandchild, which this shell never reaps — and which can outlive
+    # a wrapper that was killed rather than exiting — so it is dropped
+    # only once the run is really gone. Nothing else can find it:
+    # libbela renames the process.
+    rm -f sine.pid
+    r=\$(cat run.pid 2>/dev/null)
+    if [ -z \"\$r\" ] || [ ! -d /proc/\$r ]; then rm -f run.pid; fi
     exit 3
   fi
   timeout -s INT -k 5 $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
