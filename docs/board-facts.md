@@ -873,6 +873,13 @@ rounds.
   `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine`
   reports success having killed nothing, which is a silent no-op
   rather than an error.
+- **Three scripts here were written before this was known.**
+  `probe-io.sh`, `probe-command-line.sh` and `probe-init-failure.sh`
+  each kill a run with `pkill -9 -x <name>`, which by the above matches
+  nothing and reports success. Filed as
+  [#162](https://github.com/akiomik/bela-rs/issues/162); recorded here
+  so that this section is not read as describing a tree that acts on
+  it.
 - **Matching on the command line instead is worse.** `pkill -f
   './sine'` matches the ssh command line of any script that mentions
   the binary, this one included, and takes the connection down with
@@ -940,6 +947,16 @@ soundness condition `bela-sys`'s documentation states. That is
 so the same claim for it is read off `core/GPIOcontrol.cpp` rather
 than off this board.
 
+**An export outlives the process that made it.** The last question of
+this pass exports a pin and exits without unexporting it on purpose,
+and `gpio585` was still there when the script listed `/sys/class/gpio`
+afterwards. An export is a change to a global filesystem, not a
+resource the kernel reclaims on exit, so anything wrapping these has to
+unexport on the way out or leave the pin claimed for whatever runs
+next. This is the alone pass because it has to be: with a run up,
+`gpio585` is a pin libbela is holding, and a listing that still shows
+it says nothing about who left it.
+
 With `sine` rendering, in another process:
 
 - **libbela exports 22 pins for the duration of a run.** `gpio584`,
@@ -977,12 +994,6 @@ With `sine` rendering, in another process:
   liveness check: a run that aborted a moment later would still have
   been alive for that. So the collision is silent in both directions:
   nothing refuses the claim, and nothing reports the loss.
-- **An export outlives the process that made it.** The probe exports a
-  pin and exits without unexporting it on purpose, and `gpio585` was
-  still there afterwards. An export is a change to a global
-  filesystem, not a resource the kernel reclaims on exit, so anything
-  wrapping these has to unexport on the way out or leave the pin
-  claimed for whatever runs next.
 - **libbela's own teardown is unaffected by any of it.** After both
   processes ended, `/sys/class/gpio` held `gpio586` and nothing else —
   the resting state this file already records — including on the run
