@@ -565,6 +565,17 @@ mod imp {
             println!("  gpio_unexport = {}", unsafe {
                 gpio_unexport(LED_RUNNING)
             });
+            // And fail the pass, rather than print `skipped:` and go on
+            // to exit 0. These four are called for one reason — so that
+            // a probe which links and runs is evidence for all thirteen
+            // symbols — and a pass that skipped them is evidence for
+            // nine. docs/board-facts.md says flatly that this pass
+            // calls every one, and a green run is what stands behind
+            // that sentence.
+            return Err(format!(
+                "gpio_setup({LED_RUNNING}) returned {fd3}, so four of the thirteen went \\
+                 uncalled and this pass is not evidence for them"
+            ));
         }
 
         // 7. A pin number no chip covers.
@@ -709,14 +720,25 @@ mod imp {
         // 12: the destructive one.
         if destructive {
             println!("\n-- DESTRUCTIVE: unexporting the running LED out from under the run --");
-            if ours.contains(&LED_RUNNING) {
-                // This export is the probe's own — a run with
-                // `enable_led` off claims neither LED — so dismissing
-                // it would measure the probe taking a pin from itself
-                // while the transcript read as one taken from libbela.
-                println!("  NOT asked: gpio{LED_RUNNING} was not exported until this");
-                println!("  probe did it, so libbela is not holding it and there is");
-                println!("  nothing here to take from the run");
+            // What has to hold is that libbela is holding the pin
+            // *now*, and `ours` does not say that. It is empty both
+            // when libbela had the pin already and when the probe's own
+            // `gpio_export` failed on a free one — a run with
+            // `enable_led` off claims neither LED, so that pairing is
+            // reachable. In the second case the branch below would
+            // export the pin fresh and dismiss it: the probe taking a
+            // pin from itself, printed under a heading that says it
+            // took one from the run. So ask the pin, not the bookkeeping.
+            if !exported(LED_RUNNING) || ours.contains(&LED_RUNNING) {
+                println!("  NOT asked: gpio{LED_RUNNING} is not a pin libbela is holding");
+                println!(
+                    "  — it is {}, so there is nothing here to take from the run",
+                    if ours.contains(&LED_RUNNING) {
+                        "exported because this probe exported it"
+                    } else {
+                        "not exported at all"
+                    }
+                );
             } else {
                 // Read before the call, because `gpio_setup` sets the
                 // direction before it opens: the failure branch below
