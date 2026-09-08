@@ -139,13 +139,24 @@ cleanup() {
     # `timeout` relays the signal to the run it manages, measured.
     undo="p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null)"
     undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
-    undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ]; }"
+    undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
+    undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
     undo="$undo; for t in \$p \$r; do kill -INT \$t 2>/dev/null; done"
     undo="$undo; n=0"
     undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
     undo="$undo; for t in \$p \$r; do"
     undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
+    # And any probe of ours still running, or the release below would
+    # give back pins it then exports again. Matched on the executable
+    # rather than the name: exact, needs no pid written down, and does
+    # not care that this is one of the few binaries here libbela does
+    # not rename (it creates no audio system). A deleted binary makes
+    # readlink append a suffix, hence the trailing match.
+    undo="$undo; for c in /proc/[0-9]*; do"
+    undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
+    undo="$undo $REMOTE_DIR/gpio_probe*) kill -9 \${c#/proc/} 2>/dev/null ;;"
+    undo="$undo esac; done"
     # And give back every pin the probe can claim. After the kill
     # above, so no run is holding one. This does not ask which pins
     # this invocation actually took — see the probe's own notes on why
@@ -246,6 +257,7 @@ echo "=============================================================="
 # failing ssh before the assignment ran, and the report at the bottom
 # would be unreachable code.
 alone_status=0
+# Question 6 touches the LED triggers, and it is in this pass only.
 PROBE_RAN=yes
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
@@ -280,6 +292,9 @@ if [ "$alone_status" -ne 0 ]; then
   if [ "$alone_status" -eq 255 ]; then
     echo "Pass 1's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
+  elif [ "$alone_status" -eq 124 ]; then
+    echo "Pass 1's tidy-up hit its own timeout: the questions were asked and" >&2
+    echo "the transcript above stands, but a pin may be left exported." >&2
   elif [ "$alone_status" -eq 3 ]; then
     echo "Pass 1 asked its questions — the transcript above stands — but the" >&2
     echo "release that follows them declined, so a pin may be left exported." >&2
@@ -293,6 +308,12 @@ if [ "$alone_status" -ne 0 ]; then
   echo "handler gives back whatever the probe was still holding." >&2
   exit 1
 fi
+
+# Pass 1 returned 0, so question 6 restored every trigger it changed —
+# the probe fails the pass otherwise. Nothing after this point can
+# leave one at `none`, so the advice below would send an operator to
+# check four files this run cannot have touched.
+PROBE_RAN=no
 
 echo
 echo "=============================================================="
@@ -406,6 +427,9 @@ if [ "$with_run_status" -ne 0 ]; then
   elif [ "$with_run_status" -eq 4 ]; then
     echo "Pass 2 could not start a run to ask beside: see sine's output above." >&2
     echo "No question was put and nothing was tidied, because nothing ran." >&2
+  elif [ "$with_run_status" -eq 124 ]; then
+    echo "Pass 2's tidy-up hit its own timeout: the questions were asked and" >&2
+    echo "the transcript above stands, but a pin may be left exported." >&2
   elif [ "$with_run_status" -eq 3 ]; then
     echo "Pass 2 asked its questions — the transcript above stands — but the" >&2
     echo "release that follows them declined, so a pin may be left exported." >&2
