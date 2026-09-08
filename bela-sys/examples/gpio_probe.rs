@@ -424,36 +424,41 @@ mod imp {
     /// back, which is a status of its own rather than a failure to ask.
     fn alone_questions(left_changed: &mut bool) -> Result<(), String> {
         println!("== alone: nothing else should be running ==");
-        // The mirror of the check `with_run_questions` makes, and the
-        // more important of the two: this pass dismisses and unexports
-        // `LED_RUNNING`, which sysfs grants whoever asks. Run against a
-        // live run it would take that pin with no `--destructive` and
-        // no warning, which is the one act this probe gates.
-        // Two pins, because neither alone covers every configuration: a
-        // run with digital I/O off exports no channel, and one with
-        // `enable_led` off exports no LED. Where neither is exported
-        // libbela is not holding the running LED either, so there is
-        // nothing for this pass to take.
-        for (what, pin) in [("digital D0", DIGITAL_D0), ("the running LED", LED_RUNNING)] {
+        // Two checks, because two different things disqualify this
+        // pass, and one used to stand in for both.
+        //
+        // First: is anything else holding pins at all. `a_run_is_up`
+        // answers that, and `release_all` has always used it for the
+        // same question — a run with digital I/O off *and* `enable_led`
+        // off exports neither of the two pins below while still
+        // exporting the ADC reset and the SPI DAC chip select among the
+        // twenty. Nothing there is this pass's to take, which is why
+        // checking those two alone looked like enough; but its exports
+        // would be in question 8's answer and in the closing listing,
+        // under a heading that says nothing else should be running.
+        if a_run_is_up()? {
+            return Err(
+                "a pin outside the ones this probe can give back is exported, so \
+                 something else is holding pins; every answer below would be about a \
+                 board that was rendering, under a heading saying it was not"
+                    .to_owned(),
+            );
+        }
+        // And then the two this pass claims and releases — it dismisses
+        // and unexports `LED_RUNNING`, which sysfs grants whoever asks,
+        // and that is the one act this probe gates. Reaching here means
+        // nothing else is exported, so either is a pin a previous probe
+        // left behind rather than one a run is holding: `--release`
+        // gives both back, and the script runs it before this pass.
+        for (what, pin) in [
+            ("the running LED", LED_RUNNING),
+            ("the underrun LED", LED_UNDERRUN),
+        ] {
             if exported(pin) {
-                // Refusing is right either way — these questions claim
-                // and release both pins — but the cause is not. An
-                // operator meets this most often after a probe was
-                // killed hard and left `gpio584` behind, and `--release`
-                // treats exactly that as a pin to give back, so blaming
-                // another process sends them looking for one that is
-                // not there.
-                let cause = if a_run_is_up()? {
-                    "a pin outside the two this probe can give back is exported, so \
-                     something else is holding them"
-                } else {
-                    "nothing else is exported, so this is a pin a previous probe left \
-                     behind rather than one a run is holding; `--release` gives it back, \
-                     and this script runs that after each pass"
-                };
                 return Err(format!(
-                    "gpio{pin} ({what}) is exported: {cause}. These questions claim and \
-                     release both pins and must not run beside a run"
+                    "gpio{pin} ({what}) is exported and nothing else is, so a previous \
+                     probe left it behind; `--release` gives it back, and this script \
+                     runs that before each pass"
                 ));
             }
         }
