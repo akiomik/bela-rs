@@ -124,8 +124,20 @@ cleanup() {
     # runs libbela's teardown, so all twenty-two of its pins are still
     # exported and this declines. That is the case an operator has to
     # be told about, and it was the case this silenced.
-    undo="$undo; timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release >/dev/null"
-    undo="$undo || echo 'WARNING: pins were not released; see the message above' >&2"
+    #
+    # Onto *stdout*, and captured rather than streamed. The `ssh` below
+    # discards remote stderr — inherited from probe-io.sh, where the
+    # undo produces none worth keeping — so a refusal written there
+    # goes nowhere, which is what happened to the first version of this
+    # warning. Stdout is not discarded, so that is where it goes.
+    #
+    # Guarded on the binary, because `BOARD_PREPARED` is set before the
+    # daemon is stopped and so before this is copied: without the guard
+    # an interrupt in that window reports pins it never claimed, and so
+    # does the second run of this handler, after `$REMOTE_DIR` is gone.
+    undo="$undo; if [ -x $REMOTE_DIR/gpio_probe ]; then"
+    undo="$undo out=\$(timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release 2>&1)"
+    undo="$undo || { echo 'WARNING: pins were NOT released:'; echo \"\$out\"; }; fi"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -214,8 +226,15 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # that pass 2 starts from the board's resting state. The probe
   # refuses this where a run is up, which is where two of the three
   # would be libbela's.
-  timeout -s INT -k 5 15 ./gpio_probe --release
-  exit \$probe_status
+  release_status=0
+  timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
+  # The probe's own status first, then the tidy-up's. Letting the
+  # second be overwritten by the first is how a failed release lets
+  # pass 2 start with gpio585 still exported — which it would then
+  # report as a pin libbela is holding, the distinction every answer in
+  # that pass turns on.
+  if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
+  exit \$release_status
 " || alone_status=$?
 
 if [ "$alone_status" -ne 0 ]; then
