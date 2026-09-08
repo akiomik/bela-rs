@@ -947,14 +947,25 @@ soundness condition `bela-sys`'s documentation states. That is
 so the same claim for it is read off `core/GPIOcontrol.cpp` rather
 than off this board.
 
-**An unexport does not undo a drive.** Exporting `gpio584`, setting it
-to `out`, writing `1`, unexporting and exporting it again gives
-`direction=out` and `value=1`; the same run with `0` gives
-`direction=out` and `value=0`. So the line keeps both across the
-unexport rather than being freed back to an input — which is why
-nothing that only unexports can put a level back, and why a probe that
-drove a pin and could not undrive it says so rather than relying on the
-teardown below.
+**An unexport does not undo a drive.** Read by hand, not by the probe:
+looking at a pin after unexporting it means exporting it again, and no
+question does that. So this row is reproduced by running
+
+```sh
+echo 584 > /sys/class/gpio/export
+echo out > /sys/class/gpio/gpio584/direction
+echo 1 > /sys/class/gpio/gpio584/value
+echo 584 > /sys/class/gpio/unexport
+echo 584 > /sys/class/gpio/export
+cat /sys/class/gpio/gpio584/direction /sys/class/gpio/gpio584/value
+echo 584 > /sys/class/gpio/unexport
+```
+
+which gives `out` and `1`, and the same with `0` gives `out` and `0`.
+The line keeps both across the unexport rather than being freed back to
+an input — which is why nothing that only unexports can put a level
+back, and why a probe that drove a pin and could not undrive it says so
+rather than relying on the teardown below.
 
 **An export outlives the process that made it.** The last question of
 this pass exports a pin and exits without unexporting it on purpose,
