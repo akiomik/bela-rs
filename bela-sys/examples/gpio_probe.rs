@@ -651,6 +651,17 @@ mod imp {
                     "  gpio_dismiss left it exported; gpio_unexport = {}",
                     unsafe { gpio_unexport(LED_RUNNING) }
                 );
+                // And ask the pin again, for the reason the whole
+                // question is here: `gpio_unexport` can refuse silently
+                // too, and until this pin is free question 8 cannot be
+                // asked — its answer is a listing, and a second pin in
+                // it reads as part of the one that is deliberate.
+                if exported(LED_RUNNING) {
+                    return Err(format!(
+                        "gpio{LED_RUNNING} survived gpio_dismiss and gpio_unexport both, so \
+                         question 8's listing would show two pins and mean one"
+                    ));
+                }
             }
         } else {
             // Two of `gpio_setup`'s three failure paths leave the pin
@@ -986,6 +997,18 @@ mod imp {
                 println!("  gpio_unexport({pin}) = {}", unsafe {
                     gpio_unexport(*pin)
                 });
+                // The return is not the answer: question 5 measures
+                // `gpio_unexport` refusing silently. A pin that survives
+                // this is one question 13 will list, and the script says
+                // of that listing that whatever is in it the probe left
+                // there deliberately.
+                if exported(*pin) {
+                    eprintln!(
+                        "LEFT CHANGED: gpio{pin} would not unexport, so it is in question \
+                         13's listing without being the pin that answers it"
+                    );
+                    *left_changed = true;
+                }
             }
         }
 
