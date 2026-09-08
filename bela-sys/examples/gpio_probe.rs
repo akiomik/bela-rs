@@ -68,7 +68,20 @@ fn main() {
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 mod imp {
+    use std::ffi::c_int;
     use std::{env, fs, process};
+
+    // The control for question 3. `gpio_read` misbehaves because it
+    // never rewinds, so rewinding for it ought to make it behave, and
+    // that is the only evidence for *why* rather than *that*. Declared
+    // here rather than pulled from a dependency: this crate has no
+    // `libc`, and one function is not a reason to acquire one.
+    unsafe extern "C" {
+        fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64;
+    }
+
+    /// `SEEK_SET`, the whence `lseek` is given to rewind.
+    const SEEK_SET: c_int = 0;
 
     use bela_sys::{
         PIN_VALUE, gpio_dismiss, gpio_export, gpio_fd_close, gpio_fd_open, gpio_get_value,
@@ -151,6 +164,14 @@ mod imp {
         let with_run = args.iter().any(|a| a == "--with-run");
         let destructive = args.iter().any(|a| a == "--destructive");
 
+        // Asked by the script before anything runs, so that its
+        // handler can give the pin back even if this process never
+        // reaches the line that says it left one.
+        if args.iter().any(|a| a == "--will-leave") {
+            println!("{LED_UNDERRUN}");
+            return;
+        }
+
         if destructive && !with_run {
             eprintln!(
                 "--destructive only applies to --with-run, and is being ignored: \
@@ -172,6 +193,10 @@ mod imp {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one question per block, in the order the module doc numbers them"
+    )]
     fn alone_questions() -> Result<(), String> {
         println!("== alone: nothing else should be running ==");
         println!("at rest, /sys/class/gpio holds: {}", listing());
@@ -210,12 +235,21 @@ mod imp {
         let mut value: PIN_VALUE = 0xdead_beef;
         let ret = unsafe { gpio_get_value(LED_RUNNING, &raw mut value) };
         println!("gpio_get_value (opens and closes its own file) = {ret}, *value {value}");
+        println!("  the same three, with an lseek back to 0 before each:");
+        for n in 1..=3 {
+            unsafe { lseek(fd, 0, SEEK_SET) };
+            let mut value: PIN_VALUE = 0xdead_beef;
+            let ret = unsafe { gpio_read(fd, &raw mut value) };
+            println!("    read {n}: ret {ret}, *value {value:#x}");
+        }
+        // Question 4 opens its own; this one has been answered.
+        println!("gpio_fd_close(fd) = {}", unsafe { gpio_fd_close(fd) });
 
         // 4. What a write does to the next read.
         println!("\n-- 4. gpio_write, then gpio_read on the same descriptor --");
         let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("a fresh descriptor: {fd2}");
-        println!("gpio_write(fd, HIGH) = {}", unsafe {
+        println!("gpio_write(fd2, HIGH) = {}", unsafe {
             gpio_write(fd2, arg::HIGH)
         });
         let mut value: PIN_VALUE = 0xdead_beef;
@@ -236,16 +270,26 @@ mod imp {
         // 6. Which LED numbers name a file.
         println!("\n-- 6. led_set_trigger --");
         for &n in LED_NUMBERS {
-            let before = current_trigger(n);
-            let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
-            match before {
-                Some(before) => {
-                    println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
-                    if let Err(e) = fs::write(trigger_path(n), &before) {
-                        return Err(format!("could not restore usr{n} to {before}: {e}"));
+            // Read first, and only write what can be put back. A file
+            // that exists but cannot be read for its `[selected]`
+            // marker would otherwise be set to `none` and left there,
+            // while the transcript said there was no file at all.
+            let Some(before) = current_trigger(n) else {
+                let exists = fs::metadata(trigger_path(n)).is_ok();
+                println!(
+                    "  lednum {n}: not asked — {}",
+                    if exists {
+                        "the file is there but its current trigger could not be read"
+                    } else {
+                        "no such file"
                     }
-                }
-                None => println!("  lednum {n}: ret {ret} (no such file to begin with)"),
+                );
+                continue;
+            };
+            let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+            println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
+            if let Err(e) = fs::write(trigger_path(n), &before) {
+                return Err(format!("could not restore usr{n} to {before}: {e}"));
             }
         }
 
@@ -296,6 +340,10 @@ mod imp {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one question per block, in the order the module doc numbers them"
+    )]
     fn with_run_questions(destructive: bool) -> Result<(), String> {
         println!("== with a run up: something else must be holding the audio device ==");
         println!("/sys/class/gpio holds: {}", listing());
@@ -343,17 +391,38 @@ mod imp {
         }
         println!("  ten readings: {seen}");
 
-        // 11: writing to a pin the PRU drives.
+        // 11: writing to a pin the PRU drives. On this board the pin
+        // is an input and the write cannot take, which is the answer
+        // and is harmless. On a board where it is an output the same
+        // call would contend with whatever is driving it — the
+        // loopback rig in "What a digital pin does" is one — so that
+        // case needs the same opt-in the destructive question has.
         println!("\n-- writing gpio{DIGITAL_D0} while the PRU drives it --");
-        println!("  gpio_set_value(HIGH) = {}", unsafe {
-            gpio_set_value(DIGITAL_D0, arg::HIGH)
-        });
-        let mut value: PIN_VALUE = 0xdead_beef;
-        let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
-        println!("  reads back: ret {ret}, *value {value:#x}");
-        println!("  gpio_set_value(LOW) = {}", unsafe {
-            gpio_set_value(DIGITAL_D0, arg::LOW)
-        });
+        let direction = direction(DIGITAL_D0);
+        println!("  its direction is {direction}");
+        if direction != "in" && !destructive {
+            println!("  not attempted: writing an output pin contends with its driver,");
+            println!("  which is what --destructive is for");
+        } else {
+            let mut before: PIN_VALUE = 0xdead_beef;
+            let read_before = unsafe { gpio_get_value(DIGITAL_D0, &raw mut before) };
+            println!("  gpio_set_value(HIGH) = {}", unsafe {
+                gpio_set_value(DIGITAL_D0, arg::HIGH)
+            });
+            let mut value: PIN_VALUE = 0xdead_beef;
+            let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
+            println!("  reads back: ret {ret}, *value {value:#x}");
+            // Back to what it held, rather than to LOW: a pin this
+            // probe could drive is one it has to put back.
+            if read_before == 0 {
+                let restore = if before == 0 { arg::LOW } else { arg::HIGH };
+                println!("  restoring to {before}: {}", unsafe {
+                    gpio_set_value(DIGITAL_D0, restore)
+                });
+            } else {
+                println!("  its value could not be read first, so nothing to restore to");
+            }
+        }
 
         // 12: the destructive one.
         if destructive {
@@ -376,6 +445,17 @@ mod imp {
             }
         } else {
             println!("\n(skipping the destructive question; pass --destructive for it)");
+        }
+
+        // The entry check said a run was up. Say whether one still is,
+        // so that a probe which outlived the run cannot have its
+        // answers read as answers about a board that was rendering.
+        println!("\n-- was a run still up when these finished? --");
+        if exported(DIGITAL_D0) {
+            println!("  yes: gpio{DIGITAL_D0} is still exported for the PRU");
+        } else {
+            println!("  NO — the run ended part way through, and the answers");
+            println!("  above are not all about a board that was rendering");
         }
 
         println!("\nleaving /sys/class/gpio at: {}", listing());

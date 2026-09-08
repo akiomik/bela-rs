@@ -888,9 +888,10 @@ rather than by hand:
 | `gpio_export` on a free pin | `0`, and the pin appears |
 | `gpio_export` again on it | `0` — the fast path, indistinguishable |
 | `gpio_setup(pin, OUTPUT_PIN)` | a descriptor, `3`; `direction` reads `out` |
-| three `gpio_read`s on it | `0`/`0x0`, then `0`/`0x1`, then `-1` |
+| three `gpio_read`s on it | `0`/`0x0`, then `0`/`0x1`, then `-1` with the out-param left at the `0xdeadbeef` it was given |
+| the same three, with an `lseek` back to 0 before each | `0`/`0x0` three times |
 | `gpio_get_value` | `0`, and the true reading, every time |
-| `gpio_write` then `gpio_read` | write `0`, the very next read `-1` |
+| `gpio_write` then `gpio_read` | write `0`, the very next read `-1`, out-param again untouched |
 | `gpio_dismiss` | `0`, and the export is gone |
 | `gpio_unexport` after it | `-1`, silently |
 | `led_set_trigger(0, ...)` | `-1`, `No such file or directory` |
@@ -902,6 +903,15 @@ pin was low, the first read said so, and the second said **high**,
 having read the `'\n'` that follows the value and found it is not
 `'0'`. Only the third fails. A caller polling a pin on one descriptor
 gets one true answer, then a lie, then an error.
+
+The `lseek` row is the control, and is what makes the missing rewind
+the *cause* rather than a guess that fits: the same descriptor, the
+same three calls, rewound before each, answers correctly every time.
+And on both failing rows the `unsigned int *value` still held the
+`0xdeadbeef` the probe put there, which is the measurement behind the
+soundness condition `bela-sys`'s documentation states — a caller
+handing either reader an uninitialised location has nothing written to
+it when the call fails.
 
 With `sine` rendering, in another process:
 
@@ -927,7 +937,10 @@ With `sine` rendering, in another process:
   reads `in`, which is what "every channel starts as an input" above
   means from the sysfs side, and a value cannot be written to an
   input. The two LEDs read `out`, so nothing here says a write to one
-  of those would fail.
+  of those would fail. The probe only attempts this where the
+  direction reads `in`, which is the harmless case; an output pin
+  would mean contending with whatever drives it, and that needs
+  `--destructive` like the question below.
 - **A program can take an LED away from a live run, and the run does
   not notice.** With `--destructive`, `gpio_setup(gpio584, INPUT_PIN)`
   returned a descriptor and `gpio_dismiss` returned `0`; the export

@@ -54,26 +54,48 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="aarch64-unknown-linux-gnu"
 BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-probe-gpio"
-# The second pass needs the run to outlive the probe, which takes well
-# under a second; the rest is slack for a board under load.
-RUN_SECONDS=12
+# The second pass needs the run to outlive the probe, and by a margin:
+# a probe that outlived it would measure a board with nothing running
+# and the script would report both `ALREADY GONE` and `the undisturbed
+# end`, which are the two conclusions this must never confuse. The
+# probe takes well under a second, so 30 against a 20-second bound
+# leaves the with-run questions ~26 seconds of run to happen inside.
+# The probe checks for itself that the run was still up when it
+# finished, which is what actually rules the confusion out.
+RUN_SECONDS=30
 PROBE_TIMEOUT=60
+WITH_RUN_TIMEOUT=20
 
 DAEMON_WAS_RUNNING=0
+# The pin question 8 leaves exported on purpose. Pass 1 clears it
+# itself on the happy path; this is so that an interrupted run, or one
+# whose probe died before it could say, gives the pin back too. The
+# probe is asked for the number rather than it being written here: it
+# derives it from bank bases that are measured and can move.
+LEFT_EXPORTED=""
 
 cleanup() {
+  status=$?
   # Stop any run still holding the audio device before the daemon is
   # started again, or it comes up unable to claim it. Matched by exact
   # process name: the remote cmdline is `./sine`, so a pattern built
   # from $REMOTE_DIR would match nothing and report success.
   ssh -o ConnectTimeout=10 "$HOST" "pkill -INT -x sine" 2>/dev/null || true
+  if [ -n "$LEFT_EXPORTED" ]; then
+    ssh -o ConnectTimeout=10 "$HOST" \
+      "echo $LEFT_EXPORTED > /sys/class/gpio/unexport" 2>/dev/null || true
+  fi
   ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR" 2>/dev/null || true
   if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
     ssh -o ConnectTimeout=10 "$HOST" "systemctl start bela_daemon" 2>/dev/null ||
       echo "WARNING: could not restart bela_daemon on $HOST" >&2
   fi
+  # A caught signal in POSIX sh runs the handler and then *resumes*, so
+  # without this a Ctrl-C during pass 1 would tidy up and then walk into
+  # pass 2 with the directory deleted and the daemon holding the audio
+  # device. Every other script in scripts/ ends its handler this way.
+  exit "$status"
 }
-trap cleanup EXIT INT TERM
 
 echo "Building the probe and an audio example for $TARGET..."
 cargo build -p bela-sys --release --target "$TARGET" --example gpio_probe
@@ -86,6 +108,11 @@ for binary in gpio_probe sine; do
   fi
 done
 
+# Only now: until the build has succeeded this invocation has no
+# business touching a board, and a trap set earlier would answer a
+# cross-compile failure by stopping whatever the board was running.
+trap cleanup EXIT INT TERM
+
 echo "Preparing $HOST..."
 if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>/dev/null; then
   DAEMON_WAS_RUNNING=1
@@ -96,6 +123,19 @@ for binary in gpio_probe sine; do
 done
 # shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/gpio_probe $REMOTE_DIR/sine"
+
+# Ask before running anything, so that the handler can give the pin back
+# even if pass 1 never reaches the line that clears it.
+# shellcheck disable=SC2029
+LEFT_EXPORTED="$(ssh -o ConnectTimeout=10 "$HOST" "$REMOTE_DIR/gpio_probe --will-leave" 2>/dev/null || true)"
+case "$LEFT_EXPORTED" in
+[0-9]*) echo "Question 8 will leave gpio$LEFT_EXPORTED exported; it will be cleared." ;;
+*)
+  echo "WARNING: the probe did not say which pin it leaves; an interrupted" >&2
+  echo "pass 1 will leave one exported. Its output said: $LEFT_EXPORTED" >&2
+  LEFT_EXPORTED=""
+  ;;
+esac
 
 echo
 echo "=============================================================="
@@ -150,7 +190,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
     cat sine.log
     exit 3
   fi
-  timeout -s INT $PROBE_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
+  timeout -s INT $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
   probe_status=\$?
   echo
   echo '-- what the run did while that happened --'
