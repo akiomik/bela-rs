@@ -359,12 +359,13 @@ mod imp {
         }
 
         // `true` from a pass means its questions were all put and its
-        // transcript stands, and that it could not put back the one
-        // thing here nothing else reaches — see question 11.
+        // transcript stands, and that it left changed one of the two
+        // things nothing else here reaches: an LED trigger (question 6)
+        // or a driven channel (question 11).
         let could_ask = if with_run {
             with_run_questions(destructive)
         } else {
-            alone_questions().map(|()| false)
+            alone_questions()
         };
 
         // Non-zero means the questions could not be put, never that an
@@ -375,9 +376,9 @@ mod imp {
                 process::exit(2);
             }
             // 6 rather than 2, for the same reason 3 is not 2: the
-            // transcript above is a complete measurement, and saying
-            // "could not ask" of it tells an operator the opposite of
-            // what happened while a channel is left driven.
+            // transcript above is a measurement, and saying "could not
+            // ask" of it tells an operator the opposite of what
+            // happened while something is left changed.
             Ok(true) => process::exit(6),
             Ok(false) => {}
         }
@@ -387,7 +388,10 @@ mod imp {
         clippy::too_many_lines,
         reason = "one question per block, in the order the module doc numbers them"
     )]
-    fn alone_questions() -> Result<(), String> {
+    /// `Ok(true)` where every question was put but question 6's LED
+    /// trigger would not go back — the same status question 11's write
+    /// has in the other pass, and for the same reason.
+    fn alone_questions() -> Result<bool, String> {
         println!("== alone: nothing else should be running ==");
         // The mirror of the check `with_run_questions` makes, and the
         // more important of the two: this pass dismisses and unexports
@@ -442,7 +446,7 @@ mod imp {
         }
         let mut value: PIN_VALUE = 0xdead_beef;
         let ret = unsafe { gpio_get_value(LED_RUNNING, &raw mut value) };
-        println!("gpio_get_value (opens and closes its own file) = {ret}, *value {value}");
+        println!("gpio_get_value (opens and closes its own file) = {ret}, *value {value:#x}");
         println!("  the same three, with an lseek back to 0 before each:");
         for n in 1..=3 {
             unsafe { lseek(fd, 0, SEEK_SET) };
@@ -488,6 +492,11 @@ mod imp {
         // it, so a pass in which every number took that branch would be
         // evidence for twelve of the thirteen while exiting 0.
         let mut trigger_called = false;
+        // Carried rather than returned where it happens: the questions
+        // after this one claim nothing a changed trigger affects, and
+        // stopping short of them would throw away measurement for
+        // nothing.
+        let mut left_changed = false;
         for &n in LED_NUMBERS {
             // Read first, and only write what can be put back. A file
             // that exists but cannot be read for its `[selected]`
@@ -513,13 +522,11 @@ mod imp {
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
             trigger_called = true;
             if ret != 0 {
-                // Nothing was changed, so there is nothing to restore
-                // — and restoring anyway would write the same
-                // attribute that just refused a write, then report a
-                // failure to put back something that never moved. That
-                // `Err` aborts pass 1 and so stops pass 2 running at
-                // all.
                 println!("  lednum {n}: ret {ret} (unchanged, so nothing to restore)");
+                // Nothing was changed, so there is nothing to restore —
+                // and restoring anyway would write the same attribute
+                // that just refused a write, then report a failure to
+                // put back something that never moved.
                 continue;
             }
             println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
@@ -532,7 +539,12 @@ mod imp {
                      restore it by hand with: echo {before} > {}",
                     trigger_path(n)
                 );
-                return Err(format!("could not restore usr{n} to {before}: {e}"));
+                eprintln!("  the write failed with: {e}");
+                left_changed = true;
+                // And stop asking. Whatever made this restore refuse is
+                // as likely to hold for the next number, and going on
+                // would leave four triggers at `none` rather than one.
+                break;
             }
         }
 
@@ -634,7 +646,7 @@ mod imp {
             println!("  nothing of ours here to leave behind, and this question");
             println!("  goes unanswered rather than answered by somebody else's pin");
             println!("\nleaving /sys/class/gpio at: {}", listing());
-            return Ok(());
+            return Ok(left_changed);
         }
         if !exported(LED_UNDERRUN) {
             // The pin was free and is still not exported, so the call
@@ -652,7 +664,7 @@ mod imp {
         // probe can claim whether or not it claimed them.
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
-        Ok(())
+        Ok(left_changed)
     }
 
     #[allow(

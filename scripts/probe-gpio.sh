@@ -328,6 +328,11 @@ if [ "$alone_status" -ne 0 ]; then
     echo "Pass 1's probe hit its own timeout part way through: the transcript" >&2
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
     echo "The tidy-up after it did run." >&2
+  elif [ "$alone_status" -eq 6 ]; then
+    echo "Pass 1 asked its questions — the transcript above stands — but an LED" >&2
+    echo "trigger would not go back, so one is left at none. See LEFT CHANGED" >&2
+    echo "above, which names the command to put it back; nothing in this tree" >&2
+    echo "restores a trigger." >&2
   elif [ "$alone_status" -eq 124 ] || [ "$alone_status" -eq 3 ]; then
     # Both mean the probe itself returned 0 and only the release after
     # it went wrong, so question 6 put every trigger back — the probe
