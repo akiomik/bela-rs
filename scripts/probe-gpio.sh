@@ -348,10 +348,14 @@ if [ "$alone_status" -ne 0 ]; then
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
     echo "The tidy-up after it did run." >&2
   elif [ "$alone_status" -eq 6 ]; then
-    echo "Pass 1 left an LED trigger at none. See LEFT CHANGED above, which" >&2
-    echo "names the command to put it back; nothing in this tree restores a" >&2
-    echo "trigger. A 'could not ask:' line above it, if there is one, says the" >&2
-    echo "pass also stopped short of its last questions." >&2
+    # Named by the LEFT CHANGED line rather than here, for the reason
+    # pass 2's branch gives: the probe has more than one way to reach 6
+    # and a list here falls behind them.
+    echo "Pass 1 could not put something back: see LEFT CHANGED above, which" >&2
+    echo "names it and, where there is one, the command to put it back. Nothing" >&2
+    echo "in this tree restores an LED trigger or a pin's level; --release" >&2
+    echo "gives back an export and nothing else. A 'could not ask:' line above" >&2
+    echo "it, if there is one, says the pass also stopped short." >&2
   elif [ "$alone_status" -eq 124 ] || [ "$alone_status" -eq 137 ] ||
     [ "$alone_status" -eq 3 ]; then
     # All three mean the probe itself returned 0 and only the release
