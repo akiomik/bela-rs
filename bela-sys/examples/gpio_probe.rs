@@ -1,0 +1,412 @@
+//! Measures what the sysfs GPIO family does on a board.
+//!
+//! Run it with `scripts/probe-gpio.sh`, which builds it, copies it
+//! over, runs it in both modes and keeps the output. The findings
+//! belong in `docs/board-facts.md`, beside the ones the crate
+//! documentation for `bela_sys` already cites.
+//!
+//! This is an experiment, not a check, the way `scripts/probe-io.sh`
+//! is: nothing here passes or fails. It exits non-zero only when it
+//! could not ask — a pin it could not claim at all, a trigger it could
+//! not read back before changing.
+//!
+//! It creates **no audio system**. That is the point of it rather than
+//! an economy: the interesting questions are what an application gets
+//! when it reaches for a pin *while libbela is running in another
+//! process*, and a probe that brought its own audio system up could
+//! not ask them — libbela refuses a second one ("Bela is already
+//! running in another process"). So `scripts/probe-gpio.sh` starts an
+//! ordinary example on the board and runs this beside it. The "one
+//! audio system per process" rule is not in play here, and a crash
+//! leaves no process holding the audio device.
+//!
+//! Two modes:
+//!
+//! - alone (no arguments), which asks what the family does on a board
+//!   where nothing has claimed anything;
+//! - `--with-run`, which asks what it does to pins libbela is holding,
+//!   and is meaningless unless something else is running.
+//!
+//! `--destructive` adds one more question to `--with-run`, and is
+//! separate because the answer may be a stopped audio system: what
+//! happens when a program unexports a pin libbela still holds.
+//!
+//! What it answers, alone:
+//!
+//! 1. What does exporting a free pin return, and what does exporting
+//!    an already-exported one return?
+//! 2. What does `gpio_setup` hand back, and what direction does the
+//!    pin end up with?
+//! 3. How many `gpio_read` calls on one descriptor are correct?
+//! 4. What does a `gpio_write` do to the next `gpio_read`?
+//! 5. Does `gpio_dismiss` remove the export, and what does a second
+//!    `gpio_unexport` say?
+//! 6. Which `led_set_trigger` numbers name a file on this board?
+//! 7. What does a pin number no chip covers do?
+//! 8. Does an export outlive the process that made it? Asked by
+//!    leaving one behind on purpose, and answered by the script.
+//!
+//! With a run up:
+//!
+//! 9. What does claiming one of libbela's own pins return?
+//! 10. What can be read from one, and does a digital channel driven by
+//!     the PRU read back what the PRU is doing?
+//! 11. Does a write to a PRU-driven channel reach the pin?
+//! 12. (`--destructive`) What does unexporting one of libbela's pins
+//!     do to the run holding it?
+//! 13. What is still exported once both processes have gone?
+//!
+//! The two lists share one numbering, so question 8 is the alone pass
+//! and question 13 the with-run one. Both are the same question —
+//! what is claimed once this process has gone — and the script answers
+//! them, by listing `/sys/class/gpio` after the probe exits, which is
+//! the only place it can be seen from. It clears what 8 leaves.
+
+fn main() {
+    imp::main();
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+mod imp {
+    use std::{env, fs, process};
+
+    use bela_sys::{
+        PIN_VALUE, gpio_dismiss, gpio_export, gpio_fd_close, gpio_fd_open, gpio_get_value,
+        gpio_read, gpio_set_dir, gpio_set_edge, gpio_set_value, gpio_setup, gpio_unexport,
+        gpio_write, led_set_trigger,
+    };
+
+    /// Bank 0 is `600000.gpio`; bank 1 is `601000.gpio`. Both bases are
+    /// measured, in "The board LEDs" in `docs/board-facts.md`, and a
+    /// `GPIOn_m` is `BASE_n + m`.
+    const BANK0: u32 = 539;
+    const BANK1: u32 = 631;
+
+    /// The blue running LED (`GPIO0_45`), which libbela claims for the
+    /// duration of a run unless `enable_led` is off.
+    const LED_RUNNING: u32 = BANK0 + 45;
+    /// The red underrun LED (`GPIO0_46`), claimed with the one above.
+    const LED_UNDERRUN: u32 = BANK0 + 46;
+    /// The stop button (`GPIO0_47`), which libbela opens with
+    /// `unexport = false` and so leaves exported after a run.
+    const STOP_BUTTON: u32 = BANK0 + 47;
+    /// Digital channel D0 (`GPIO1_6`, header `P1_21`), from
+    /// `digital_gpio_mapping.h`. libbela exports all sixteen for the
+    /// PRU while a run is up.
+    const DIGITAL_D0: u32 = BANK1 + 6;
+
+    /// A number past the end of every chip on this board, for the
+    /// question about arguments nothing can honour.
+    const NO_SUCH_PIN: u32 = 99_999;
+
+    /// The four `PIN_DIRECTION` / `PIN_VALUE` constants as the
+    /// `c_int` that every parameter taking one actually wants. That
+    /// mismatch is the first of the traps `bela_sys` documents, and
+    /// casting once here keeps the questions below reading as calls.
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "INPUT_PIN, OUTPUT_PIN, LOW and HIGH are 0 and 1"
+    )]
+    mod arg {
+        use std::ffi::c_int;
+
+        pub(super) const INPUT: c_int = bela_sys::INPUT_PIN as c_int;
+        pub(super) const OUTPUT: c_int = bela_sys::OUTPUT_PIN as c_int;
+        pub(super) const LOW: c_int = bela_sys::LOW as c_int;
+        pub(super) const HIGH: c_int = bela_sys::HIGH as c_int;
+    }
+
+    /// The user LEDs `led_set_trigger` builds a path for. A
+    /// `BeagleBone` has `usr0`..`usr3`; this board is measured to have
+    /// `usr1`..`usr4`, so the sweep covers both and reports which
+    /// answered.
+    const LED_NUMBERS: &[u32] = &[0, 1, 2, 3, 4];
+
+    /// Where `led_set_trigger` writes, so that the probe can read a
+    /// trigger back before changing it and put it there afterwards.
+    fn trigger_path(lednum: u32) -> String {
+        format!("/sys/class/leds/beaglebone:green:usr{lednum}/trigger")
+    }
+
+    /// The trigger currently selected, which the sysfs file marks with
+    /// brackets among all the ones it offers.
+    fn current_trigger(lednum: u32) -> Option<String> {
+        let contents = fs::read_to_string(trigger_path(lednum)).ok()?;
+        let start = contents.find('[')? + 1;
+        let end = contents[start..].find(']')? + start;
+        Some(contents[start..end].to_owned())
+    }
+
+    fn exported(pin: u32) -> bool {
+        fs::metadata(format!("/sys/class/gpio/gpio{pin}")).is_ok()
+    }
+
+    fn direction(pin: u32) -> String {
+        fs::read_to_string(format!("/sys/class/gpio/gpio{pin}/direction"))
+            .map_or_else(|e| format!("<{e}>"), |s| s.trim().to_owned())
+    }
+
+    pub(crate) fn main() {
+        let args: Vec<String> = env::args().skip(1).collect();
+        let with_run = args.iter().any(|a| a == "--with-run");
+        let destructive = args.iter().any(|a| a == "--destructive");
+
+        if destructive && !with_run {
+            eprintln!(
+                "--destructive only applies to --with-run, and is being ignored: \
+                 the question it adds is about a pin libbela is holding"
+            );
+        }
+
+        let could_ask = if with_run {
+            with_run_questions(destructive)
+        } else {
+            alone_questions()
+        };
+
+        // Non-zero means the questions could not be put, never that an
+        // answer was surprising.
+        if let Err(why) = could_ask {
+            eprintln!("could not ask: {why}");
+            process::exit(2);
+        }
+    }
+
+    fn alone_questions() -> Result<(), String> {
+        println!("== alone: nothing else should be running ==");
+        println!("at rest, /sys/class/gpio holds: {}", listing());
+
+        // 1. Exporting a free pin, then the same pin again.
+        println!("\n-- 1. export, twice --");
+        let first = unsafe { gpio_export(LED_RUNNING) };
+        println!(
+            "gpio_export({LED_RUNNING}) = {first}, exported now: {}",
+            exported(LED_RUNNING)
+        );
+        let second = unsafe { gpio_export(LED_RUNNING) };
+        println!("gpio_export({LED_RUNNING}) again = {second}");
+        let _ = unsafe { gpio_unexport(LED_RUNNING) };
+
+        // 2. What gpio_setup hands back.
+        println!("\n-- 2. gpio_setup --");
+        let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
+        println!("gpio_setup({LED_RUNNING}, OUTPUT_PIN) = {fd}");
+        println!("  direction file now: {}", direction(LED_RUNNING));
+        if fd < 0 {
+            // `gpio_setup` exports before it opens, so a failure here
+            // can leave the pin claimed — the trap this probe exists
+            // to document. Give it back before reporting.
+            unsafe { gpio_unexport(LED_RUNNING) };
+            return Err(format!("gpio_setup on a free pin returned {fd}"));
+        }
+
+        // 3. How many reads on one descriptor are correct.
+        println!("\n-- 3. gpio_read on one descriptor --");
+        for n in 1..=3 {
+            let mut value: PIN_VALUE = 0xdead_beef;
+            let ret = unsafe { gpio_read(fd, &raw mut value) };
+            println!("  read {n}: ret {ret}, *value {value:#x}");
+        }
+        let mut value: PIN_VALUE = 0xdead_beef;
+        let ret = unsafe { gpio_get_value(LED_RUNNING, &raw mut value) };
+        println!("gpio_get_value (opens and closes its own file) = {ret}, *value {value}");
+
+        // 4. What a write does to the next read.
+        println!("\n-- 4. gpio_write, then gpio_read on the same descriptor --");
+        let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
+        println!("a fresh descriptor: {fd2}");
+        println!("gpio_write(fd, HIGH) = {}", unsafe {
+            gpio_write(fd2, arg::HIGH)
+        });
+        let mut value: PIN_VALUE = 0xdead_beef;
+        let ret = unsafe { gpio_read(fd2, &raw mut value) };
+        println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
+        let _ = unsafe { gpio_write(fd2, arg::LOW) };
+
+        // 5. Teardown, and a second unexport.
+        println!("\n-- 5. gpio_dismiss, then unexport again --");
+        println!("gpio_dismiss = {}", unsafe {
+            gpio_dismiss(fd2, LED_RUNNING)
+        });
+        println!("  still exported: {}", exported(LED_RUNNING));
+        println!("gpio_unexport (second time) = {}", unsafe {
+            gpio_unexport(LED_RUNNING)
+        });
+
+        // 6. Which LED numbers name a file.
+        println!("\n-- 6. led_set_trigger --");
+        for &n in LED_NUMBERS {
+            let before = current_trigger(n);
+            let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+            match before {
+                Some(before) => {
+                    println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
+                    if let Err(e) = fs::write(trigger_path(n), &before) {
+                        return Err(format!("could not restore usr{n} to {before}: {e}"));
+                    }
+                }
+                None => println!("  lednum {n}: ret {ret} (no such file to begin with)"),
+            }
+        }
+
+        // The four the questions above never reach. Nothing here is a
+        // question — they are called so that a probe that links and
+        // runs is evidence for all thirteen symbols rather than nine.
+        println!("\n-- the remaining four, called only to link them --");
+        let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
+        if fd3 >= 0 {
+            println!("  gpio_set_dir(INPUT) = {}", unsafe {
+                gpio_set_dir(LED_RUNNING, arg::INPUT)
+            });
+            println!("  gpio_set_edge(\"none\") = {}", unsafe {
+                gpio_set_edge(LED_RUNNING, c"none".as_ptr().cast_mut())
+            });
+            let ro = unsafe { gpio_fd_open(LED_RUNNING, 0) };
+            println!("  gpio_fd_open(O_RDONLY) = {ro}");
+            println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
+            let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
+        } else {
+            println!("  skipped: gpio_setup returned {fd3}");
+        }
+
+        // 7. A pin number no chip covers.
+        println!("\n-- 7. a pin nothing can honour --");
+        println!("gpio_export({NO_SUCH_PIN}) = {}", unsafe {
+            gpio_export(NO_SUCH_PIN)
+        });
+
+        // 8. The question the wrapper's shape turns on. Everything
+        // above tidied up after itself, which is exactly why none of
+        // it can answer this one: an export is a change to a global
+        // filesystem, not a resource the kernel reclaims when the
+        // process that made it goes away — so a wrapper that drops
+        // without unexporting leaves the pin claimed for whatever runs
+        // next. Left deliberately; the script reports it and clears it.
+        println!("\n-- 8. does an export outlive the process that made it? --");
+        println!("gpio_export({LED_UNDERRUN}) = {}", unsafe {
+            gpio_export(LED_UNDERRUN)
+        });
+        println!("  exiting now WITHOUT unexporting it, on purpose");
+        // The script clears this after reading the answer, and reads
+        // the number from here rather than repeating it: the bases it
+        // is derived from are measured and can move with a board image.
+        println!("leaving-exported: {LED_UNDERRUN}");
+
+        println!("\nleaving /sys/class/gpio at: {}", listing());
+        Ok(())
+    }
+
+    fn with_run_questions(destructive: bool) -> Result<(), String> {
+        println!("== with a run up: something else must be holding the audio device ==");
+        println!("/sys/class/gpio holds: {}", listing());
+
+        let claimed = [
+            ("running LED", LED_RUNNING),
+            ("underrun LED", LED_UNDERRUN),
+            ("stop button", STOP_BUTTON),
+            ("digital D0", DIGITAL_D0),
+        ];
+
+        // The stop button's export outlives a run, so it alone proves
+        // nothing. The digital channels are exported for the PRU while
+        // a run is up and gone afterwards, which is the signal that
+        // something is actually rendering right now.
+        if !exported(DIGITAL_D0) {
+            return Err(format!(
+                "gpio{DIGITAL_D0} (digital D0) is not exported, so nothing is \
+                 rendering; these questions need a run to be up"
+            ));
+        }
+
+        // 9 and 10: claiming and reading pins libbela is holding.
+        for (name, pin) in claimed {
+            println!("\n-- {name} (gpio{pin}) --");
+            println!("  exported before we ask: {}", exported(pin));
+            println!("  direction: {}", direction(pin));
+            println!("  gpio_export = {}", unsafe { gpio_export(pin) });
+            let mut value: PIN_VALUE = 0xdead_beef;
+            let ret = unsafe { gpio_get_value(pin, &raw mut value) };
+            println!("  gpio_get_value = {ret}, *value {value:#x}");
+        }
+
+        // 10 continued: does a PRU-driven channel change under us?
+        println!("\n-- does gpio{DIGITAL_D0} (D0) move while the PRU has it? --");
+        let mut seen = String::new();
+        for _ in 0..10 {
+            let mut value: PIN_VALUE = 0xdead_beef;
+            let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
+            seen.push(if ret == 0 {
+                char::from_digit(value.min(9), 10).unwrap_or('?')
+            } else {
+                'x'
+            });
+        }
+        println!("  ten readings: {seen}");
+
+        // 11: writing to a pin the PRU drives.
+        println!("\n-- writing gpio{DIGITAL_D0} while the PRU drives it --");
+        println!("  gpio_set_value(HIGH) = {}", unsafe {
+            gpio_set_value(DIGITAL_D0, arg::HIGH)
+        });
+        let mut value: PIN_VALUE = 0xdead_beef;
+        let ret = unsafe { gpio_get_value(DIGITAL_D0, &raw mut value) };
+        println!("  reads back: ret {ret}, *value {value:#x}");
+        println!("  gpio_set_value(LOW) = {}", unsafe {
+            gpio_set_value(DIGITAL_D0, arg::LOW)
+        });
+
+        // 12: the destructive one.
+        if destructive {
+            println!("\n-- DESTRUCTIVE: unexporting the running LED out from under the run --");
+            let fd = unsafe { gpio_setup(LED_RUNNING, arg::INPUT) };
+            println!("  gpio_setup = {fd}");
+            if fd < 0 {
+                // `gpio_dismiss` would unexport the pin anyway, so the
+                // destructive act would still happen — but it would be
+                // a bare unexport rather than a claim followed by a
+                // release, and the transcript would not say which.
+                println!("  NOT proceeding: what follows would be a bare unexport,");
+                println!("  which is a different thing from taking a pin we held");
+            } else {
+                println!("  gpio_dismiss = {}", unsafe {
+                    gpio_dismiss(fd, LED_RUNNING)
+                });
+                println!("  still exported: {}", exported(LED_RUNNING));
+                println!("  what this did to the run is the script's to report");
+            }
+        } else {
+            println!("\n(skipping the destructive question; pass --destructive for it)");
+        }
+
+        println!("\nleaving /sys/class/gpio at: {}", listing());
+        Ok(())
+    }
+
+    /// What `/sys/class/gpio` holds, with the `gpiochip*` directories
+    /// and the `export`/`unexport` attribute files left out: all of
+    /// them are always there and none says who claimed what. What is
+    /// left is exactly the set of claimed pins, so two listings can be
+    /// compared directly.
+    fn listing() -> String {
+        let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
+            return "<unreadable>".to_owned();
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.starts_with("gpiochip") && n != "export" && n != "unexport")
+            .collect();
+        names.sort();
+        names.join(" ")
+    }
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+mod imp {
+    use std::process;
+
+    pub(crate) fn main() {
+        eprintln!("gpio_probe only runs on a board (aarch64 linux)");
+        process::exit(2);
+    }
+}

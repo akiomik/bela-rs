@@ -144,6 +144,7 @@ There are also probes, which are not checks:
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-init-failure.sh [user@host] [probe...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-io.sh [user@host] [run...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-fft.sh [user@host]
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-gpio.sh [user@host] [--destructive]
 ```
 
 The first measures what a failed `Bela_initAudio` leaves behind by
@@ -152,11 +153,19 @@ configures its analog and digital I/O, by bringing an audio system up
 one configuration per process and reporting the `BelaContext` each one
 produces. The third measures what NE10's FFT does to its arguments —
 whether a transform writes into its input, whether the inverse scales,
-which lengths work — which no header answers; alone among the three it
-creates no audio system, so it leaves `bela_daemon` running and needs
-no board state put back. Nothing about any of them passes or fails —
-they answer questions, and the answers belong in
-[docs/board-facts.md](docs/board-facts.md), or in
+which lengths work — which no header answers; alone among the first
+three it creates no audio system, so it leaves `bela_daemon` running
+and needs no board state put back. The fourth measures what the sysfs
+GPIO family does to a pin, one that is free and one libbela is holding
+while a run is up, which is what the safe API in
+[#156](https://github.com/akiomik/bela-rs/issues/156) waits on. Its
+probe creates no audio system either, and that is what lets it run
+beside one: the script starts `bela/examples/sine` for it to reach
+past. `--destructive` adds the question of what unexporting one of
+libbela's own pins does to the run holding it, and is opt-in because
+the answer might have been a stopped audio system. Nothing about any
+of them passes or fails — they answer questions, and the answers
+belong in [docs/board-facts.md](docs/board-facts.md), or in
 [docs/fft.md](docs/fft.md) for the FFT, which is why they are separate
 from the smoke test. Run one when a claim in those files needs
 checking against a board, not as part of the routine before pushing.
