@@ -107,8 +107,8 @@ fn main() {
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 mod imp {
-    use std::ffi::c_int;
-    use std::{env, fs, process};
+    use std::ffi::{c_char, c_int, c_void};
+    use std::{env, fs, process, ptr};
 
     // The control for question 3. `gpio_read` misbehaves because it
     // never rewinds, so rewinding for it ought to make it behave, and
@@ -117,10 +117,18 @@ mod imp {
     // `libc`, and one function is not a reason to acquire one.
     unsafe extern "C" {
         fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64;
+
+        /// C's own `stdout`, which is a different stream from the one
+        /// `println!` writes to and is buffered on its own terms.
+        static mut stdout: *mut c_void;
+        fn setvbuf(stream: *mut c_void, buf: *mut c_char, mode: c_int, size: usize) -> c_int;
     }
 
     /// `SEEK_SET`, the whence `lseek` is given to rewind.
     const SEEK_SET: c_int = 0;
+
+    /// `_IONBF`, read from the board's `/usr/include/stdio.h`.
+    const IONBF: c_int = 2;
 
     use bela_sys::{
         PIN_VALUE, gpio_dismiss, gpio_export, gpio_fd_close, gpio_fd_open, gpio_get_value,
@@ -327,6 +335,19 @@ mod imp {
     }
 
     pub(crate) fn main() {
+        // Before anything is printed. libbela reports some failures
+        // with C `printf` — `gpio_setup`'s two are in
+        // `core/GPIOcontrol.cpp` — and C stdio block-buffers when its
+        // output is a pipe, which is what the script's
+        // `probe_out=$(...)` makes it. Those lines would then be
+        // flushed at exit and land together at the bottom, detached
+        // from the question that produced them, in a transcript whose
+        // whole product is the order things happened in. Rust's own
+        // prints go to a different, line-buffered stream, so only the C
+        // side needs this. Its other failures use `perror`, which is
+        // stderr and unbuffered, and already interleave.
+        unsafe { setvbuf(stdout, ptr::null_mut(), IONBF, 0) };
+
         let args: Vec<String> = env::args().skip(1).collect();
         // An unknown argument used to fall through to the alone pass,
         // so a mistyped `--with_run` ran the pass that takes pins.
