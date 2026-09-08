@@ -292,13 +292,15 @@ one writes the macro, which is what `digital_read` does. `_ATTRIBUTE`
 is the only other function-like macro in the three headers, and it is
 the `printf`-attribute plumbing rather than API.
 
-`GPIOcontrol.h`'s **four object-like macros** are outside both
-`allowlist_var` patterns and so are absent as well: `SYSFS_GPIO_DIR`
-and `SYSFS_LED_DIR` are the two directories the family's own
-`snprintf` calls build paths in, `MAX_BUF` is the size of the buffer
-they build them in, and `POLL_TIMEOUT` is defined in the header and
-used nowhere on the board. None of the four is an argument to anything
-bound here. The two enums beside them, `PIN_DIRECTION` and
+`GPIOcontrol.h`'s **object-like macros** are outside both
+`allowlist_var` patterns and so are absent as well. A `grep` for
+`#define` in it finds five; the fifth is the include guard,
+`SIMPLEGPIO_H_`, which is not API. Of the other four,
+`SYSFS_GPIO_DIR` and `SYSFS_LED_DIR` are the two directories the
+family's own `snprintf` calls build paths in, `MAX_BUF` is the size of
+the buffer they build them in, and `POLL_TIMEOUT` is defined in the
+header and used nowhere on the board. None of them is an argument to
+anything bound here. The two enums beside them, `PIN_DIRECTION` and
 `PIN_VALUE`, are arguments, so those are bound.
 
 ## Settings and context fields not exposed

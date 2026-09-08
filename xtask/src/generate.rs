@@ -57,16 +57,22 @@ impl ParseCallbacks for DropFamilyBanner {
 /// stops lifting a block comment onto the declaration after it, which
 /// is the result the callback exists to produce.
 ///
-/// Everything between the `extern` block's brace and the declaration
-/// belongs to that declaration, so that is what it looks in. It runs
-/// before `format`, on bindgen's own token output, which spells an
-/// attribute `# [doc = "..."]` with the space — hence matching on
-/// `[doc` rather than on the `#[doc` the formatted file ends up with.
+/// Everything between the declaration and the `unsafe extern` opening
+/// its block belongs to that declaration, so that is what it looks in.
+/// Anchoring on the keyword rather than on the block's `{` matters: a
+/// banner reworded to contain a brace would move the start of the
+/// region past its own text, and the guard would pass on precisely
+/// the case it exists to catch.
+///
+/// It runs before `format`, on bindgen's own token output, which
+/// spells an attribute `# [doc = "..."]` with the space — hence
+/// matching on `[doc` rather than the `#[doc` the formatted file ends
+/// up with.
 fn gpio_setup_is_documented(generated: &str) -> bool {
     generated
         .split_once("pub fn gpio_setup")
-        .and_then(|(before, _)| before.rsplit('{').next())
-        .is_some_and(|attrs| attrs.contains("[doc"))
+        .and_then(|(before, _)| before.rsplit_once("unsafe extern"))
+        .is_some_and(|(_, attrs)| attrs.contains("[doc"))
 }
 
 pub(crate) fn generate(root: &Path, sysroot: Option<PathBuf>) {

@@ -3,8 +3,8 @@
 //! This crate exposes the C surface of the Bela core API (`Bela.h`):
 //! `BelaContext`, `BelaInitSettings`, the `Bela_*` lifecycle and
 //! auxiliary-task functions, and `rt_printf`. Bindings are generated
-//! from vendored headers (see `vendor/bela/COMMIT` for the pinned
-//! upstream commit) with `cargo xtask bindgen`; see the crate README
+//! from vendored headers (see `vendor/bela/SOURCE` for where they came
+//! from) with `cargo xtask bindgen`; see the crate README
 //! for how to regenerate them.
 //!
 //! It also exposes the sysfs GPIO and LED family that `Bela.h`

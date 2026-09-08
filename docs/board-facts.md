@@ -22,6 +22,29 @@ on the device are recorded here.
   1.14). `git status` shows the include tree as staged deletions; the
   on-disk files are what the shipped `libbela` was built from and are
   the ground truth for the ABI.
+- **A worked example of that overlay changing an answer**, found while
+  reviewing [#160](https://github.com/akiomik/bela-rs/pull/160), where
+  two readings of upstream reached the opposite conclusion twice.
+  `gpio_export` probes for an existing export before creating one, and
+  the two versions leak a file descriptor on opposite branches:
+
+  ```c
+  // upstream BelaPlatform/Bela        // this board, and bela-sysroot
+  if(fd > 0) {                         if(fd > 0) {
+      return 0;   // leaks fd              close(fd);
+  }                                        return 0;
+  close(fd);      // closes here       }
+                                       fd = open(...); // an fd of 0 leaks
+  ```
+
+  Upstream leaks on every successful "already exported" call and
+  closes on the fall-through; the board closes on the fast path and
+  leaks only the `fd == 0` case, which is the one a program with its
+  standard input closed can reach. `md5sum` says
+  `bela-sysroot/root/Bela/core/GPIOcontrol.cpp` and the board's copy
+  are the same file, and that is the one `bela-sys` links against. So
+  a claim about libbela checked against GitHub can be exactly wrong
+  about the library that runs, and this is what that looks like.
 - Header changelog highlights beyond our current vendored copy (1.14):
   - 1.15.0: `threadCount` in `BelaInitSettings`; `const uint32_t
     thisThread` / `threadCount` in `BelaContext` (multithreaded
