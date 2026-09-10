@@ -93,22 +93,26 @@
 //!   `gpio_set_dir`. Nothing restores that, and nothing can — the state
 //!   before the probe ran is not readable through an unexported pin.
 //!   The next `gpio_setup` writes a direction anyway. Beyond that:
-//!   questions 4 and 11 write a level and put it back a line
-//!   later — the running LED and a digital channel — and a probe killed
-//!   in between leaves the LED lit or the channel driving against the
-//!   PRU for the rest of the run. Question 12's failure branch restores
-//!   a direction, which is a write that drives the pin low and cannot
-//!   carry a level back with it — but the PRU drives that pin every
-//!   block and takes it back, so what lasts there is a direction that
-//!   would not go back, an input being one the PRU cannot drive. `--release` unexports
+//!   questions 4 and 11 write a level and put it back a line later —
+//!   the running LED's pin and a digital channel — and a probe killed
+//!   in between leaves that line high, or the channel driving against
+//!   the PRU for the rest of the run. Whether a high line lights the
+//!   indicator is not something sysfs answers, so nothing here says it
+//!   does. Question 12's failure branch restores a direction, which is
+//!   a write that drives the pin low and cannot carry a level back
+//!   with it — but the PRU drives that pin every block and takes it
+//!   back, so what lasts there is a direction that would not go back,
+//!   an input being one the PRU cannot drive. `--release` unexports
 //!   pins; nothing here restores a *value*, and the run's own end is
 //!   what clears it.
 //! - A pin exported by something else. `--release` will unexport one
 //!   of its two whoever claimed it — Bela's own two LEDs, which
 //!   nothing else takes on an idle board. It declines outright where
-//!   any *other* pin is exported, that being what a run looks like,
-//!   and it asks about those rather than about the LEDs so that the
-//!   LEDs can always be given back.
+//!   any pin *other than those two and the stop button* is exported,
+//!   that being what a run looks like — the stop button is exempt
+//!   because it is the resting state of a board that has ever run
+//!   Bela — and it asks about those rather than about the LEDs so that
+//!   the LEDs can always be given back.
 
 fn main() {
     imp::main();
@@ -611,7 +615,7 @@ mod imp {
                 println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
             } else {
                 // `led_set_trigger` answers `-1` for a failed `open` and
-                // for a failed `write` alike (`GPIOcontrol.cpp:335,340`),
+                // for a failed `write` alike (`GPIOcontrol.cpp:338,341`),
                 // and only the first is measured here — usr0, ENOENT. So
                 // ask the file rather than the return: a write that
                 // failed after the attribute had taken `none` would

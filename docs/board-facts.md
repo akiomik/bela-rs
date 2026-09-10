@@ -940,6 +940,11 @@ gets one true answer, then a lie, then an error.
 The `lseek` row is the control, and is what makes the missing rewind
 the *cause* rather than a guess that fits: the same descriptor, the
 same three calls, rewound before each, answers correctly every time.
+The code it points at is `gpio_read` in `core/GPIOcontrol.cpp:269-285`,
+which reads one byte and never seeks; the `gpio_write` row is the same
+offset from the other side, `:291-303` writing two bytes into a
+two-byte file, after which the descriptor is at its end and the next
+read has nothing left.
 And on both failing rows the `unsigned int *value` still held the
 `0xdeadbeef` the probe put there, which is the measurement behind the
 soundness condition `bela-sys`'s documentation states. That is
