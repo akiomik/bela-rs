@@ -69,9 +69,13 @@
 //!
 //! # What is put back, and what is not
 //!
-//! `--release` unexports every pin this probe can claim, and the
-//! script calls it after each pass and from its handler. It does not
-//! ask whether *this* invocation claimed them, and that is deliberate:
+//! `--release` unexports the two LED pins — see `RELEASABLE` for why
+//! those and not the other two this probe can claim — and the script
+//! calls it after each pass and from its handler. It declines outright
+//! where any other pin is exported, so a probe killed with `gpio637`
+//! claimed gets nothing back, the LEDs included, and the script says
+//! so. It does not ask whether *this* invocation claimed the two, and
+//! that is deliberate:
 //! knowing would need a ledger written before each export and unwound
 //! after it, and an interrupt could still land between two
 //! instructions. What keeps a pin from leaking is the layering the
@@ -273,8 +277,9 @@ mod imp {
         }))
     }
 
-    /// Gives back every pin this probe can claim, whether or not this
-    /// invocation claimed it.
+    /// Gives back the two LED pins, whether or not this invocation
+    /// claimed them — see `RELEASABLE` for why those two and not the
+    /// other pins the probe can claim.
     ///
     /// That bluntness is the trade-off, and it is the point. Tracking
     /// which pins were ours needed a ledger written before each export
@@ -292,7 +297,7 @@ mod imp {
     /// looks like; on a board with no run these two are Bela's own
     /// LEDs, which nothing else takes.
     fn release_all() -> Result<(), String> {
-        println!("== releasing every pin this probe can claim ==");
+        println!("== releasing the two LED pins, claimed or not ==");
         // Asked of pins this does *not* release, so that the two it
         // does can always be given back. Guarding on `LED_RUNNING`
         // instead — which is where this started — made the backstop
@@ -418,6 +423,16 @@ mod imp {
         // did, and told the operator the opposite of what happened,
         // whichever way round it was.
         if args.iter().any(|a| a == "--release") {
+            // And nothing else with it. The argument check above rejects
+            // an unknown argument so that a mistyped `--with-run` cannot
+            // fall through to the pass that takes pins; the same
+            // reasoning applies here in reverse, `--release` having
+            // silently won over a caller who asked for a measurement
+            // and would have been handed a tidy-up reported as success.
+            if let Some(other) = args.iter().find(|a| *a != "--release") {
+                eprintln!("--release does its work and stops; {other} cannot come with it");
+                process::exit(2);
+            }
             if let Err(why) = release_all() {
                 eprintln!("{why}");
                 process::exit(3);
@@ -763,6 +778,21 @@ mod imp {
             let mut level: PIN_VALUE = 0xdead_beef;
             let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut level) };
             println!("  the line now reads: ret {read}, *value {level:#x}");
+            // Acted on, not only printed — the rule the rest of the
+            // file states. Two silent failures are needed to get here
+            // with the line high (question 4's `gpio_write` and the
+            // `gpio_set_value` above both reporting success without
+            // taking), and this is the last moment any of them can be
+            // seen: the pin is unexported a few lines down and an
+            // unexport keeps what it holds.
+            if read != 0 || level != 0 {
+                eprintln!(
+                    "LEFT CHANGED: gpio{LED_RUNNING} is not known to be low after three \
+                     writes that reported success; an unexport keeps whatever the line \
+                     holds"
+                );
+                *left_changed = true;
+            }
             // `gpio_dismiss` returns `0` whatever happened, so the
             // pin is what to check, not the call. Left exported it
             // would show up in question 8's listing as a second leak
@@ -920,7 +950,7 @@ mod imp {
     /// Asked of the pins the run held at entry, not of `DIGITAL_D0`,
     /// which the probe exports itself where it finds it free — so a
     /// `D0` that is exported now is not evidence of anything.
-    fn still_a_run(was: &[u32], left_changed: &mut bool) -> Result<(), String> {
+    fn still_a_run(was: &[u32], destructive: bool, left_changed: &mut bool) -> Result<(), String> {
         println!("\n-- was a run still up when these finished? --");
         if let Some(pin) = was.iter().find(|pin| exported(**pin)) {
             println!("  yes: gpio{pin} is still exported, as it was when these began");
@@ -942,8 +972,26 @@ mod imp {
                 eprintln!("  {why}, and it is the one pin `--release` cannot act on");
             }
         }
-        println!("  NO — the run ended part way through, and the answers");
-        println!("  above are not all about a board that was rendering");
+        println!("  NO — the run is gone.");
+        if destructive {
+            // Which is question 12's answer, not a failure to ask it.
+            // Reported rather than returned as an `Err`: `main` renders
+            // every `Err` as "could not ask" and exits 2, after which
+            // the script says the probe could not ask "rather than
+            // getting a surprising answer" — the exact inverse of the
+            // most interesting thing this pass can find.
+            //
+            // Said as what it is, though. A run can also end on its own
+            // while these questions are asked, and nothing here can
+            // tell the two apart: the script's own report of how `sine`
+            // ended — 124 for its `timeout`, anything else not — is
+            // what says which.
+            println!("  The destructive question was the last thing asked of it, so");
+            println!("  this is either its answer or a run that ended on its own.");
+            println!("  The script reports how the run ended; 124 is the undisturbed end.");
+            return Ok(());
+        }
+        println!("  The answers above are not all about a board that was rendering.");
         Err(format!(
             "none of the {} pins the run held when these began is exported now, so it \
              ended part way through and these are not answers about a board that was \
@@ -1284,7 +1332,7 @@ mod imp {
         // The entry check said a run was up. Say whether one still is,
         // so that a probe which outlived the run cannot have its
         // answers read as answers about a board that was rendering.
-        still_a_run(&was, left_changed)?;
+        still_a_run(&was, destructive, left_changed)?;
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())
