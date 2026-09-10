@@ -433,10 +433,13 @@ mod imp {
         println!("gpio_get_value (opens its own file) = {ret}, *value {value:#x}");
         println!("  the same three, with an lseek back to 0 before each:");
         for n in 1..=3 {
-            unsafe { lseek(fd, 0, SEEK_SET) };
+            // Printed, not discarded: this row is the control that makes
+            // the missing rewind the cause rather than a guess that
+            // fits, so a seek that failed has to be visible in it.
+            let sought = unsafe { lseek(fd, 0, SEEK_SET) };
             let mut value: PIN_VALUE = 0xdead_beef;
             let ret = unsafe { gpio_read(fd, &raw mut value) };
-            println!("    read {n}: ret {ret}, *value {value:#x}");
+            println!("    read {n}: lseek {sought}, ret {ret}, *value {value:#x}");
         }
         println!("gpio_fd_close(fd) = {}", unsafe { gpio_fd_close(fd) });
 

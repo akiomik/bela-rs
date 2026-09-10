@@ -246,7 +246,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # interleaves separately from this.
   if [ \$probe_status -eq 0 ]; then
     echo '-- question 8: what is claimed now the probe has exited --'
-    ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
+    claimed=\$(ls /sys/class/gpio) || claimed='<unreadable>'
+    echo \"\$claimed\" | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
     echo
   fi
   # Question 8 leaves one pin exported on purpose and the listing above
@@ -322,7 +323,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # answer to a question nobody put.
   if [ \$probe_status -eq 0 ]; then
     echo '-- question 13: what is claimed after both processes exited --'
-    ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
+    claimed=\$(ls /sys/class/gpio) || claimed='<unreadable>'
+    echo \"\$claimed\" | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
     echo
   fi
   # After the listing, so question 13 answers before anything is
