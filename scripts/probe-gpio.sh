@@ -243,7 +243,7 @@ echo "=============================================================="
 alone_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
-  cd $REMOTE_DIR
+  cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe
   probe_status=\$?
   echo
@@ -278,7 +278,7 @@ echo "=============================================================="
 with_run_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
-  cd $REMOTE_DIR
+  cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
   # For the handler, which runs in another connection and cannot see

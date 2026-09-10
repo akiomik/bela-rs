@@ -137,11 +137,13 @@ mod imp {
     }
 
     /// Exported pins other than the four this probe asks about.
-    fn other_pins() -> Vec<u32> {
-        let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
-            return Vec::new();
-        };
-        entries
+    ///
+    /// An error, not an empty `Vec`: a caller reads that as a board at
+    /// rest and goes on to unexport pins out from under a live run.
+    fn other_pins() -> Result<Vec<u32>, String> {
+        let entries = fs::read_dir("/sys/class/gpio")
+            .map_err(|e| format!("/sys/class/gpio could not be read ({e})"))?;
+        Ok(entries
             .filter_map(Result::ok)
             .filter_map(|e| {
                 e.file_name()
@@ -150,14 +152,14 @@ mod imp {
                     .and_then(|rest| rest.parse::<u32>().ok())
             })
             .filter(|pin| !matches!(*pin, LED_RUNNING | LED_UNDERRUN | STOP_BUTTON | DIGITAL_D0))
-            .collect()
+            .collect())
     }
 
     /// Whether anything looks like a run in progress. The LEDs cannot be
     /// the signal — they are what `--release` gives back — and the stop
     /// button outlives every run.
-    fn a_run_is_up() -> bool {
-        !other_pins().is_empty() || exported(DIGITAL_D0)
+    fn a_run_is_up() -> Result<bool, String> {
+        Ok(!other_pins()?.is_empty() || exported(DIGITAL_D0))
     }
 
     /// Unexports `pin` and then asks the pin, `gpio_unexport` being the
@@ -180,7 +182,7 @@ mod imp {
     /// substance of eight review rounds.
     fn release_all() -> Result<(), String> {
         println!("== releasing the two LED pins, claimed or not ==");
-        if a_run_is_up() {
+        if a_run_is_up().map_err(|e| format!("NOT released: {e}"))? {
             return Err(format!(
                 "NOT released: a pin other than gpio{LED_RUNNING} and gpio{LED_UNDERRUN} \
                  is exported, so either a run is up and the LEDs are its, or one was \
@@ -266,7 +268,7 @@ mod imp {
         println!("== alone: nothing else should be running ==");
         // This pass dismisses and unexports `LED_RUNNING`, which sysfs
         // grants whoever asks — the one act the probe gates.
-        if a_run_is_up() {
+        if a_run_is_up()? {
             return Err(format!(
                 "a pin a run would hold is exported, so every answer below would be \
                  about a board that was rendering: {}",
@@ -344,11 +346,15 @@ mod imp {
         let ret = unsafe { gpio_read(fd2, &raw mut value) };
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // An unexport keeps the level, so a HIGH that stayed would stay
-        // after this pass ended. The link-only block below writes it
-        // low again and reads it back, which is what settles this.
-        println!("  putting it back to LOW: {}", unsafe {
-            gpio_write(fd2, arg::LOW)
-        });
+        // after this pass ended.
+        let put_back = unsafe { gpio_write(fd2, arg::LOW) };
+        println!("  putting it back to LOW: {put_back}");
+        if put_back != 0 {
+            eprintln!(
+                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and gpio_write \
+                       would not put it back ({put_back})"
+            );
+        }
 
         println!("\n-- 5. gpio_dismiss, then unexport again --");
         println!("gpio_dismiss = {}", unsafe {
@@ -525,7 +531,7 @@ mod imp {
         // Read while the run is provably up and before this pass exports
         // anything. Which pins a run takes depends on the board and the
         // settings, so the set is read, not named.
-        let was = other_pins();
+        let was = other_pins()?;
         if was.is_empty() {
             return Err(format!(
                 "gpio{DIGITAL_D0} is exported but no other pin is, so there is nothing \
@@ -598,7 +604,9 @@ mod imp {
 
         println!("\n-- was a run still up when these finished? --");
         if let Some(pin) = was.iter().find(|pin| exported(**pin)) {
-            println!("  yes: gpio{pin} is still exported, as it was when these began");
+            println!("  gpio{pin} is still exported, as it was when these began. A run");
+            println!("  killed without libbela's teardown leaves the same pins, so how");
+            println!("  the run ended is the script's to report.");
         } else {
             println!("  NO — the run is gone. If question 12 was asked, this may be its");
             println!("  answer; the script reports how the run ended, and 124 is the");
