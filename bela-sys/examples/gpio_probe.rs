@@ -309,12 +309,6 @@ mod imp {
             gpio_export(LED_RUNNING)
         });
         give_back(LED_RUNNING);
-        if exported(LED_RUNNING) {
-            return Err(format!(
-                "gpio{LED_RUNNING} would not unexport, so question 2 would measure \
-                 gpio_setup on a claimed pin under a heading that says a free one"
-            ));
-        }
 
         // Read while the pin is still exported: question 2 writes `out`
         // into `direction`, which drives the line low, and an unexport
@@ -336,7 +330,18 @@ mod imp {
                 None
             }
         };
+        // The last unexport before question 2, so the one its heading
+        // depends on: a pin still claimed here sends `gpio_setup` down
+        // `gpio_export`'s already-exported fast path, and the row that
+        // reaches `docs/board-facts.md` says "on a board where nothing
+        // had claimed anything".
         give_back(LED_RUNNING);
+        if exported(LED_RUNNING) {
+            return Err(format!(
+                "gpio{LED_RUNNING} would not unexport, so question 2 would measure \
+                 gpio_setup on a claimed pin under a heading that says a free one"
+            ));
+        }
 
         println!("\n-- 2. gpio_setup --");
         let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
