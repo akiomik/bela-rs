@@ -171,6 +171,13 @@ mod imp {
 
     /// A number past the end of every chip on this board, for the
     /// question about arguments nothing can honour.
+    /// The ADC reset, `GPIO0_53`, which libbela exports for the length
+    /// of a run and this probe never asks for — so it answers "is a run
+    /// up" without the answer depending on what the probe itself
+    /// exported. Named in "Reaching a pin through sysfs" in
+    /// `docs/board-facts.md`, among the twenty-two.
+    const ADC_RESET: u32 = BANK0 + 53;
+
     const NO_SUCH_PIN: u32 = 99_999;
 
     /// The four `PIN_DIRECTION` / `PIN_VALUE` constants as the
@@ -844,6 +851,45 @@ mod imp {
         Ok(())
     }
 
+    /// Says whether a run was still up when the with-run questions
+    /// finished, and fails the pass where it was not: answers gathered
+    /// after a run ended are answers about an idle board under a
+    /// heading that says otherwise.
+    ///
+    /// Asked of the ADC reset rather than of `DIGITAL_D0`, which the
+    /// probe exports itself where it finds it free — so a `D0` that is
+    /// exported now is not evidence of anything. The ADC reset is
+    /// libbela's alone.
+    fn still_a_run(left_changed: &mut bool) -> Result<(), String> {
+        println!("\n-- was a run still up when these finished? --");
+        if exported(ADC_RESET) {
+            println!("  yes: gpio{ADC_RESET} is still exported for the run");
+            return Ok(());
+        }
+        // Each pin's `was_exported` is read before the `gpio_export`
+        // two lines under it, so a run that tore down in that window
+        // leaves the export the probe's own with `ours` not recording
+        // it. For the LEDs that costs nothing — `--release` gives both
+        // back — but `DIGITAL_D0` is outside `RELEASABLE` *and* outside
+        // `a_run_is_up`'s exemptions, so one left here makes every later
+        // `--release` decline, after which nothing in this tree can give
+        // back the LEDs. Only where the run's own pins are gone, which
+        // is teardown having run: a run killed hard leaves all
+        // twenty-two, and `D0` is then one of those rather than ours.
+        if exported(DIGITAL_D0) {
+            println!("  the run is gone and gpio{DIGITAL_D0} is not, so it is this probe's");
+            if let Err(why) = give_back(DIGITAL_D0, left_changed) {
+                eprintln!("  {why}, and it is the one pin `--release` cannot act on");
+            }
+        }
+        println!("  NO — the run ended part way through, and the answers");
+        println!("  above are not all about a board that was rendering");
+        Err(format!(
+            "gpio{ADC_RESET} is no longer exported, so the run ended part way through \
+             and these are not answers about a board that was rendering"
+        ))
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "one question per block, in the order the module doc numbers them"
@@ -1135,7 +1181,16 @@ mod imp {
         }
 
         if ours.is_empty() {
-            println!("\n(libbela had already exported every pin asked about)");
+            // What `ours` records is "went from free to exported while
+            // this pass asked", and nothing more. It is also empty
+            // where the probe's own `gpio_export` failed on a free pin,
+            // which `enable_led` off makes reachable — so "libbela had
+            // already exported every pin", which this used to print, is
+            // a conclusion the bookkeeping does not carry. The
+            // destructive question above asks the pin for exactly this
+            // reason.
+            println!("\n(no pin went from free to exported while this pass asked,");
+            println!(" so there is nothing here of the probe's to give back)");
         } else {
             println!("\n-- giving back the pins libbela had not exported --");
             for pin in &ours {
@@ -1153,21 +1208,7 @@ mod imp {
         // The entry check said a run was up. Say whether one still is,
         // so that a probe which outlived the run cannot have its
         // answers read as answers about a board that was rendering.
-        println!("\n-- was a run still up when these finished? --");
-        if exported(DIGITAL_D0) {
-            println!("  yes: gpio{DIGITAL_D0} is still exported for the PRU");
-        } else {
-            println!("  NO — the run ended part way through, and the answers");
-            println!("  above are not all about a board that was rendering");
-            // And fail the pass. Printing it and returning `Ok` let the
-            // script close with "The board answered. Record the
-            // findings" over a transcript that answers a different
-            // question from the one its heading asks.
-            return Err(format!(
-                "gpio{DIGITAL_D0} is no longer exported, so the run ended part way \
-                 through and these are not answers about a board that was rendering"
-            ));
-        }
+        still_a_run(left_changed)?;
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())

@@ -1031,14 +1031,19 @@ With `sine` rendering, in another process:
   would mean contending with whatever drives it, and that needs
   `--destructive` like the question below.
 - **A program can take an LED away from a live run, and the run does
-  not notice.** With `--destructive`, `gpio_setup(gpio584, INPUT_PIN)`
-  returned a descriptor and `gpio_dismiss` returned `0`; the export
-  was gone afterwards, and `sine` was still up when the probe finished
-  and then **ended at 124** — its own `timeout`, which is the
-  undisturbed end. The status is the evidence rather than the
-  liveness check: a run that aborted a moment later would still have
-  been alive for that. So the collision is silent in both directions:
-  nothing refuses the claim, and nothing reports the loss.
+  not notice.** With `--destructive`, `gpio_setup(gpio584, OUTPUT_PIN)`
+  returned a descriptor, `3`, its direction reading `out` beforehand,
+  and `gpio_dismiss` returned `0`; the export was gone afterwards, and
+  `sine` was still up when the probe finished and then **ended at 124**
+  — its own `timeout`, which is the undisturbed end. `OUTPUT_PIN`
+  rather than `INPUT_PIN` because `gpio_setup` needs only *a* direction
+  to open its descriptor, and an unexport keeps the one it finds — so
+  asking as an input would leave the run's LED pin latched as one, and
+  that, not the unexport, would be what the run had to survive. The
+  status is the evidence rather than the liveness check: a run that
+  aborted a moment later would still have been alive for that. So the
+  collision is silent in both directions: nothing refuses the claim,
+  and nothing reports the loss.
 - **libbela's own teardown is unaffected by any of it.** After both
   processes ended, `/sys/class/gpio` held `gpio586` and nothing else —
   the resting state this file already records — including on the run
