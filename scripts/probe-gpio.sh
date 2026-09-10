@@ -158,16 +158,19 @@ cleanup() {
     undo="$undo; w=\$p"
     undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
     undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
-    # And a fallback for the one window neither pid file covers: pass 2
+    # And a fallback for the windows no pid file covers. Pass 2
     # backgrounds the run and writes `sine.pid` on the next line, so an
-    # interrupt in between leaves both files absent and the ladder below
-    # with nothing to aim at — after which `rm -rf` removes the
-    # directory and the daemon starts while the run still holds the
-    # audio device. Found the same way the probe is, one loop down, and
-    # only when there is no pid: this finds the run itself rather than
-    # its `timeout` wrapper, whose exe is not here, which is why it
-    # feeds the graceful ladder rather than replacing it.
-    undo="$undo; if [ -z \"\$p\" ] && [ -z \"\$r\" ]; then"
+    # interrupt in between leaves both files absent; and a wrapper
+    # SIGKILLed before the four-second settle orphans the run with
+    # `run.pid` never written, leaving `sine.pid` naming a dead process.
+    # Either way the ladder below has nothing live to aim at, after
+    # which `rm -rf` removes the directory and the daemon starts while
+    # the run still holds the audio device. So the test is liveness,
+    # not the files: found the same way the probe is, one loop down,
+    # and it finds the run itself rather than its `timeout` wrapper,
+    # whose exe is not here, which is why it feeds the graceful ladder
+    # rather than replacing it.
+    undo="$undo; if ! alive \$p && ! alive \$r; then"
     undo="$undo for c in /proc/[0-9]*; do"
     undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
     undo="$undo $REMOTE_DIR/sine*) p=\${c#/proc/} ;;"
@@ -178,8 +181,11 @@ cleanup() {
     # even in the first seconds of pass 2, before `run.pid` has been
     # written. Only `$w`, and not the other two: a group signal to a
     # pid that leads no group is an `ESRCH` no-op today, but a pid
-    # recycled onto a group leader would make it signal strangers.
-    undo="$undo; [ -n \"\$w\" ] && kill -INT -\$w 2>/dev/null"
+    # recycled onto a group leader would make it signal strangers. And
+    # on `$w` being alive, like its SIGKILL twin below — a wrapper that
+    # exited on its own leaves nothing in that group, and the run it
+    # may have orphaned is what the exe scan above is for.
+    undo="$undo; if alive \$w; then kill -INT -\$w 2>/dev/null; fi"
     undo="$undo; for t in \$p \$r; do [ -n \"\$t\" ] || continue"
     undo="$undo; kill -INT \$t 2>/dev/null; done"
     undo="$undo; n=0"
@@ -315,8 +321,8 @@ alone_status=0
 # free to begin with — so a gpio585 left by an earlier invocation makes
 # it report the question as unanswered while the listing pass 1 prints
 # is byte-for-byte the one a run that answered produces. Its status is
-# ignored on purpose: where this declines, a run is up, and the probe's
-# own guard names the pin and the reason a moment later.
+# kept: the probe declines with 3 for two states, and only one of them
+# is the one pass 1's guard goes on to explain — see below.
 #
 # In its own connection, and before PROBE_RAN is armed below, because it
 # can take fifteen seconds: an interrupt inside it would otherwise send

@@ -942,6 +942,20 @@ mod imp {
         // has exported anything, so that the closing check reads the
         // run's own pins rather than the probe's.
         let was = run_pins()?;
+        // And it has to have found some. An empty set reaches the
+        // closing check as "none of them is exported", which is the
+        // answer for a run that ended — after which it gives back
+        // `DIGITAL_D0` under a heading nothing established. Reachable
+        // by hand: a board where the only exported pins are among the
+        // four this pass asks about passes the gate above and leaves
+        // nothing to watch.
+        if was.is_empty() {
+            return Err(format!(
+                "gpio{DIGITAL_D0} is exported but no other pin is, so there is nothing \
+                 here that only a run would hold and nothing to tell a run that ended \
+                 from one that never was"
+            ));
+        }
 
         // 9 and 10: claiming and reading pins libbela is holding.
         // Whatever we exported that libbela had not — which happens
