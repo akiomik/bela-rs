@@ -909,10 +909,10 @@ application gets while a run is up. The answers here are what
 establishes by linking: `nm -D --defined-only /root/Bela/lib/libbela.so`
 lists every one as `T`, and the probe's first pass calls every one —
 four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
-`gpio_set_value`) in a block that exists so that it does, since an
+`gpio_fd_close`) in a block that exists so that it does, since an
 `extern` nothing references is not a symbol the link has to resolve.
-`gpio_set_value` also does work there, where the pin was an output: it
-is what puts the level back. That pass's own
+The thirteenth, `gpio_set_value`, is reached from the same block
+through the put-back that follows it. That pass's own
 questions need the other nine, and doing it there rather than across
 both passes is what makes the evidence hold for a run that never
 reaches the second. Nothing else in the workspace calls them, so
@@ -961,12 +961,12 @@ than off this board.
 **An unexport does not undo a drive.** Read by hand, not by the probe:
 no question drives a pin and then exports it again to see what the
 unexport left. So it is reproduced by running the block below, with
-nothing
-rendering — the unexports below would otherwise take the running LED
+nothing rendering — its unexports would otherwise take the running LED
 from libbela, which is the act `--destructive` exists to gate:
 
 ```sh
 echo 584 > /sys/class/gpio/export
+cat /sys/class/gpio/gpio584/direction          # what to put back
 echo out > /sys/class/gpio/gpio584/direction
 echo 1 > /sys/class/gpio/gpio584/value
 echo 584 > /sys/class/gpio/unexport
@@ -976,17 +976,18 @@ echo 0 > /sys/class/gpio/gpio584/value
 echo 584 > /sys/class/gpio/unexport
 ```
 
-The `0` before the last line is the restore, and it is the finding
-being used: an unexport will not undrive the pin, so anyone pasting
-this leaves the blue LED's line high without it. The direction stays
-`out` either way, that being what the sequence set and what no unexport
-undoes.
+The second `cat` gives `out` and `1`, and the same sequence with `0`
+gives `out` and `0`. The line keeps both across the unexport rather
+than being freed back to an input — which is why nothing that only
+unexports can put a level back, and why a probe that drove a pin and
+could not undrive it says so rather than relying on the teardown below.
 
-The `cat` gives `out` and `1`, and the same sequence with `0` gives
-`out` and `0`. The line keeps both across the unexport rather than
-being freed back to an input — which is why nothing that only unexports
-can put a level back, and why a probe that drove a pin and could not
-undrive it says so rather than relying on the teardown below.
+The `0` before the last line is the level restore, and it is the
+finding being used: without it, pasting this leaves the blue LED's line
+high. The direction is not restored by anything here either, which is
+what the first `cat` is for: where it read `in`, `echo in >
+/sys/class/gpio/gpio584/direction` puts that back, with the pin
+exported.
 
 Two more from the same by-hand session, on the same pin:
 

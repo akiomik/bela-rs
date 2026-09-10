@@ -20,7 +20,11 @@
 #
 # What is put back: `bela_daemon`, the remote directory, the run, and
 # the two LED pins — `gpio_probe --release`, before pass 1, after each
-# pass and from the handler. Anything the probe changed and could not
+# pass and from the handler. It declines while any other pin is
+# exported, which does not cover a run with `enable_led` on and both
+# `use_analog` and `use_digital` off: that run exports the two LEDs and
+# nothing else, and this takes them. Losing an LED export is measured as
+# something a run does not notice. Anything the probe changed and could not
 # put back it prints as `LEFT CHANGED`, where it happened. A probe
 # killed between a change and its restore prints nothing, and nothing
 # here can print it for it: `/sys/class/leds` and `/sys/class/gpio` are

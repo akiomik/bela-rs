@@ -341,9 +341,9 @@ mod imp {
         // grants whoever asks — the one act the probe gates.
         if a_run_is_up()? {
             return Err(format!(
-                "a pin outside the ones this probe asks about is exported, so either a \
-                 run is up and every answer below would be about a board that was \
-                 rendering, or something else is holding pins: {}",
+                "a pin other than the two LEDs and the stop button is exported, so \
+                 either a run is up and every answer below would be about a board that \
+                 was rendering, or something else is holding pins: {}",
                 listing()
             ));
         }
@@ -448,14 +448,12 @@ mod imp {
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // An unexport keeps the level, so a HIGH that stayed would stay
         // after this pass ended.
-        let wrote_low = unsafe { gpio_write(fd2, arg::LOW) };
-        println!("  putting it back to LOW: {wrote_low}");
-        if wrote_low != 0 {
-            eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and gpio_write would \
-                 not put it back ({wrote_low})"
-            );
-        }
+        // Not reported here if it fails: `put_back` below restores the
+        // level question 1 recorded, on every path out of this pass, and
+        // says so when it cannot.
+        println!("  putting it back to LOW: {}", unsafe {
+            gpio_write(fd2, arg::LOW)
+        });
 
         println!("\n-- 5. gpio_dismiss, then unexport again --");
         println!("gpio_dismiss = {}", unsafe {
