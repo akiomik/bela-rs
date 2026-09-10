@@ -208,13 +208,20 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # Only where the probe reached question 8. A pass that refused at its
   # entry guard did so because something else is holding pins, and this
   # would then take gpio585 from that run — the act the guard exists to
-  # prevent. 585 is LED_UNDERRUN, which the probe derives as BANK0 + 46;
-  # the two are tied by hand, and the check below is what says so if the
-  # bases ever move.
+  # prevent.
+  #
+  # The write's own status is the check, not whether gpio585 is gone
+  # afterwards. 585 is LED_UNDERRUN, which the probe derives as
+  # BANK0 + 46, and the two are tied by hand; if a board image moves the
+  # base and only the probe is updated, the pin left here is some other
+  # number, gpio585 is absent either way, and an existence test passes
+  # while pass 2 goes on to report the leftover as libbela's. Writing an
+  # un-exported number to the unexport attribute fails, measured, so a
+  # write that succeeded is the pin having been there.
   if [ \$probe_status -eq 0 ]; then
-    echo 585 > /sys/class/gpio/unexport 2>/dev/null
-    if [ -e /sys/class/gpio/gpio585 ]; then
-      echo 'gpio585 would not unexport, so pass 2 would report it as a libbela pin'
+    if ! echo 585 > /sys/class/gpio/unexport 2>/dev/null; then
+      echo 'gpio585 was not there to give back: question 8 left some other pin,'
+      echo 'so the 585 here and BANK0 + 46 in the probe have come apart'
       exit 5
     fi
   fi
@@ -291,8 +298,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
 echo
 if [ "$with_run_status" -ne 0 ]; then
   pass_failed "Pass 2" "$with_run_status"
-  echo "4 means no run was there to ask beside; a 255 leaves one that may" >&2
-  echo "still be up, this being the pass that starts it." >&2
+  echo "4 means no run was there to ask beside." >&2
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."

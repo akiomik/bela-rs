@@ -1039,10 +1039,10 @@ With `sine` rendering, in another process:
   reads `in`, which is what "every channel starts as an input" above
   means from the sysfs side, and a value cannot be written to an
   input. The two LEDs read `out`, so nothing here says a write to one
-  of those would fail. The probe only attempts this where the
-  direction reads `in`, which is the harmless case; an output pin
-  would mean contending with whatever drives it, and that needs
-  `--destructive` like the question below.
+  of those would fail. Without `--destructive` the probe attempts this
+  only where the direction reads `in`, which is the harmless case; an
+  output pin would mean contending with whatever drives it, which is
+  what `--destructive` reaches, here and in the question below.
 - **A program can take an LED away from a live run, and the run does
   not notice.** With `--destructive`, `gpio_setup(gpio584, OUTPUT_PIN)`
   returned a descriptor, `3`, its direction reading `out` beforehand,

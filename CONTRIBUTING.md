@@ -163,11 +163,11 @@ probe creates no audio system either, and that is what lets it run
 beside one: the script starts `bela/examples/sine` for it to reach
 past. It is the one that takes the board away: it stops `bela_daemon`,
 leaves the GPIO in whatever state its last question left, and reboots
-the board at the end of every invocation, Ctrl-C included — about forty
-seconds, after which `bela_daemon` starts again if it is enabled, and
-not otherwise. Restoring instead cannot be
-made complete, a `kill -9` running none of the probe's own code, and
-the pull request that added it records why in full.
+the board at the end of every invocation, Ctrl-C included — about
+forty seconds, after which `bela_daemon` starts again if it is
+enabled, and not otherwise. Restoring instead cannot be made complete,
+a `kill -9` running none of the probe's own code; the script's own
+header says why at length.
 
 `--destructive` adds the question of what unexporting one of
 libbela's own pins does to the run holding it, and it also lets the
