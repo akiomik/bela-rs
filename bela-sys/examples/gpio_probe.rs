@@ -171,6 +171,48 @@ mod imp {
         Ok(!other_pins()?.is_empty() || exported(DIGITAL_D0))
     }
 
+    /// Puts `LED_RUNNING` back to what question 1 read, while it is
+    /// still exported — the last moment it can be, an unexport keeping a
+    /// direction and a level alike.
+    ///
+    /// Called from each place the alone pass can stop after question 2
+    /// has written `out` into `direction`, which drives the line low.
+    fn put_back(before: Option<&(String, PIN_VALUE)>) {
+        let Some((d, v)) = before else {
+            println!("  gpio_set_value(LOW) = {}", unsafe {
+                gpio_set_value(LED_RUNNING, arg::LOW)
+            });
+            println!("  what it held before this pass was not readable, so nothing here");
+            println!("  puts it back; it is left as the calls above left it");
+            return;
+        };
+        let out = d == "out";
+        println!("  gpio_set_dir({d}) = {}", unsafe {
+            gpio_set_dir(LED_RUNNING, if out { arg::OUTPUT } else { arg::INPUT })
+        });
+        // An input holds no level — writing one returns `-EPERM`, which
+        // is what question 11 measures on `D0` — so putting the
+        // direction back is what puts an input's level back. The call is
+        // made either way, being one of the four the link block needs.
+        let want = if out && *v != 0 { arg::HIGH } else { arg::LOW };
+        let ret = unsafe { gpio_set_value(LED_RUNNING, want) };
+        if out {
+            println!("  gpio_set_value({v:#x}), putting the level back = {ret}");
+        } else {
+            println!("  gpio_set_value(LOW) on an input, for the link = {ret}");
+        }
+        let now_dir = direction(LED_RUNNING);
+        let mut now: PIN_VALUE = 0xdead_beef;
+        let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut now) };
+        println!("  it now reads: direction {now_dir}, ret {read}, *value {now:#x}");
+        if read != 0 || &now_dir != d || (out && now != *v) {
+            eprintln!(
+                "LEFT CHANGED: gpio{LED_RUNNING} was {d} {v:#x} and reads {now_dir} \
+                 {now:#x}; an unexport keeps both"
+            );
+        }
+    }
+
     /// Unexports `pin` and then asks the pin, `gpio_unexport` being the
     /// call question 5 measures refusing silently.
     fn give_back(pin: u32) {
@@ -260,7 +302,12 @@ mod imp {
         let with_run = args.iter().any(|a| a == "--with-run");
         let destructive = args.iter().any(|a| a == "--destructive");
         if destructive && !with_run {
-            eprintln!("--destructive only applies to --with-run, and is being ignored");
+            // Not a warning: going on would run the alone pass — which
+            // rewrites LED triggers and exports pins — in place of the
+            // one asked for, and the unknown-argument check above exists
+            // to stop exactly that substitution.
+            eprintln!("--destructive is a question the with-run pass asks; add --with-run");
+            process::exit(2);
         }
 
         let asked = if with_run {
@@ -284,8 +331,9 @@ mod imp {
         // grants whoever asks — the one act the probe gates.
         if a_run_is_up()? {
             return Err(format!(
-                "a pin a run would hold is exported, so every answer below would be \
-                 about a board that was rendering: {}",
+                "a pin outside the ones this probe asks about is exported, so either a \
+                 run is up and every answer below would be about a board that was \
+                 rendering, or something else is holding pins: {}",
                 listing()
             ));
         }
@@ -351,6 +399,7 @@ mod imp {
             // `gpio_setup` exports before it opens, so a failure here
             // can leave the pin claimed — the trap this probe exists to
             // document.
+            put_back(before.as_ref());
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup on a free pin returned {fd}"));
         }
@@ -377,6 +426,7 @@ mod imp {
         let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("a fresh descriptor: {fd2}");
         if fd2 < 0 {
+            put_back(before.as_ref());
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
@@ -388,12 +438,12 @@ mod imp {
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // An unexport keeps the level, so a HIGH that stayed would stay
         // after this pass ended.
-        let put_back = unsafe { gpio_write(fd2, arg::LOW) };
-        println!("  putting it back to LOW: {put_back}");
-        if put_back != 0 {
+        let wrote_low = unsafe { gpio_write(fd2, arg::LOW) };
+        println!("  putting it back to LOW: {wrote_low}");
+        if wrote_low != 0 {
             eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and gpio_write \
-                       would not put it back ({put_back})"
+                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and gpio_write would \
+                 not put it back ({wrote_low})"
             );
         }
 
@@ -450,6 +500,7 @@ mod imp {
         println!("\n-- the remaining four --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 < 0 {
+            put_back(before.as_ref());
             give_back(LED_RUNNING);
             return Err(format!(
                 "gpio_setup({LED_RUNNING}) returned {fd3}, so four of the thirteen went \
@@ -467,42 +518,7 @@ mod imp {
         if ro >= 0 {
             println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
         }
-        // Both back to what question 1 read, while the pin is still
-        // exported: this is the last moment it can be. `gpio_set_value`
-        // is one of the four, so the link is made by the restore.
-        if let Some((d, v)) = &before {
-            let out = d == "out";
-            println!("  gpio_set_dir({d}) = {}", unsafe {
-                gpio_set_dir(LED_RUNNING, if out { arg::OUTPUT } else { arg::INPUT })
-            });
-            // An input holds no level — writing one returns `-EPERM`,
-            // which is what question 11 measures on `D0` — so putting
-            // the direction back is what puts an input's level back.
-            // The call is made either way, being one of the four.
-            let want = if out && *v != 0 { arg::HIGH } else { arg::LOW };
-            let ret = unsafe { gpio_set_value(LED_RUNNING, want) };
-            if out {
-                println!("  gpio_set_value({v:#x}), putting the level back = {ret}");
-            } else {
-                println!("  gpio_set_value(LOW) on an input, for the link = {ret}");
-            }
-            let now_dir = direction(LED_RUNNING);
-            let mut now: PIN_VALUE = 0xdead_beef;
-            let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut now) };
-            println!("  it now reads: direction {now_dir}, ret {read}, *value {now:#x}");
-            if read != 0 || &now_dir != d || (out && now != *v) {
-                eprintln!(
-                    "LEFT CHANGED: gpio{LED_RUNNING} was {d} {v:#x} and reads {now_dir} \
-                     {now:#x}; an unexport keeps both"
-                );
-            }
-        } else {
-            println!("  gpio_set_value(LOW) = {}", unsafe {
-                gpio_set_value(LED_RUNNING, arg::LOW)
-            });
-            println!("  what it held before this pass was not readable, so nothing here");
-            println!("  puts it back; it is left as the calls above left it");
-        }
+        put_back(before.as_ref());
         // `gpio_dismiss` returns 0 whatever happened, so ask the pin.
         let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
         if exported(LED_RUNNING) {

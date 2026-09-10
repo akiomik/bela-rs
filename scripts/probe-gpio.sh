@@ -193,7 +193,15 @@ ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
 # that call can leave the daemon stopped.
 BOARD_PREPARED=yes
 # shellcheck disable=SC2029
-ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon && mkdir -p $REMOTE_DIR"
+# `||` and not `&&`: the four sibling scripts use `;` here and carry on,
+# and a unit that is masked or not loaded at all exits 5 — which `&&`
+# turned into `set -e` ending the probe. Not swallowed either: a daemon
+# that would not stop holds the audio device, and pass 2 would report
+# that as no run being there to ask beside.
+# shellcheck disable=SC2029
+ssh -o ConnectTimeout=10 "$HOST" \
+  "systemctl stop bela_daemon || echo 'WARNING: bela_daemon would not stop'
+   mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
   scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
