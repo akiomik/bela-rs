@@ -58,7 +58,19 @@ for arg in "$@"; do
     echo "unknown option: $arg (only --destructive is one)" >&2
     exit 2
     ;;
-  *) HOST="$arg" ;;
+  *)
+    # One positional, and only one. A second used to overwrite the
+    # first silently, and `probe-gpio.sh destructive` — the dashes
+    # forgotten — became `ssh destructive`. The probe rejects unknown
+    # arguments a level down for the same reason: a mistyped
+    # `--with_run` ran the pass that takes pins.
+    if [ -n "${HOST_GIVEN:-}" ]; then
+      echo "two hosts given: $HOST and $arg" >&2
+      exit 2
+    fi
+    HOST="$arg"
+    HOST_GIVEN=yes
+    ;;
   esac
 done
 

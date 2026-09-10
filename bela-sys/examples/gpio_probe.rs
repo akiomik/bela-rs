@@ -701,11 +701,12 @@ mod imp {
             );
         }
 
-        // The four this pass's questions never reach. `gpio_fd_close`
-        // is not among them, question 3 having closed its descriptor;
-        // `gpio_set_value` is, being reached only by the with-run
-        // pass, and only there under a condition — so without it here
-        // an operator who ran pass 1 alone would have linked twelve.
+        // The four no question of this pass reaches on the way it
+        // goes. `gpio_fd_close` is not among them, question 3 having
+        // closed its descriptor; `gpio_set_value` is, the with-run
+        // pass reaching it under a condition and question 4 only where
+        // its restore refused — so without it here an operator whose
+        // pass 1 went well would have linked twelve.
         // Nothing here is a question: they are called so that a probe
         // which links and runs is evidence for all thirteen symbols
         // rather than for the nine this pass needs.
@@ -920,7 +921,7 @@ mod imp {
         // Taken now, while the run is provably up and before this pass
         // has exported anything, so that the closing check reads the
         // run's own pins rather than the probe's.
-        let was = run_pins();
+        let was = run_pins()?;
 
         // 9 and 10: claiming and reading pins libbela is holding.
         // Whatever we exported that libbela had not — which happens
@@ -1059,15 +1060,27 @@ mod imp {
                     println!("  NOT proceeding: what follows would be a bare unexport,");
                     println!("  which is a different thing from taking a pin we held");
                     // `gpio_setup` sets the direction before it opens,
-                    // so this branch is reached with the run's LED
-                    // already flipped to an input. Put it back.
-                    // Only what it actually held, and only if that is
-                    // not what it holds now: `gpio_setup` may have
-                    // failed at the export, before touching direction.
+                    // and it is asked for the one the pin already had,
+                    // so the ordinary way here leaves the direction as
+                    // it was. The other two branches are for a
+                    // `gpio_setup` that failed at the export, before
+                    // touching direction, and for a pin that has since
+                    // stopped reading.
                     let now = direction(LED_RUNNING);
                     let readable = |d: &str| d == "in" || d == "out";
                     if now == direction_before {
                         println!("  its direction is unchanged, so nothing to put back");
+                        // The direction, not the level. libbela's "only
+                        // write if it has changed" guard never fires: it
+                        // compares `out` against an unterminated
+                        // `read(fd, buf, 4)`, so `strcmp` is never zero
+                        // (`GPIOcontrol.cpp:138-147`). Writing a
+                        // direction drives the line low, measured — and
+                        // the PRU drives this pin every block and takes
+                        // it back, which is why this is a line of
+                        // transcript rather than a LEFT CHANGED.
+                        println!("  the write still happened, and writing a direction drives");
+                        println!("  the line low; the PRU takes this pin back within a block");
                     } else if !readable(&now) {
                         // `direction` reports a read failure as its own
                         // message, so `now` is not a direction here and
@@ -1235,11 +1248,19 @@ mod imp {
     /// (`core/PRU.cpp:402-411`). Any pin named here in advance would
     /// therefore be absent on some run, and reading "the run is gone"
     /// off that is how a live run's channel gets unexported.
-    fn run_pins() -> Vec<u32> {
-        let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
-            return Vec::new();
-        };
-        entries
+    fn run_pins() -> Result<Vec<u32>, String> {
+        // Not an empty `Vec` on a read failure: downstream that is
+        // indistinguishable from a run holding nothing, and the caller
+        // reads *that* as the run having ended — after which it
+        // unexports a channel the PRU is driving. `a_run_is_up` treats
+        // the same failure as an error for the same reason.
+        let entries = fs::read_dir("/sys/class/gpio").map_err(|e| {
+            format!(
+                "/sys/class/gpio could not be read ({e}), so which pins the run holds \
+                 is unknown"
+            )
+        })?;
+        Ok(entries
             .filter_map(Result::ok)
             .filter_map(|e| {
                 e.file_name()
@@ -1248,7 +1269,7 @@ mod imp {
                     .and_then(|rest| rest.parse::<u32>().ok())
             })
             .filter(|pin| !matches!(*pin, LED_RUNNING | LED_UNDERRUN | STOP_BUTTON | DIGITAL_D0))
-            .collect()
+            .collect())
     }
 
     fn listing() -> String {
