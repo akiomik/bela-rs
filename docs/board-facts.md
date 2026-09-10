@@ -906,9 +906,7 @@ establishes by linking: `nm -D --defined-only /root/Bela/lib/libbela.so`
 lists every one as `T`, and the probe's first pass calls every one —
 four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
 `gpio_set_value`) only so that it does, since an `extern` nothing
-references is not a symbol the link has to resolve. `gpio_set_value` a
-question does reach, but only where question 4's restore refuses, which
-a pass that went well never takes. That pass's own
+references is not a symbol the link has to resolve. That pass's own
 questions need the other nine, and doing it there rather than across
 both passes is what makes the evidence hold for a run that never
 reaches the second. Nothing else in the workspace calls them, so
@@ -1039,16 +1037,11 @@ With `sine` rendering, in another process:
   returned a descriptor, `3`, its direction reading `out` beforehand,
   and `gpio_dismiss` returned `0`; the export was gone afterwards, and
   `sine` was still up when the probe finished and then **ended at 124**
-  — its own `timeout`, which is the undisturbed end. `OUTPUT_PIN`
-  because that is what the pin already read: the probe asks as the
-  direction it finds, `gpio_setup` needing only *a* direction to open
-  its descriptor and an unexport keeping the one it is left with — so
-  asking as anything else would leave the run's LED pin latched at it,
-  and that, not the unexport, would be what the run had to survive. The
-  status is the evidence rather than the liveness check: a run that
-  aborted a moment later would still have been alive for that. So the
-  collision is silent in both directions: nothing refuses the claim,
-  and nothing reports the loss.
+  — its own `timeout`, which is the undisturbed end. The status is the
+  evidence rather than the liveness check: a run that aborted a moment
+  later would still have been alive for that. So the collision is
+  silent in both directions: nothing refuses the claim, and nothing
+  reports the loss.
 - **libbela's own teardown is unaffected by any of it.** After both
   processes ended, `/sys/class/gpio` held `gpio586` and nothing else —
   the resting state this file already records — including on the run
