@@ -85,48 +85,41 @@ cleanup() {
     # One connection: an unreachable board makes each of these cost a
     # full ConnectTimeout.
     #
-    # The kill comes first, by pid, and it is graceful *and* bounded.
-    # By pid because nothing else works: libbela renames the process —
-    # `comm` becomes `sine:<pid>:<n>`, measured — so `pkill -x sine`
-    # matches nothing and reports success, and `pkill -f ./sine` matches
-    # the ssh command running this script. Graceful because `-9` skips
-    # libbela's teardown and orphans its twenty-two exports; bounded
-    # because `-INT` returns as soon as the signal is queued, and the
-    # daemon below would start while the run still held the device.
-    undo="p=\$(cat $REMOTE_DIR/sine.pid 2>/dev/null)"
-    undo="$undo; r=\$(cat $REMOTE_DIR/run.pid 2>/dev/null)"
-    # The wrapper, kept apart because it is the only pid here that
-    # leads a process group.
-    undo="$undo; w=\$p"
-    undo="$undo; alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
+    # The kill comes first. By executable, not by a pid written down:
+    # libbela renames the process — `comm` becomes `sine:<pid>:<n>`,
+    # measured — so `pkill -x sine` matches nothing and reports success,
+    # and `pkill -f ./sine` matches the ssh running this script, while
+    # `/proc/<pid>/exe` still points at the binary. A pid file needs
+    # writing, removing when the number is reaped, and reading back
+    # under the assumption that neither the write nor the removal was
+    # interrupted; this needs none of that and cannot signal a recycled
+    # number. The trailing glob matches a deleted binary, which
+    # `readlink` marks.
+    #
+    # What it costs: a run that has not `execve`d yet is invisible here,
+    # where a pid file would have named it. That window ends before
+    # `Bela_startAudio` — so the run is not holding the audio device or
+    # any pin inside it, and if `rm -rf` below removes the binary first,
+    # the wrapper fails to start it at all. Both outcomes are the one
+    # this is for.
+    #
+    # Graceful and bounded: `-9` skips libbela's teardown and orphans
+    # its twenty-two exports, and `-INT` returns as soon as the signal
+    # is queued, so the daemon below would start while the run still
+    # held the device. The `timeout` wrapper is left alone — it exits
+    # when its child does.
+    undo="alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
     undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
-    # A fallback for the windows no pid file covers: pass 2 writes
-    # `sine.pid` on the line after backgrounding the run, and a wrapper
-    # killed before the settle orphans the run with `run.pid` never
-    # written. So the test is liveness, not the files. Found by exe,
-    # which finds the run rather than its `timeout` wrapper.
-    undo="$undo; if ! alive \$p && ! alive \$r; then"
-    undo="$undo for c in /proc/[0-9]*; do"
+    undo="$undo; p="
+    undo="$undo; for c in /proc/[0-9]*; do"
     undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
     undo="$undo $REMOTE_DIR/sine*) p=\${c#/proc/} ;;"
-    undo="$undo esac; done; fi"
-    # The group first: `timeout` leads one with the run in it —
-    # measured, wrapper 18246 pgid 18246, run 18248 pgid 18246 — so it
-    # reaches the run before `run.pid` exists. What keeps any of these
-    # off a recycled pid is the pid files being removed as soon as the
-    # numbers are reaped, not the `alive` tests.
-    undo="$undo; if alive \$w; then kill -INT -\$w 2>/dev/null; fi"
-    undo="$undo; for t in \$p \$r; do"
-    undo="$undo if alive \$t; then kill -INT \$t 2>/dev/null; fi; done"
-    undo="$undo; n=0"
-    undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
-    undo="$undo; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; if alive \$w; then kill -9 -\$w 2>/dev/null; fi"
-    undo="$undo; for t in \$p \$r; do"
-    undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
+    undo="$undo esac; done"
+    undo="$undo; if alive \$p; then kill -INT \$p 2>/dev/null; n=0"
+    undo="$undo; while alive \$p && [ \$n -lt 6 ]; do sleep 1; n=\$((n+1)); done"
+    undo="$undo; if alive \$p; then kill -9 \$p 2>/dev/null; fi; fi"
     # And any probe of ours still running, or the release below would
-    # give back pins it then exports again. Matched on the executable:
-    # exact, and needs no pid written down.
+    # give back pins it then exports again.
     undo="$undo; for c in /proc/[0-9]*; do"
     undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
     undo="$undo $REMOTE_DIR/gpio_probe*) kill -9 \${c#/proc/} 2>/dev/null ;;"
@@ -203,10 +196,10 @@ if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>
   DAEMON_WAS_RUNNING=1
 fi
 # The directory goes before the flag is armed: `cleanup`'s ssh is
-# allowed to fail, so an earlier run can have left `sine.pid` behind,
-# and a handler acting on a stale pid would signal whatever has since
-# been given that number. `systemctl stop` can take seconds, which is
-# long enough for an interrupt to land inside the guarded window.
+# allowed to fail, so an earlier run can have left the binaries behind,
+# and the handler's exe scan would find one of those rather than
+# nothing. `systemctl stop` can take seconds, which is long enough for
+# an interrupt to land inside the guarded window.
 # shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
 # Armed before the stop, as the sibling scripts do: an interrupt during
@@ -281,36 +274,18 @@ ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
-  # For the handler, which runs in another connection and cannot see
-  # this shell's job table. Both pids: \$sine_pid is the timeout
-  # wrapper, SIGKILL is not forwarded to its child, and an escalation
-  # aimed only at the wrapper would orphan the run.
-  echo \$sine_pid > sine.pid
+  # Nothing is written down for the handler: it finds the run by its
+  # executable, which needs no file to be correct. This pid is this
+  # shell's own business: the wrapper it waits on.
   sleep 4
   # Through /proc rather than a signal-0: under a shell which reaps only
   # at wait, a run that died a second ago is still a zombie a signal-0
   # succeeds on.
   alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&
     ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }
-  # After the sleep: at the moment this shell forks the wrapper, that
-  # wrapper has still to execve and fork, so the run has no /proc entry
-  # yet. The ppid is the second field after the closing parenthesis, so
-  # the cut takes -f2; counting from the start of the line would be
-  # shifted by a comm containing spaces, and libbela renames the run to
-  # one containing colons.
-  for c in /proc/[0-9]*; do
-    ppid=\$(sed 's/.*) //' \$c/stat 2>/dev/null | cut -d' ' -f2)
-    if [ \"\$ppid\" = \"\$sine_pid\" ]; then basename \$c > run.pid; fi
-  done
   if ! alive \$sine_pid; then
     echo 'sine did not stay up; its output was:'
     cat sine.log
-    # \$sine_pid is about to be reaped and its number reusable. run.pid
-    # names the grandchild, which this shell never reaps and which can
-    # outlive a killed wrapper, so it is dropped only once that is gone.
-    rm -f sine.pid
-    r=\$(cat run.pid 2>/dev/null)
-    if ! alive \$r; then rm -f run.pid; fi
     exit 4
   fi
   timeout -s INT -k 5 $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
@@ -327,8 +302,6 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # timeout ending it, which is the undisturbed end here.
   wait \$sine_pid
   sine_status=\$?
-  # The pids are reaped now, so the files must stop naming them.
-  rm -f sine.pid run.pid
   case \$sine_status in
   124) echo '   ended at 124: its own timeout, the undisturbed end' ;;
   *) echo '   ended at' \$sine_status '- NOT the undisturbed end' ;;
