@@ -958,8 +958,8 @@ so the same claim for it is read off `core/GPIOcontrol.cpp` rather
 than off this board.
 
 **An unexport does not undo a drive.** Read by hand, not by the probe:
-looking at a pin after unexporting it means exporting it again, and no
-question does that. So this row is reproduced by running, with nothing
+no question drives a pin and then exports it again to see what the
+unexport left. So this row is reproduced by running, with nothing
 rendering — the unexports below would otherwise take the running LED
 from libbela, which is the act `--destructive` exists to gate:
 

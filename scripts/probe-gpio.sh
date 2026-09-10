@@ -143,9 +143,11 @@ cleanup() {
     # exported a pin that was already exported, unexported one the reader
     # had not claimed, and pointed at a transcript line only one pass
     # prints.
-    echo "Killed part way, this can leave an LED trigger at none, or a pin" >&2
-    echo "driven or latched: an unexport keeps a level and a direction alike." >&2
-    echo "/sys/class/leds and /sys/class/gpio are where that shows." >&2
+    if [ "$status" -ne 0 ]; then
+      echo "Killed part way, this can leave an LED trigger at none, or a pin" >&2
+      echo "driven or latched: an unexport keeps a level and a direction alike." >&2
+      echo "/sys/class/leds and /sys/class/gpio are where that shows." >&2
+    fi
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not reach $HOST to restore it; nothing above says what ran" >&2
