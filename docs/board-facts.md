@@ -963,12 +963,19 @@ echo 1 > /sys/class/gpio/gpio584/value
 echo 584 > /sys/class/gpio/unexport
 echo 584 > /sys/class/gpio/export
 cat /sys/class/gpio/gpio584/direction /sys/class/gpio/gpio584/value
+echo 0 > /sys/class/gpio/gpio584/value
 echo 584 > /sys/class/gpio/unexport
 ```
 
-which gives `out` and `1`, and the same with `0` gives `out` and `0`.
-The line keeps both across the unexport rather than being freed back to
-an input — which is why nothing that only unexports can put a level
+The `0` before the last line is the restore, and it is the finding
+being used: an unexport will not undrive the pin, so anyone pasting
+this leaves the blue LED's line high without it. The direction stays
+`out` either way, that being what the sequence set and what no unexport
+undoes.
+
+The `cat` gives `out` and `1`, and the same sequence with `0` gives
+`out` and `0`. The line keeps both across the unexport rather than
+being freed back to an input — which is why nothing that only unexports can put a level
 back, and why a probe that drove a pin and could not undrive it says so
 rather than relying on the teardown below.
 

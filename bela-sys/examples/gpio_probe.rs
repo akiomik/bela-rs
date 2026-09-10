@@ -86,14 +86,15 @@
 //!   line later; a probe killed in between leaves it changed, and
 //!   nothing here restores triggers. The script says so and gives the
 //!   command to check.
-//! - A pin's level, and the direction it is latched at. An unexport
-//!   keeps both, measured, so what the last question set is what the
-//!   pin holds afterwards: the alone pass ends with `gpio584` an input,
-//!   the "remaining four" block having set it so to call
-//!   `gpio_set_dir`. Nothing restores that, and nothing can — the state
-//!   before the probe ran is not readable through an unexported pin.
-//!   The next `gpio_setup` writes a direction anyway. Beyond that:
-//!   questions 4 and 11 write a level and put it back a line later —
+//! - A pin's level. An unexport keeps the level and the direction
+//!   alike, measured, so what the last question set is what the pin
+//!   holds afterwards. The direction is put back where it can be — the
+//!   two calls made only to link `gpio_set_dir` undo each other, and
+//!   question 12 asks as the direction the pin already holds — but the
+//!   direction a pin held before this probe ran is not readable through
+//!   an unexported pin, so what is restored is the pass's own starting
+//!   point, not the board's. The level is the part nothing here puts
+//!   back: questions 4 and 11 write one and put it back a line later —
 //!   the running LED's pin and a digital channel — and a probe killed
 //!   in between leaves that line high, or the channel driving against
 //!   the PRU for the rest of the run. Whether a high line lights the
@@ -709,6 +710,14 @@ mod imp {
             println!("  gpio_set_dir(INPUT) = {}", unsafe {
                 gpio_set_dir(LED_RUNNING, arg::INPUT)
             });
+            // And back, the pin still being exported and its direction
+            // still readable. An unexport keeps what it finds, so
+            // without this every pass 1 leaves gpio584 latched as an
+            // input on an idle board — for a call made only to link a
+            // symbol.
+            println!("  gpio_set_dir(OUTPUT), putting it back = {}", unsafe {
+                gpio_set_dir(LED_RUNNING, arg::OUTPUT)
+            });
             println!("  gpio_set_edge(\"none\") = {}", unsafe {
                 gpio_set_edge(LED_RUNNING, c"none".as_ptr().cast_mut())
             });
@@ -722,7 +731,9 @@ mod imp {
             } else {
                 println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
             }
-            // An input, so this cannot take; the point is the link.
+            // The point is the link, but it takes now that the
+            // direction has been put back — and low is where question 4
+            // left the line, so it changes nothing.
             println!("  gpio_set_value(LOW) = {}", unsafe {
                 gpio_set_value(LED_RUNNING, arg::LOW)
             });
@@ -975,7 +986,21 @@ mod imp {
                 // has to put back what the pin held, and cannot know
                 // that afterwards.
                 let direction_before = direction(LED_RUNNING);
-                let fd = unsafe { gpio_setup(LED_RUNNING, arg::INPUT) };
+                // As the direction it already holds. `gpio_setup` needs
+                // *a* direction to open a descriptor, and the question
+                // is the claim and the unexport, not the direction —
+                // but an unexport keeps whatever it finds, measured, so
+                // asking as an input would latch the run's LED pin as
+                // one for the rest of the run, which is a state the PRU
+                // cannot drive at all. That is what the failure branch
+                // below calls LEFT CHANGED; the success path must not
+                // do it silently.
+                let ask_as = if direction_before == "in" {
+                    arg::INPUT
+                } else {
+                    arg::OUTPUT
+                };
+                let fd = unsafe { gpio_setup(LED_RUNNING, ask_as) };
                 println!("  gpio_setup = {fd} (its direction was {direction_before})");
                 if fd < 0 {
                     // `gpio_dismiss` would unexport the pin anyway, so
