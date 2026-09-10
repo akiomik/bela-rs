@@ -590,19 +590,26 @@ mod imp {
             println!("  answer; the script reports how the run ended, and 124 is the");
             println!("  undisturbed end. Otherwise the answers above are not all about a");
             println!("  board that was rendering.");
-            // A run tearing down between a pin's `was_exported` read and
-            // its `gpio_export` leaves the export the probe's own with
-            // `ours` not recording it. All three pins this pass claims go
-            // through that window — the LEDs first, so they are the more
-            // exposed — and question 13's listing is what pays for it.
-            // Reached only where the run's own pins are gone, which is
-            // teardown having run rather than a hard kill, so anything
-            // still here is this probe's.
-            for pin in [LED_RUNNING, LED_UNDERRUN, DIGITAL_D0] {
-                if exported(pin) {
-                    println!("  gpio{pin} outlived it, so it is this probe's");
-                    give_back(pin);
-                }
+            // Reported, not acted on. A run tearing down between a
+            // pin's `was_exported` read and its `gpio_export` leaves the
+            // export the probe's own with `ours` not recording it — but
+            // so does a teardown caught part way, since `was` holds none
+            // of the pins this pass asks about and libbela releases them
+            // in an order this cannot see. One sample cannot tell those
+            // apart, and unexporting on the wrong guess takes a pin from
+            // a run that is still letting go of it.
+            let still: Vec<String> = [LED_RUNNING, LED_UNDERRUN, DIGITAL_D0]
+                .into_iter()
+                .filter(|pin| exported(*pin))
+                .map(|pin| format!("gpio{pin}"))
+                .collect();
+            if !still.is_empty() {
+                println!(
+                    "  {} still exported: either this probe's, from that",
+                    still.join(" ")
+                );
+                println!("  window, or a teardown this caught part way. Question 13's");
+                println!("  listing shows them either way.");
             }
         }
 
