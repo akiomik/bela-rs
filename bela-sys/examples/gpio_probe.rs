@@ -171,13 +171,6 @@ mod imp {
 
     /// A number past the end of every chip on this board, for the
     /// question about arguments nothing can honour.
-    /// The ADC reset, `GPIO0_53`, which libbela exports for the length
-    /// of a run and this probe never asks for — so it answers "is a run
-    /// up" without the answer depending on what the probe itself
-    /// exported. Named in "Reaching a pin through sysfs" in
-    /// `docs/board-facts.md`, among the twenty-two.
-    const ADC_RESET: u32 = BANK0 + 53;
-
     const NO_SUCH_PIN: u32 = 99_999;
 
     /// The four `PIN_DIRECTION` / `PIN_VALUE` constants as the
@@ -246,9 +239,14 @@ mod imp {
     /// only while one is up; `docs/board-facts.md` lists them.
     ///
     /// A run that exported nothing but the LEDs would not be seen
-    /// here. No configuration measured on this board does that: with
-    /// `enable_led` off it exports the other twenty and neither LED,
-    /// and with the LEDs on it exports those twenty as well.
+    /// here, and `release_all` would then take them from it.
+    /// `PRU::prepareGPIO` gates the analog chip selects on
+    /// `analogFrames` and the digital channels on `digitalFrames`, so
+    /// `useAnalog = 0` with `useDigital = 0` and `enableLed` on reaches
+    /// exactly that — not through this script, which runs
+    /// `bela/examples/sine` with both on, but reachable. What it costs
+    /// is measured in `docs/board-facts.md`: a run does not notice
+    /// losing an LED export.
     fn a_run_is_up() -> Result<bool, String> {
         let entries = fs::read_dir("/sys/class/gpio").map_err(|e| {
             // Declining is still right — nothing here can be trusted —
@@ -856,14 +854,13 @@ mod imp {
     /// after a run ended are answers about an idle board under a
     /// heading that says otherwise.
     ///
-    /// Asked of the ADC reset rather than of `DIGITAL_D0`, which the
-    /// probe exports itself where it finds it free — so a `D0` that is
-    /// exported now is not evidence of anything. The ADC reset is
-    /// libbela's alone.
-    fn still_a_run(left_changed: &mut bool) -> Result<(), String> {
+    /// Asked of the pins the run held at entry, not of `DIGITAL_D0`,
+    /// which the probe exports itself where it finds it free — so a
+    /// `D0` that is exported now is not evidence of anything.
+    fn still_a_run(was: &[u32], left_changed: &mut bool) -> Result<(), String> {
         println!("\n-- was a run still up when these finished? --");
-        if exported(ADC_RESET) {
-            println!("  yes: gpio{ADC_RESET} is still exported for the run");
+        if let Some(pin) = was.iter().find(|pin| exported(**pin)) {
+            println!("  yes: gpio{pin} is still exported, as it was when these began");
             return Ok(());
         }
         // Each pin's `was_exported` is read before the `gpio_export`
@@ -885,8 +882,10 @@ mod imp {
         println!("  NO — the run ended part way through, and the answers");
         println!("  above are not all about a board that was rendering");
         Err(format!(
-            "gpio{ADC_RESET} is no longer exported, so the run ended part way through \
-             and these are not answers about a board that was rendering"
+            "none of the {} pins the run held when these began is exported now, so it \
+             ended part way through and these are not answers about a board that was \
+             rendering",
+            was.len()
         ))
     }
 
@@ -918,6 +917,10 @@ mod imp {
                  rendering; these questions need a run to be up"
             ));
         }
+        // Taken now, while the run is provably up and before this pass
+        // has exported anything, so that the closing check reads the
+        // run's own pins rather than the probe's.
+        let was = run_pins();
 
         // 9 and 10: claiming and reading pins libbela is holding.
         // Whatever we exported that libbela had not — which happens
@@ -1208,7 +1211,7 @@ mod imp {
         // The entry check said a run was up. Say whether one still is,
         // so that a probe which outlived the run cannot have its
         // answers read as answers about a board that was rendering.
-        still_a_run(left_changed)?;
+        still_a_run(&was, left_changed)?;
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
         Ok(())
@@ -1219,6 +1222,35 @@ mod imp {
     /// them are always there and none says who claimed what. What is
     /// left is exactly the set of claimed pins, so two listings can be
     /// compared directly.
+    /// The pins a run is holding right now, minus the four this probe
+    /// asks about — so a later reading of the same set answers "is that
+    /// run still up" without the answer depending on what the probe
+    /// itself exported.
+    ///
+    /// Read rather than named. Which pins a run takes depends on the
+    /// board and the settings: `PRU::prepareGPIO` gates the analog
+    /// chip selects on `analogFrames` and the digital channels on
+    /// `digitalFrames`, and the ADC reset is opened only for a
+    /// `BelaMini` or a Gem Stereo with analog input on
+    /// (`core/PRU.cpp:402-411`). Any pin named here in advance would
+    /// therefore be absent on some run, and reading "the run is gone"
+    /// off that is how a live run's channel gets unexported.
+    fn run_pins() -> Vec<u32> {
+        let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .strip_prefix("gpio")
+                    .and_then(|rest| rest.parse::<u32>().ok())
+            })
+            .filter(|pin| !matches!(*pin, LED_RUNNING | LED_UNDERRUN | STOP_BUTTON | DIGITAL_D0))
+            .collect()
+    }
+
     fn listing() -> String {
         let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
             return "<unreadable>".to_owned();
