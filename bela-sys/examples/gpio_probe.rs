@@ -705,6 +705,10 @@ mod imp {
         println!("  gpio_setup = {fd} (its direction was {before})");
         if fd < 0 {
             println!("  NOT proceeding: what follows would be a bare unexport");
+            if !exported(LED_RUNNING) {
+                println!("  and the pin is gone, so there is nothing to put back");
+                return;
+            }
             let now = direction(LED_RUNNING);
             if now != before && (before == "in" || before == "out") {
                 let back = if before == "out" {
@@ -715,8 +719,19 @@ mod imp {
                 println!("  restoring its direction to {before}: {}", unsafe {
                     gpio_set_dir(LED_RUNNING, back)
                 });
+            } else if now == before {
+                // Not untouched. libbela's `gpio_set_dir` compares its
+                // argument against a `read(fd, buf, 4)` that leaves the
+                // buffer unterminated, so the `strcmp` never matches and
+                // it always writes — and writing a direction drives the
+                // line low. The PRU drives this pin every block and
+                // takes it back, which is why this is a line of
+                // transcript and not a LEFT CHANGED.
+                println!("  its direction still reads {before}, but gpio_setup wrote it:");
+                println!("  that drives the line low, and the PRU takes this pin back");
             } else {
-                println!("  its direction reads {now}, and was {before}");
+                println!("  its direction reads {now} and was {before}, and neither is a");
+                println!("  direction, so there is nothing to put it back to");
             }
             return;
         }

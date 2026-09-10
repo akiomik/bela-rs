@@ -227,9 +227,16 @@ ssh -o ConnectTimeout=10 "$HOST" "
   timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe
   probe_status=\$?
   echo
-  echo '-- question 8: what is claimed now the probe has exited --'
-  ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
-  echo
+  # Only where the probe reached it. A pass that refused at its entry
+  # guard never asked question 8, and this listing under that heading
+  # would be a run's twenty-two pins copied into docs/board-facts.md as
+  # the answer to a question nobody put. The refusal is on stderr, which
+  # interleaves separately from this.
+  if [ \$probe_status -eq 0 ]; then
+    echo '-- question 8: what is claimed now the probe has exited --'
+    ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
+    echo
+  fi
   # Question 8 leaves one pin exported on purpose and the listing above
   # is its answer. Give it back, so pass 2 starts from the resting
   # state; the probe declines this where a run is up.
