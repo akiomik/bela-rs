@@ -143,11 +143,8 @@ trap 'INTERRUPTED=130; cleanup' INT
 trap 'INTERRUPTED=143; cleanup' TERM
 
 echo "Preparing $HOST..."
-# The directory goes before the flag is armed: `cleanup`'s ssh is
-# allowed to fail, so an earlier run can have left the binaries behind,
-# and the handler's exe scan would find one of those rather than
-# nothing. `systemctl stop` can take seconds, which is long enough for
-# an interrupt to land inside the guarded window.
+# A fresh directory, so a failed reboot from an earlier run cannot leave
+# this one running its binaries.
 # shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
 # Armed before the stop, as the sibling scripts do: an interrupt during
@@ -221,9 +218,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
-  # Nothing is written down for the handler: it finds the run by its
-  # executable, which needs no file to be correct. This pid is this
-  # shell's own business: the wrapper it waits on.
+  # This shell's own business: the wrapper it waits on. Nothing is
+  # written down for the handler, which reboots rather than killing.
   sleep 4
   # Through /proc rather than a signal-0: under a shell which reaps only
   # at wait, a run that died a second ago is still a zombie a signal-0

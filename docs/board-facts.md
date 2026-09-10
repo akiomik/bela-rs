@@ -888,11 +888,11 @@ rounds.
   pid of the `timeout` managing the run is relayed to the run,
   libbela's teardown goes through, and its exports are released:
   measured with fifteen `gpio6*` entries during a run and `gpio586`
-  alone one second after the signal. `scripts/probe-gpio.sh` reaches
-  the run rather than the wrapper, and finds it through
-  `/proc/<pid>/exe`, which still names the binary — a pid nobody had to
-  write down and that cannot have been recycled between the writing and
-  the reading.
+  alone one second after the signal. `/proc/<pid>/exe` still names the
+  binary the rename hides, so it finds that pid without one being
+  written down. `scripts/probe-gpio.sh` does not need either any more —
+  it reboots the board rather than killing the run — but the three
+  scripts in [#162](https://github.com/akiomik/bela-rs/issues/162) do.
 
 ## Reaching a pin through sysfs
 

@@ -175,8 +175,8 @@ mod imp {
         let ret = unsafe { gpio_unexport(pin) };
         if exported(pin) {
             eprintln!(
-                "LEFT CHANGED: gpio{pin} is still exported after gpio_unexport ({ret}). \
-                 `--release` calls the same thing."
+                "LEFT CHANGED: gpio{pin} is still exported after gpio_unexport ({ret}); \
+                 a reboot is what gives it back."
             );
         } else {
             println!("  gpio_unexport({pin}) = {ret}, and it is gone");
@@ -241,7 +241,8 @@ mod imp {
             if exported(pin) {
                 return Err(format!(
                     "gpio{pin} ({what}) is exported and no pin a run would hold is, so an \
-                     earlier probe left it; `--release` gives it back"
+                     earlier probe left it. Reboot the board: nothing here gives a \
+                     pin back across invocations, and a reboot gives back all of them"
                 ));
             }
         }
@@ -256,13 +257,10 @@ mod imp {
         println!("gpio_export({LED_RUNNING}) again = {}", unsafe {
             gpio_export(LED_RUNNING)
         });
-        give_back(LED_RUNNING);
-
-        // The last unexport before question 2, so the one its heading
-        // depends on: a pin still claimed here sends `gpio_setup` down
-        // `gpio_export`'s already-exported fast path, and the row that
-        // reaches `docs/board-facts.md` says "on a board where nothing
-        // had claimed anything".
+        // Question 2's heading depends on this: a pin still claimed
+        // sends `gpio_setup` down `gpio_export`'s already-exported fast
+        // path, and the row that reaches `docs/board-facts.md` says "on
+        // a board where nothing had claimed anything".
         give_back(LED_RUNNING);
         if exported(LED_RUNNING) {
             return Err(format!(
@@ -568,12 +566,18 @@ mod imp {
             println!("  undisturbed end. Otherwise the answers above are not all about a");
             println!("  board that was rendering.");
             // A run tearing down between a pin's `was_exported` read and
-            // its `gpio_export` leaves D0 the probe's own with `ours` not
-            // recording it. Only where the run's own pins are gone, which
-            // is teardown having run rather than a hard kill.
-            if exported(DIGITAL_D0) {
-                println!("  gpio{DIGITAL_D0} outlived it, so it is this probe's");
-                give_back(DIGITAL_D0);
+            // its `gpio_export` leaves the export the probe's own with
+            // `ours` not recording it. All three pins this pass claims go
+            // through that window — the LEDs first, so they are the more
+            // exposed — and question 13's listing is what pays for it.
+            // Reached only where the run's own pins are gone, which is
+            // teardown having run rather than a hard kill, so anything
+            // still here is this probe's.
+            for pin in [LED_RUNNING, LED_UNDERRUN, DIGITAL_D0] {
+                if exported(pin) {
+                    println!("  gpio{pin} outlived it, so it is this probe's");
+                    give_back(pin);
+                }
             }
         }
 
