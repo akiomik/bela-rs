@@ -182,13 +182,18 @@ mod imp {
     /// substance of eight review rounds.
     fn release_all() -> Result<(), String> {
         println!("== releasing the two LED pins, claimed or not ==");
-        if a_run_is_up().map_err(|e| format!("NOT released: {e}"))? {
+        let mut holding = other_pins().map_err(|e| format!("NOT released: {e}"))?;
+        if exported(DIGITAL_D0) {
+            holding.push(DIGITAL_D0);
+        }
+        if !holding.is_empty() {
+            holding.sort_unstable();
+            let named: Vec<String> = holding.iter().map(|p| format!("gpio{p}")).collect();
             return Err(format!(
-                "NOT released: a pin other than gpio{LED_RUNNING} and gpio{LED_UNDERRUN} \
-                 is exported, so either a run is up and the LEDs are its, or one was \
-                 killed hard enough to skip libbela's teardown. Either way they are not \
-                 this probe's to take back. /sys/class/gpio holds: {}",
-                listing()
+                "NOT released: {} exported, so either a run is up and the LEDs are its, \
+                 or one was killed hard enough to skip libbela's teardown. Either way \
+                 they are not this probe's to take back.",
+                named.join(" ")
             ));
         }
         let mut held = Vec::new();
@@ -301,6 +306,14 @@ mod imp {
                  gpio_setup on a claimed pin under a heading that says a free one"
             ));
         }
+
+        // Read while the pin is still exported, because question 2 is
+        // about to write `out` into it and an unexport keeps a direction.
+        // This is the file's own rule: only write what can be put back.
+        let _ = unsafe { gpio_export(LED_RUNNING) };
+        let direction_before = direction(LED_RUNNING);
+        println!("its direction before any of this: {direction_before}");
+        give_back(LED_RUNNING);
 
         println!("\n-- 2. gpio_setup --");
         let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
@@ -438,10 +451,22 @@ mod imp {
         let mut level: PIN_VALUE = 0xdead_beef;
         let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut level) };
         println!("  the line now reads: ret {read}, *value {level:#x}");
-        if read != 0 || level != 0 {
+        if read == 0 && level != 0 {
             eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} does not read low; see the writes above. \
+                "LEFT CHANGED: gpio{LED_RUNNING} reads {level:#x}; see the writes above. \
                  An unexport keeps what the line holds."
+            );
+        } else if read != 0 {
+            // The out-param is untouched on failure — the soundness
+            // condition `bela_sys` documents — so nothing was measured.
+            println!("  the read failed, so what the line holds is not known");
+        }
+        // And the direction back where question 1 found it, before the
+        // dismiss below takes the pin away for good.
+        if direction_before == "in" {
+            println!(
+                "  gpio_set_dir(INPUT), as it was before question 2 = {}",
+                unsafe { gpio_set_dir(LED_RUNNING, arg::INPUT) }
             );
         }
         // `gpio_dismiss` returns 0 whatever happened, so ask the pin.
