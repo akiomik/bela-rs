@@ -195,7 +195,11 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # probe's own pin as one libbela is holding — the distinction its
   # answers turn on. Nothing else needs giving back: the reboot at the
   # end covers the rest.
-  echo 585 > /sys/class/gpio/unexport 2>/dev/null || true
+  echo 585 > /sys/class/gpio/unexport 2>/dev/null
+  if [ -e /sys/class/gpio/gpio585 ]; then
+    echo 'gpio585 would not unexport, so pass 2 would report it as libbela pin'
+    exit 5
+  fi
   exit \$probe_status
 " || alone_status=$?
 

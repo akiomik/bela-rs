@@ -317,9 +317,17 @@ mod imp {
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // An unexport keeps the level, so a HIGH that stayed would stay
         // after this pass ended.
-        println!("  gpio_write(fd2, LOW) = {}", unsafe {
-            gpio_write(fd2, arg::LOW)
-        });
+        // Reported like question 6's and question 11's: an unexport
+        // keeps the level, and setting `in` does not pull the line down,
+        // so a HIGH that stayed is a lit LED for the rest of the session.
+        let put_back = unsafe { gpio_write(fd2, arg::LOW) };
+        println!("  gpio_write(fd2, LOW) = {put_back}");
+        if put_back != 0 {
+            eprintln!(
+                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
+                 ({put_back}); the reboot at the end of the script is what clears it"
+            );
+        }
 
         println!("\n-- 5. gpio_dismiss, then unexport again --");
         println!("gpio_dismiss = {}", unsafe {

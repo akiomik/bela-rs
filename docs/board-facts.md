@@ -870,13 +870,15 @@ rounds.
   built as.** `bela/examples/sine`, run as `./sine`, has
   `/proc/<pid>/comm` reading `sine:2640:18042` — the binary's name,
   its pid, and a third number — while `/proc/<pid>/cmdline` stays
-  `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine`
-  reports success having killed nothing, which is a silent no-op
-  rather than an error.
+  `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine` kills
+  nothing. It does say so — procps-ng 4.0.2 on this board exits `1`
+  when no process matched, measured — so the no-op is silent only where
+  the caller drops the status.
 - **Three scripts here were written before this was known.**
   `probe-io.sh`, `probe-command-line.sh` and `probe-init-failure.sh`
   each kill a run with `pkill -9 -x <name>`, which by the above matches
-  nothing and reports success. Filed as
+  nothing — and each drops its non-zero status, two by joining with
+  `;` and one with `|| true`, so nothing notices. Filed as
   [#162](https://github.com/akiomik/bela-rs/issues/162); recorded here
   so that this section is not read as describing a tree that acts on
   it.
@@ -911,7 +913,9 @@ lists every one as `T`, and the probe's first pass calls every one —
 four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
 `gpio_set_value`) in a block that exists so that it does, since an
 `extern` nothing references is not a symbol the link has to resolve —
-`gpio_set_value` through the put-back at the end of it. That pass's own
+`gpio_set_value` on a pin the `gpio_set_dir(INPUT)` above it has just
+made an input, so it answers `-1` and puts nothing back — the point
+there is the link. That pass's own
 questions need the other nine, and doing it there rather than across
 both passes is what makes the evidence hold for a run that never
 reaches the second. Nothing else in the workspace calls them, so
