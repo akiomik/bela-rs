@@ -177,15 +177,23 @@ mod imp {
     ///
     /// Called from each place the alone pass can stop after question 2
     /// has written `out` into `direction`, which drives the line low.
-    fn put_back(before: Option<&(String, PIN_VALUE)>) {
-        // `gpio_setup` exports before it opens, so its failure has two
-        // shapes: the export took — the trap this probe documents — or
-        // the export itself failed and the pin was never claimed. In the
-        // second, every call below fails on a directory that is not
-        // there and the report would send an operator to a board that is
-        // fine.
+    fn put_back(before: Option<&(String, PIN_VALUE)>, written: bool) {
+        // An unexported pin cannot be reached from here, and whether
+        // that matters is the caller's to know: `gpio_setup` exports
+        // before it opens, so a failure at its export step leaves a pin
+        // nothing has written to, while question 5's `gpio_dismiss`
+        // unexports one that questions 2 and 4 did write to — and a
+        // level and a direction both survive an unexport.
         if !exported(LED_RUNNING) {
-            println!("  gpio{LED_RUNNING} is not exported, so nothing here was changed");
+            if written {
+                eprintln!(
+                    "LEFT CHANGED: gpio{LED_RUNNING} was written and is no longer \
+                     exported, so nothing here can put it back; an unexport keeps what \
+                     the line holds"
+                );
+            } else {
+                println!("  gpio{LED_RUNNING} is not exported and nothing wrote to it");
+            }
             return;
         }
         let Some((d, v)) = before else {
@@ -409,7 +417,7 @@ mod imp {
             // `gpio_setup` exports before it opens, so a failure here
             // can leave the pin claimed — the trap this probe exists to
             // document.
-            put_back(before.as_ref());
+            put_back(before.as_ref(), false);
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup on a free pin returned {fd}"));
         }
@@ -436,7 +444,7 @@ mod imp {
         let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("a fresh descriptor: {fd2}");
         if fd2 < 0 {
-            put_back(before.as_ref());
+            put_back(before.as_ref(), true);
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
@@ -508,7 +516,7 @@ mod imp {
         println!("\n-- the remaining four --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 < 0 {
-            put_back(before.as_ref());
+            put_back(before.as_ref(), true);
             give_back(LED_RUNNING);
             return Err(format!(
                 "gpio_setup({LED_RUNNING}) returned {fd3}, so four of the thirteen went \
@@ -526,7 +534,7 @@ mod imp {
         if ro >= 0 {
             println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
         }
-        put_back(before.as_ref());
+        put_back(before.as_ref(), true);
         // `gpio_dismiss` returns 0 whatever happened, so ask the pin.
         let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
         if exported(LED_RUNNING) {

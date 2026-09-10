@@ -909,10 +909,9 @@ application gets while a run is up. The answers here are what
 establishes by linking: `nm -D --defined-only /root/Bela/lib/libbela.so`
 lists every one as `T`, and the probe's first pass calls every one —
 four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
-`gpio_fd_close`) in a block that exists so that it does, since an
-`extern` nothing references is not a symbol the link has to resolve.
-The thirteenth, `gpio_set_value`, is reached from the same block
-through the put-back that follows it. That pass's own
+`gpio_set_value`) in a block that exists so that it does, since an
+`extern` nothing references is not a symbol the link has to resolve —
+`gpio_set_value` through the put-back at the end of it. That pass's own
 questions need the other nine, and doing it there rather than across
 both passes is what makes the evidence hold for a run that never
 reaches the second. Nothing else in the workspace calls them, so
