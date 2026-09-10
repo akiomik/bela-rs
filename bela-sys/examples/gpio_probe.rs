@@ -240,9 +240,10 @@ mod imp {
         for (what, pin) in [("running LED", LED_RUNNING), ("underrun LED", LED_UNDERRUN)] {
             if exported(pin) {
                 return Err(format!(
-                    "gpio{pin} ({what}) is exported and no pin a run would hold is, so an \
-                     earlier probe left it. Reboot the board: nothing here gives a \
-                     pin back across invocations, and a reboot gives back all of them"
+                    "gpio{pin} ({what}) is exported and nothing else this could see is. \
+                     Either an earlier probe left it — a reboot gives it back, nothing \
+                     here does — or a run with analog and digital both off is up, which \
+                     exports the two LEDs and nothing this can see"
                 ));
             }
         }
@@ -309,20 +310,18 @@ mod imp {
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
-        println!("gpio_write(fd2, HIGH) = {}", unsafe {
-            gpio_write(fd2, arg::HIGH)
-        });
+        let wrote = unsafe { gpio_write(fd2, arg::HIGH) };
+        println!("gpio_write(fd2, HIGH) = {wrote}");
         let mut value: PIN_VALUE = 0xdead_beef;
         let ret = unsafe { gpio_read(fd2, &raw mut value) };
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
-        // An unexport keeps the level, so a HIGH that stayed would stay
-        // after this pass ended.
-        // Reported like question 6's and question 11's: an unexport
-        // keeps the level, and setting `in` does not pull the line down,
-        // so a HIGH that stayed is a lit LED for the rest of the session.
+        // An unexport keeps the level and setting `in` does not pull the
+        // line down, so a HIGH that stayed is a lit LED until the reboot.
+        // On whether the write took, as question 11 is: a put-back that
+        // failed after a HIGH that failed leaves nothing to put back.
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };
         println!("  gpio_write(fd2, LOW) = {put_back}");
-        if put_back != 0 {
+        if wrote == 0 && put_back != 0 {
             eprintln!(
                 "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
                  ({put_back}); the reboot at the end of the script is what clears it"
@@ -477,9 +476,12 @@ mod imp {
             println!("  exported before we ask: {was_exported}");
             println!("  direction: {}", direction(pin));
             println!("  gpio_export = {}", unsafe { gpio_export(pin) });
-            // The stop button is left exported whoever claimed it: that
-            // is the resting state `docs/board-facts.md` records.
-            if !was_exported && exported(pin) && pin != STOP_BUTTON {
+            // No exception for the stop button: an exported `gpio586`
+            // is the resting state only where it was already there, and
+            // `was_exported` is what says so. One this probe created is
+            // its own, and leaving it would put a pin in question 13's
+            // listing that reads as the resting state and is not.
+            if !was_exported && exported(pin) {
                 ours.push(pin);
             }
             let mut value: PIN_VALUE = 0xdead_beef;
