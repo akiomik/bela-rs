@@ -454,7 +454,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # which reaps only at wait, a run that died a second ago is still
   # a zombie that a signal-0 succeeds on. Not by name either: libbela
   # renames the process, so nothing here is called sine.
-  alive() { [ -d /proc/\$1 ] && ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }
+  alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&
+    ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }
   # After the sleep, not before it: the glob is expanded once, and at
   # the moment the shell forks the wrapper that wrapper has still to
   # execve and fork, so the run has no /proc entry to find yet. The

@@ -342,6 +342,31 @@ mod imp {
         fs::metadata(format!("/sys/class/gpio/gpio{pin}")).is_ok()
     }
 
+    /// Unexports `pin` and then asks the pin, `gpio_unexport` being the
+    /// call question 5 measures refusing silently.
+    ///
+    /// An export that survives is one `--release` cannot give back
+    /// either — it is the same call — so it is `LEFT CHANGED` and the
+    /// caller's pass fails, rather than an `Err` that `main` would
+    /// render as exit 2 and the script would read as a pass that left
+    /// nothing. Every give-back of a pin this probe claimed goes
+    /// through here, so that hardening one does not leave its sibling
+    /// behind, which is how three of these came to differ.
+    fn give_back(pin: u32, left_changed: &mut bool) -> Result<(), String> {
+        let ret = unsafe { gpio_unexport(pin) };
+        if !exported(pin) {
+            println!("  gpio_unexport({pin}) = {ret}, and it is gone");
+            return Ok(());
+        }
+        eprintln!(
+            "LEFT CHANGED: gpio{pin} is exported and would not unexport ({ret}). \
+             `--release` cannot give back a pin that refuses one. By hand: \
+             echo {pin} > /sys/class/gpio/unexport"
+        );
+        *left_changed = true;
+        Err(format!("gpio{pin} survived gpio_unexport"))
+    }
+
     fn direction(pin: u32) -> String {
         fs::read_to_string(format!("/sys/class/gpio/gpio{pin}/direction"))
             .map_or_else(|e| format!("<{e}>"), |s| s.trim().to_owned())
@@ -486,7 +511,11 @@ mod imp {
         );
         let second = unsafe { gpio_export(LED_RUNNING) };
         println!("gpio_export({LED_RUNNING}) again = {second}");
-        let _ = unsafe { gpio_unexport(LED_RUNNING) };
+        // Asked, not discarded: an export that outlives this question
+        // makes question 2 measure `gpio_setup` on a claimed pin under
+        // a heading that says a free one, and question 5's dismiss the
+        // second export layer rather than the pin.
+        give_back(LED_RUNNING, left_changed)?;
 
         // 2. What gpio_setup hands back.
         println!("\n-- 2. gpio_setup --");
@@ -497,7 +526,7 @@ mod imp {
             // `gpio_setup` exports before it opens, so a failure here
             // can leave the pin claimed — the trap this probe exists
             // to document. Give it back before reporting.
-            unsafe { gpio_unexport(LED_RUNNING) };
+            give_back(LED_RUNNING, left_changed)?;
             return Err(format!("gpio_setup on a free pin returned {fd}"));
         }
 
@@ -529,7 +558,7 @@ mod imp {
             // Asking anyway would put `-1` into `write(2)`, and the
             // transcript would record `EBADF` on a bogus descriptor as
             // if it were what these functions do to a pin.
-            unsafe { gpio_unexport(LED_RUNNING) };
+            give_back(LED_RUNNING, left_changed)?;
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
         println!("gpio_write(fd2, HIGH) = {}", unsafe {
@@ -703,32 +732,11 @@ mod imp {
             // and be read as part of the one that is deliberate.
             let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
             if exported(LED_RUNNING) {
-                println!(
-                    "  gpio_dismiss left it exported; gpio_unexport = {}",
-                    unsafe { gpio_unexport(LED_RUNNING) }
-                );
-                // And ask the pin again, for the reason the whole
-                // question is here: `gpio_unexport` can refuse silently
-                // too, and until this pin is free question 8 cannot be
-                // asked — its answer is a listing, and a second pin in
-                // it reads as part of the one that is deliberate.
-                if exported(LED_RUNNING) {
-                    // The flag, not just the `Err`: `main` renders a
-                    // bare `Err` as exit 2, and the script reads 2 as a
-                    // pass that left nothing — "a pin it had claimed is
-                    // one `--release` gives back". Here it is not, the
-                    // pin having just refused an unexport.
-                    eprintln!(
-                        "LEFT CHANGED: gpio{LED_RUNNING} is exported and would not unexport. \
-                         `--release` cannot give back a pin that refuses one. By hand: \
-                         echo {LED_RUNNING} > /sys/class/gpio/unexport"
-                    );
-                    *left_changed = true;
-                    return Err(format!(
-                        "gpio{LED_RUNNING} survived gpio_dismiss and gpio_unexport both, so \
-                         question 8's listing would show two pins and mean one"
-                    ));
-                }
+                // Until this pin is free question 8 cannot be asked:
+                // its answer is a listing, and a second pin in it reads
+                // as part of the one that is deliberate.
+                println!("  gpio_dismiss left it exported");
+                give_back(LED_RUNNING, left_changed)?;
             }
         } else {
             // Two of `gpio_setup`'s three failure paths leave the pin
@@ -736,9 +744,7 @@ mod imp {
             // handles. Give it back, or question 8's listing reports
             // two leaked pins rather than the one it means.
             println!("  skipped: gpio_setup returned {fd3}");
-            println!("  gpio_unexport = {}", unsafe {
-                gpio_unexport(LED_RUNNING)
-            });
+            give_back(LED_RUNNING, left_changed)?;
             // And fail the pass, rather than print `skipped:` and go on
             // to exit 0. These four are called for one reason — so that
             // a probe which links and runs is evidence for all thirteen
@@ -765,26 +771,17 @@ mod imp {
         // `a_run_is_up` exempts makes every later `--release` decline,
         // after which nothing in this tree can give back the LEDs.
         if exported(NO_SUCH_PIN) {
-            println!("  it took after all; gpio_unexport = {}", unsafe {
-                gpio_unexport(NO_SUCH_PIN)
-            });
-            // And ask the pin, `gpio_unexport` being the call question 5
-            // measures refusing silently. A pin left here is the worst
-            // one this probe can leave: it is not in `RELEASABLE`, and
-            // one export outside the three `a_run_is_up` exempts makes
-            // every later `--release` decline.
-            if exported(NO_SUCH_PIN) {
+            println!("  it took after all");
+            if let Err(why) = give_back(NO_SUCH_PIN, left_changed) {
+                // The one pin whose survival is worse than the message
+                // `give_back` prints: it is not in `RELEASABLE`, so
+                // every later `--release` declines while it is there
+                // and nothing in this tree can give back the LEDs.
                 eprintln!(
-                    "LEFT CHANGED: gpio{NO_SUCH_PIN} is exported and would not \
-                     unexport. Until it is gone every `--release` declines, so \
-                     nothing in this tree can give back the LEDs. By hand: echo \
-                     {NO_SUCH_PIN} > /sys/class/gpio/unexport"
+                    "  and gpio{NO_SUCH_PIN} is not one `--release` acts on, so every \
+                     later release declines while it is exported"
                 );
-                *left_changed = true;
-                return Err(format!(
-                    "gpio{NO_SUCH_PIN} survived gpio_unexport, so question 8's listing \
-                     would show two pins and mean one"
-                ));
+                return Err(why);
             }
         }
 
@@ -1117,20 +1114,13 @@ mod imp {
         } else {
             println!("\n-- giving back the pins libbela had not exported --");
             for pin in &ours {
-                println!("  gpio_unexport({pin}) = {}", unsafe {
-                    gpio_unexport(*pin)
-                });
-                // The return is not the answer: question 5 measures
-                // `gpio_unexport` refusing silently. A pin that survives
-                // this is one question 13 will list, and the script says
-                // of that listing that whatever is in it the probe left
-                // there deliberately.
-                if exported(*pin) {
-                    eprintln!(
-                        "LEFT CHANGED: gpio{pin} would not unexport, so it is in question \
-                         13's listing without being the pin that answers it"
-                    );
-                    *left_changed = true;
+                // Reported, not returned: the questions are all asked by
+                // now, and a pin that survives is one `--release` will
+                // meet again. What it costs is question 13's listing,
+                // which the script says holds only what the probe left
+                // on purpose — so say which pin is in it and why.
+                if let Err(why) = give_back(*pin, left_changed) {
+                    eprintln!("  {why}, so question 13's listing shows it");
                 }
             }
         }
