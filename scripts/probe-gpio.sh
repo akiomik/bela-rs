@@ -260,14 +260,26 @@ cleanup() {
     # answered" and exit 0 over a board left claimed. 7, because it is
     # neither a pass that failed (1) nor a usage error (2), and because
     # the questions above it did stand.
+    tidy_status=0
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
-    if ! ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null; then
-      echo "WARNING: could not restore $HOST — check for a leftover sine" \
-        "process, an exported gpio584, gpio585 or gpio637," \
-        "$REMOTE_DIR, and bela_daemon" >&2
-      if [ "$status" -eq 0 ]; then
-        status=7
-      fi
+    ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null || tidy_status=$?
+    # 255 is ssh's own and 7 is the remote block's, and they need
+    # different things said. A 7 means the tidy-up ran: the kill ladder,
+    # the removal and the daemon all happened, and the release or the
+    # restart said on stdout above exactly what did not. Sending an
+    # operator to check four things, three of which demonstrably ran,
+    # is the noise the pass branches already avoid by splitting 255 out.
+    if [ "$tidy_status" -eq 255 ]; then
+      echo "WARNING: could not reach $HOST to restore it — nothing above says" \
+        "what ran. Check for a leftover sine process, an exported gpio584," \
+        "gpio585 or gpio637, $REMOTE_DIR, and bela_daemon" >&2
+    elif [ "$tidy_status" -ne 0 ]; then
+      echo "WARNING: the tidy-up ran and did not finish (exit $tidy_status)." \
+        "Its own message above names what is left; a run killed hard leaves" \
+        "all of libbela's exports, not only the three this script names." >&2
+    fi
+    if [ "$tidy_status" -ne 0 ] && [ "$status" -eq 0 ]; then
+      status=7
     fi
   fi
   # Question 6 sets an LED trigger to `none` and puts it back a line
