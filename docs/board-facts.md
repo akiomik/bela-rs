@@ -905,8 +905,9 @@ application gets while a run is up. The answers here are what
 establishes by linking: `nm -D --defined-only /root/Bela/lib/libbela.so`
 lists every one as `T`, and the probe's first pass calls every one —
 four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
-`gpio_set_value`) only so that it does, since an `extern` nothing
-references is not a symbol the link has to resolve. That pass's own
+`gpio_set_value`) in a block that exists so that it does, since an
+`extern` nothing references is not a symbol the link has to resolve.
+`gpio_set_value` also does work there: it is what puts the pin back. That pass's own
 questions need the other nine, and doing it there rather than across
 both passes is what makes the evidence hold for a run that never
 reaches the second. Nothing else in the workspace calls them, so
@@ -940,11 +941,11 @@ gets one true answer, then a lie, then an error.
 The `lseek` row is the control, and is what makes the missing rewind
 the *cause* rather than a guess that fits: the same descriptor, the
 same three calls, rewound before each, answers correctly every time.
-The code it points at is `gpio_read` in `core/GPIOcontrol.cpp:269-285`,
-which reads one byte and never seeks; the `gpio_write` row is the same
-offset from the other side, `:291-303` writing two bytes into a
-two-byte file, after which the descriptor is at its end and the next
-read has nothing left.
+The code it points at is `gpio_read` in `core/GPIOcontrol.cpp`, which
+reads one byte and never seeks; the `gpio_write` row is the same offset
+from the other side, that function writing two bytes into a two-byte
+file, after which the descriptor is at its end and the next read has
+nothing left.
 And on both failing rows the `unsigned int *value` still held the
 `0xdeadbeef` the probe put there, which is the measurement behind the
 soundness condition `bela-sys`'s documentation states. That is

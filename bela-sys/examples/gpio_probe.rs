@@ -166,8 +166,8 @@ mod imp {
         let ret = unsafe { gpio_unexport(pin) };
         if exported(pin) {
             eprintln!(
-                "LEFT CHANGED: gpio{pin} would not unexport ({ret}); `--release` is the \
-                 same call, so it cannot give it back either"
+                "LEFT CHANGED: gpio{pin} is still exported after gpio_unexport ({ret}). \
+                 `--release` calls the same thing."
             );
         } else {
             println!("  gpio_unexport({pin}) = {ret}, and it is gone");
@@ -230,8 +230,8 @@ mod imp {
         }
 
         if args.iter().any(|a| a == "--release") {
-            if let Some(other) = args.iter().find(|a| *a != "--release") {
-                eprintln!("--release does its work and stops; {other} cannot come with it");
+            if args.len() != 1 {
+                eprintln!("--release does its work and stops; it takes nothing else");
                 process::exit(2);
             }
             if let Err(why) = release_all() {
@@ -375,9 +375,9 @@ mod imp {
             };
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
             // `led_set_trigger` answers -1 for a failed `open` and a
-            // failed `write` alike (`GPIOcontrol.cpp:338,341`), so ask
-            // the file: a write that failed after the attribute took
-            // `none` would otherwise be skipped as nothing to restore.
+            // failed `write` alike, so ask the file: a write that failed
+            // after the attribute took `none` would otherwise be skipped
+            // as nothing to restore.
             if ret != 0 && current_trigger(n).as_ref() == Some(&before) {
                 println!("  lednum {n}: ret {ret}, still [{before}] — unchanged");
                 continue;
@@ -398,8 +398,9 @@ mod imp {
         }
 
         // So that a probe which links and runs is evidence for all
-        // thirteen symbols, not the nine this pass needs.
-        println!("\n-- the remaining four, called only to link them --");
+        // thirteen symbols, not the nine this pass needs. `gpio_set_value`
+        // also does work here: it is what puts the pin back to LOW.
+        println!("\n-- the remaining four --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 < 0 {
             give_back(LED_RUNNING);
@@ -433,8 +434,8 @@ mod imp {
         println!("  the line now reads: ret {read}, *value {level:#x}");
         if read != 0 || level != 0 {
             eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} is not known to be low after three writes \
-                 that reported success, and an unexport keeps what the line holds"
+                "LEFT CHANGED: gpio{LED_RUNNING} does not read low; see the writes above. \
+                 An unexport keeps what the line holds."
             );
         }
         // `gpio_dismiss` returns 0 whatever happened, so ask the pin.
