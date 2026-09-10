@@ -480,7 +480,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
     # libbela renames the process.
     rm -f sine.pid
     r=\$(cat run.pid 2>/dev/null)
-    if [ -z \"\$r\" ] || [ ! -d /proc/\$r ]; then rm -f run.pid; fi
+    # Through the alive helper, like every other liveness test here: a
+    # run that died a moment ago is a zombie this shell has not reaped,
+    # and a bare /proc test would keep run.pid naming it, after which
+    # the handler signals a number that may since have been reissued.
+    # (No backticks or quotes in here: this is inside the double-quoted
+    # ssh string.)
+    if ! alive \$r; then rm -f run.pid; fi
     # 4, because 2 and 3 are the probe's: it could not ask, and its
     # release declined. Nothing here ran the probe at all.
     exit 4
