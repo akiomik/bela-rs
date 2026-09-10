@@ -146,15 +146,21 @@ cleanup() {
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not reach $HOST to restore it; nothing above says what ran" >&2
   fi
+  # A probe killed between a change and its restore leaves it, and an
+  # unexport keeps a pin's level and direction alike. Printed from here
+  # because `cleanup` runs on every exit including the signals, which is
+  # the case this is for.
+  if [ "$BOARD_PREPARED" = yes ]; then
+    leftovers
+  fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and walk into
   # pass 2 with the directory deleted.
   exit "$status"
 }
 
-# A probe killed between a change and its restore leaves it, and an
-# unexport keeps a pin's level and direction alike. Read-only: what to
-# put back is the operator's call, and a value write fails on an input.
+# Read-only: what to put back is the operator's call, and a value write
+# fails on an input.
 leftovers() {
   echo
   echo "If it was killed part way, look at what it had changed. With nothing"
@@ -163,6 +169,18 @@ leftovers() {
   echo "  ssh $HOST 'for p in 584 637; do echo \$p > /sys/class/gpio/export;"
   echo "    cat /sys/class/gpio/gpio\$p/direction /sys/class/gpio/gpio\$p/value;"
   echo "    echo \$p > /sys/class/gpio/unexport; done'"
+}
+
+# 255 is ssh's own and says nothing about whether the probe ran or what
+# it left; scripts/probe-fft.sh keeps the same distinction.
+pass_failed() {
+  if [ "$2" -eq 255 ]; then
+    echo "$1's ssh failed (255): a transport failure. Nothing above says what" >&2
+    echo "ran, and the run may still be up on the board." >&2
+  else
+    echo "$1 did not finish (exit $2); the transcript above says where it" >&2
+    echo "stopped." >&2
+  fi
 }
 
 echo "Building the probe and an audio example for $TARGET..."
@@ -196,7 +214,7 @@ ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
 # that call can leave the daemon stopped.
 BOARD_PREPARED=yes
 # shellcheck disable=SC2029
-ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
+ssh -o ConnectTimeout=10 "$HOST" "systemctl stop bela_daemon && mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
   scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
@@ -247,11 +265,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
 
 if [ "$alone_status" -ne 0 ]; then
   echo
-  echo "Pass 1 did not finish (exit $alone_status); the transcript above says" >&2
-  echo "where it stopped. Pass 2 is not run: a pass 1 that stopped part way" >&2
-  echo "can leave a pin of its own exported, and pass 2 would report it as one" >&2
-  echo "libbela is holding — the distinction its answers turn on." >&2
-  leftovers
+  pass_failed "Pass 1" "$alone_status"
+  echo "Pass 2 is not run: a pass 1 that stopped part way can leave a pin of" >&2
+  echo "its own exported, and pass 2 would report it as one libbela is" >&2
+  echo "holding — the distinction its answers turn on." >&2
   exit 1
 fi
 
@@ -315,7 +332,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
   rm -f sine.pid run.pid
   case \$sine_status in
   124) echo '   ended at 124: its own timeout, the undisturbed end' ;;
-  *) echo '   ended at' \$sine_status '- NOT the undisturbed end; see sine.log' ;;
+  *) echo '   ended at' \$sine_status '- NOT the undisturbed end' ;;
   esac
   echo '-- the run has now ended; its last lines --'
   tail -5 sine.log
@@ -332,9 +349,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
 
 echo
 if [ "$with_run_status" -ne 0 ]; then
-  echo "Pass 2 did not finish (exit $with_run_status); the transcript above says" >&2
-  echo "where it stopped. 4 means no run was there to ask beside." >&2
-  leftovers
+  pass_failed "Pass 2" "$with_run_status"
+  echo "4 means no run was there to ask beside." >&2
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."
@@ -342,4 +358,3 @@ echo
 echo "If a pin is still exported above that was not before, this probe"
 echo "left it there: that is question 13's answer and not a tidy-up the"
 echo "script forgot."
-leftovers
