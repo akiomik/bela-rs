@@ -656,7 +656,7 @@ mod imp {
                 println!("  its direction still reads {before}, but gpio_setup wrote it:");
                 println!("  that drives the line low, and the PRU takes this pin back");
             } else {
-                println!("  its direction reads {now} and was {before}, and neither is a");
+                println!("  its direction reads {now} and was {before}, which is not a");
                 println!("  direction, so there is nothing to put it back to");
             }
             return;

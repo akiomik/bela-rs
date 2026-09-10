@@ -113,7 +113,8 @@ cleanup() {
     # shellcheck disable=SC2029 # the remote path is meant to expand here
     if ! why=$(ssh -o ConnectTimeout=10 "$HOST" \
       "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>&1); then
-      echo "WARNING: $HOST was not rebooted; its GPIO is as this left it." >&2
+      echo "WARNING: $HOST was not rebooted, so its GPIO is as this left it and" >&2
+      echo "bela_daemon is still stopped — the reboot is what starts it again." >&2
       echo "$why" >&2
     fi
   fi
@@ -126,7 +127,12 @@ cleanup() {
 # 255 is ssh's own and says nothing about whether the probe ran or what
 # it left; scripts/probe-fft.sh keeps the same distinction.
 pass_failed() {
-  if [ "$2" -eq 255 ]; then
+  if [ "$2" -eq 5 ]; then
+    # The remote block exits 5 only where the probe returned 0, so the
+    # transcript above it stands and what failed came after the answers.
+    echo "$1 asked its questions; what follows them did not finish. Its own" >&2
+    echo "lines above say which." >&2
+  elif [ "$2" -eq 255 ]; then
     echo "$1's ssh failed (255): a transport failure. Nothing above says what" >&2
     echo "ran." >&2
   else

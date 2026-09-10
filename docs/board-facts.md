@@ -877,8 +877,9 @@ rounds.
 - **Three scripts here were written before this was known.**
   `probe-io.sh`, `probe-command-line.sh` and `probe-init-failure.sh`
   each kill a run with `pkill -9 -x <name>`, which by the above matches
-  nothing — and each drops its non-zero status, two by joining with
-  `;` and one with `|| true`, so nothing notices. Filed as
+  nothing — and each drops its non-zero status by joining the kill with
+  `;`, so nothing notices. `probe-init-failure.sh` does it at a second
+  site as well, where the `;` is followed by `|| true`. Filed as
   [#162](https://github.com/akiomik/bela-rs/issues/162); recorded here
   so that this section is not read as describing a tree that acts on
   it.
