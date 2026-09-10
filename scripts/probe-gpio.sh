@@ -135,18 +135,18 @@ cleanup() {
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon || echo 'WARNING: bela_daemon did not start'"
     fi
-    # Before the tidy-up, not after it: the last thing that ssh does is
-    # restart `bela_daemon`, and the snippet below exports and unexports
-    # pins, which would take them from whatever the daemon started.
+    # A probe killed between a change and its restore leaves it, and an
+    # unexport keeps a pin's level and direction alike. Printed on every
+    # exit that got as far as touching the board, which is where an
+    # interrupt can have left something — and before the tidy-up, whose
+    # last act is restarting `bela_daemon`: the snippet exports and
+    # unexports pins, and would take them from whatever the daemon
+    # started.
     leftovers
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not reach $HOST to restore it; nothing above says what ran" >&2
   fi
-  # A probe killed between a change and its restore leaves it, and an
-  # unexport keeps a pin's level and direction alike. Printed from here
-  # because `cleanup` runs on every exit including the signals, which is
-  # the case this is for.
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and walk into
   # pass 2 with the directory deleted.

@@ -158,6 +158,15 @@ mod imp {
     /// Whether anything looks like a run in progress. The LEDs cannot be
     /// the signal — they are what `--release` gives back — and the stop
     /// button outlives every run.
+    ///
+    /// So a run with `use_analog` and `use_digital` both off exports
+    /// nothing this can see, and `--release` will take its two LEDs.
+    /// Not closable: sysfs offers no ownership, so two exported LEDs
+    /// are the same bytes whoever left them, and telling them apart is
+    /// the ledger `release_all` says why it does not keep. The cost is
+    /// measured — `docs/board-facts.md` records that a run does not
+    /// notice losing an LED export — and `bela/examples/sine`, which
+    /// the script runs, has both on.
     fn a_run_is_up() -> Result<bool, String> {
         Ok(!other_pins()?.is_empty() || exported(DIGITAL_D0))
     }
