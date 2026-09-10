@@ -713,6 +713,17 @@ mod imp {
                 // asked — its answer is a listing, and a second pin in
                 // it reads as part of the one that is deliberate.
                 if exported(LED_RUNNING) {
+                    // The flag, not just the `Err`: `main` renders a
+                    // bare `Err` as exit 2, and the script reads 2 as a
+                    // pass that left nothing — "a pin it had claimed is
+                    // one `--release` gives back". Here it is not, the
+                    // pin having just refused an unexport.
+                    eprintln!(
+                        "LEFT CHANGED: gpio{LED_RUNNING} is exported and would not unexport. \
+                         `--release` cannot give back a pin that refuses one. By hand: \
+                         echo {LED_RUNNING} > /sys/class/gpio/unexport"
+                    );
+                    *left_changed = true;
                     return Err(format!(
                         "gpio{LED_RUNNING} survived gpio_dismiss and gpio_unexport both, so \
                          question 8's listing would show two pins and mean one"
@@ -757,6 +768,24 @@ mod imp {
             println!("  it took after all; gpio_unexport = {}", unsafe {
                 gpio_unexport(NO_SUCH_PIN)
             });
+            // And ask the pin, `gpio_unexport` being the call question 5
+            // measures refusing silently. A pin left here is the worst
+            // one this probe can leave: it is not in `RELEASABLE`, and
+            // one export outside the three `a_run_is_up` exempts makes
+            // every later `--release` decline.
+            if exported(NO_SUCH_PIN) {
+                eprintln!(
+                    "LEFT CHANGED: gpio{NO_SUCH_PIN} is exported and would not \
+                     unexport. Until it is gone every `--release` declines, so \
+                     nothing in this tree can give back the LEDs. By hand: echo \
+                     {NO_SUCH_PIN} > /sys/class/gpio/unexport"
+                );
+                *left_changed = true;
+                return Err(format!(
+                    "gpio{NO_SUCH_PIN} survived gpio_unexport, so question 8's listing \
+                     would show two pins and mean one"
+                ));
+            }
         }
 
         // 8. The question the wrapper's shape turns on. Everything
@@ -1115,6 +1144,14 @@ mod imp {
         } else {
             println!("  NO — the run ended part way through, and the answers");
             println!("  above are not all about a board that was rendering");
+            // And fail the pass. Printing it and returning `Ok` let the
+            // script close with "The board answered. Record the
+            // findings" over a transcript that answers a different
+            // question from the one its heading asks.
+            return Err(format!(
+                "gpio{DIGITAL_D0} is no longer exported, so the run ended part way \
+                 through and these are not answers about a board that was rendering"
+            ));
         }
 
         println!("\nleaving /sys/class/gpio at: {}", listing());

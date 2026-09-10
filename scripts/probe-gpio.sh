@@ -72,8 +72,10 @@ REMOTE_DIR="/tmp/bela-rs-probe-gpio"
 # end`, which are the two conclusions this must never confuse. The
 # probe takes well under a second, so 30 against a 20-second bound
 # leaves the with-run questions ~26 seconds of run to happen inside.
-# The probe checks for itself that the run was still up when it
-# finished, which is what actually rules the confusion out.
+# The probe asks whether the run was still up when it finished and
+# fails the pass where it was not, which is what actually rules the
+# confusion out: `ALREADY GONE` cannot then be reported under a status
+# this script treats as an answer.
 RUN_SECONDS=30
 PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
