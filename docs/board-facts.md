@@ -871,15 +871,13 @@ rounds.
   `/proc/<pid>/comm` reading `sine:2640:18042` — the binary's name,
   its pid, and a third number — while `/proc/<pid>/cmdline` stays
   `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine` kills
-  nothing. It does say so — procps-ng 4.0.2 on this board exits `1`
-  when no process matched, measured — so the no-op is silent only where
-  the caller drops the status.
+  nothing. It does say so: procps-ng 4.0.2 on this board exits `1` when
+  no process matched, so the no-op is silent only where a caller drops
+  the status.
 - **Three scripts here were written before this was known.**
   `probe-io.sh`, `probe-command-line.sh` and `probe-init-failure.sh`
   each kill a run with `pkill -9 -x <name>`, which by the above matches
-  nothing — and each drops its non-zero status by joining the kill with
-  `;`, so nothing notices. `probe-init-failure.sh` does it at a second
-  site as well, where the `;` is followed by `|| true`. Filed as
+  nothing and says so to a caller that keeps the status. Filed as
   [#162](https://github.com/akiomik/bela-rs/issues/162); recorded here
   so that this section is not read as describing a tree that acts on
   it.
@@ -892,10 +890,8 @@ rounds.
   libbela's teardown goes through, and its exports are released:
   measured with fifteen `gpio6*` entries during a run and `gpio586`
   alone one second after the signal. `/proc/<pid>/exe` still names the
-  binary the rename hides, so it finds that pid without one being
-  written down. `scripts/probe-gpio.sh` does not need either any more —
-  it reboots the board rather than killing the run — but the three
-  scripts in [#162](https://github.com/akiomik/bela-rs/issues/162) do.
+  binary the rename hides, so a pid can be found without one being
+  written down.
 
 ## Reaching a pin through sysfs
 
@@ -908,19 +904,11 @@ process, so a probe that brought its own could not ask what an
 application gets while a run is up. The answers here are what
 [#156](https://github.com/akiomik/bela-rs/issues/156) waits on.
 
-**All thirteen are in the library the crate links**, which the probe
-establishes by linking: `nm -D --defined-only /root/Bela/lib/libbela.so`
-lists every one as `T`, and the probe's first pass calls every one —
-four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
-`gpio_set_value`) in a block that exists so that it does, since an
-`extern` nothing references is not a symbol the link has to resolve —
-`gpio_set_value` on a pin the `gpio_set_dir(INPUT)` above it has just
-made an input, so it answers `-1` and puts nothing back — the point
-there is the link. That pass's own
-questions need the other nine, and doing it there rather than across
-both passes is what makes the evidence hold for a run that never
-reaches the second. Nothing else in the workspace calls them, so
-no other build here would find out.
+**All thirteen are in the library the crate links**: `nm -D
+--defined-only /root/Bela/lib/libbela.so` lists every one as `T`, and
+the probe's first pass calls every one, so a pass that ran is evidence
+for the link as well as for the answers below. Nothing else in the
+workspace calls them, so no other build here would find out.
 
 Alone, on a board where nothing had claimed anything, the family
 behaved as `bela_sys`'s documentation says, through the bindings
@@ -1040,10 +1028,9 @@ With `sine` rendering, in another process:
   reads `in`, which is what "every channel starts as an input" above
   means from the sysfs side, and a value cannot be written to an
   input. The two LEDs read `out`, so nothing here says a write to one
-  of those would fail. Without `--destructive` the probe attempts this
-  only where the direction reads `in`, which is the harmless case; an
-  output pin would mean contending with whatever drives it, which is
-  what `--destructive` reaches, here and in the question below.
+  of those would fail. This row is from a pin reading `in`, where a
+  write cannot take and so cannot contend with a driver; an output pin
+  needs `--destructive`, as the question below does.
 - **A program can take an LED away from a live run, and the run does
   not notice.** With `--destructive`, `gpio_setup(gpio584, OUTPUT_PIN)`
   returned a descriptor, `3`, its direction reading `out` beforehand,

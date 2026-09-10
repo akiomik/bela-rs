@@ -216,14 +216,10 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # would then take gpio585 from that run — the act the guard exists to
   # prevent.
   #
-  # The write's own status is the check, not whether gpio585 is gone
-  # afterwards. 585 is LED_UNDERRUN, which the probe derives as
-  # BANK0 + 46, and the two are tied by hand; if a board image moves the
-  # base and only the probe is updated, the pin left here is some other
-  # number, gpio585 is absent either way, and an existence test passes
-  # while pass 2 goes on to report the leftover as libbela's. Writing an
-  # un-exported number to the unexport attribute fails, measured, so a
-  # write that succeeded is the pin having been there.
+  # The write's status, not whether gpio585 is gone afterwards: an
+  # existence test cannot tell "given back" from "never this number",
+  # and this 585 is tied by hand to the probe's BANK0 + 46. Writing an
+  # un-exported number to the unexport attribute fails, measured.
   if [ \$probe_status -eq 0 ]; then
     if ! echo 585 > /sys/class/gpio/unexport 2>/dev/null; then
       echo 'gpio585 was not there to give back: question 8 left some other pin,'
