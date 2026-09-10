@@ -32,11 +32,13 @@
 //! listing `/sys/class/gpio` after this process exits — the only place
 //! it can be seen from.
 //!
-//! What nothing here puts back: an LED trigger (question 6), a pin's
-//! level (4, 11) and the direction a pin is latched at, since an
-//! unexport keeps both. `--release` unexports the two LED pins and
-//! nothing else, and declines outright while any other pin is
-//! exported. The script prints how to check the rest.
+//! Each question puts back what it changed. What survives a probe
+//! *killed* between a change and its restore is an LED trigger
+//! (question 6), a pin's level (4, 11) and the direction a pin is
+//! latched at — an unexport keeps the last two, so nothing later
+//! clears them. `--release` unexports the two LED pins and nothing
+//! else, and declines while any other pin is exported. The script
+//! prints how to check all of it.
 
 fn main() {
     imp::main();
@@ -210,6 +212,7 @@ mod imp {
                 listing()
             ));
         }
+        let mut held = Vec::new();
         for &pin in RELEASABLE {
             let was = exported(pin);
             let ret = unsafe { gpio_unexport(pin) };
@@ -218,8 +221,23 @@ mod imp {
                 if was { "exported" } else { "free" },
                 if exported(pin) { "exported" } else { "free" }
             );
+            if exported(pin) {
+                held.push(pin.to_string());
+            }
         }
-        Ok(())
+        // The pin, not the return: `gpio_unexport` is the call question
+        // 5 measures refusing silently. A survivor here is not cosmetic
+        // — the release after pass 1 is what clears question 8's
+        // deliberate `gpio585`, and pass 2 would otherwise report it as
+        // a pin libbela is holding, which is the distinction its
+        // answers turn on.
+        if held.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "NOT released: gpio{} would not unexport, silently",
+            held.join(", gpio")
+        ))
     }
 
     pub(crate) fn main() {

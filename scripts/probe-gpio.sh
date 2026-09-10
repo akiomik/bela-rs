@@ -116,8 +116,8 @@ cleanup() {
     # while alive: a group signal to a pid leading no group is an ESRCH
     # no-op, but a recycled pid would make it signal strangers.
     undo="$undo; if alive \$w; then kill -INT -\$w 2>/dev/null; fi"
-    undo="$undo; for t in \$p \$r; do [ -n \"\$t\" ] || continue"
-    undo="$undo; kill -INT \$t 2>/dev/null; done"
+    undo="$undo; for t in \$p \$r; do"
+    undo="$undo if alive \$t; then kill -INT \$t 2>/dev/null; fi; done"
     undo="$undo; n=0"
     undo="$undo; while { alive \$p || alive \$r; } && [ \$n -lt 6 ]"
     undo="$undo; do sleep 1; n=\$((n+1)); done"
@@ -236,8 +236,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # Question 8 leaves one pin exported on purpose and the listing above
   # is its answer. Give it back, so pass 2 starts from the resting
   # state; the probe declines this where a run is up.
-  timeout -s INT -k 5 15 ./gpio_probe --release || true
-  exit \$probe_status
+  #
+  # Its status counts, unlike pass 2's: a gpio585 still here is one
+  # pass 2 would report as libbela's.
+  release_status=0
+  timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
+  if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
+  exit \$release_status
 " || alone_status=$?
 
 if [ "$alone_status" -ne 0 ]; then
