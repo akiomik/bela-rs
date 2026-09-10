@@ -911,7 +911,8 @@ lists every one as `T`, and the probe's first pass calls every one —
 four of them (`gpio_set_dir`, `gpio_set_edge`, `gpio_fd_open`,
 `gpio_set_value`) in a block that exists so that it does, since an
 `extern` nothing references is not a symbol the link has to resolve.
-`gpio_set_value` also does work there: it is what puts the pin back. That pass's own
+`gpio_set_value` also does work there, where the pin was an output: it
+is what puts the level back. That pass's own
 questions need the other nine, and doing it there rather than across
 both passes is what makes the evidence hold for a run that never
 reaches the second. Nothing else in the workspace calls them, so
@@ -959,7 +960,8 @@ than off this board.
 
 **An unexport does not undo a drive.** Read by hand, not by the probe:
 no question drives a pin and then exports it again to see what the
-unexport left. So this row is reproduced by running, with nothing
+unexport left. So it is reproduced by running the block below, with
+nothing
 rendering — the unexports below would otherwise take the running LED
 from libbela, which is the act `--destructive` exists to gate:
 
@@ -982,9 +984,9 @@ undoes.
 
 The `cat` gives `out` and `1`, and the same sequence with `0` gives
 `out` and `0`. The line keeps both across the unexport rather than
-being freed back to an input — which is why nothing that only unexports can put a level
-back, and why a probe that drove a pin and could not undrive it says so
-rather than relying on the teardown below.
+being freed back to an input — which is why nothing that only unexports
+can put a level back, and why a probe that drove a pin and could not
+undrive it says so rather than relying on the teardown below.
 
 Two more from the same by-hand session, on the same pin:
 

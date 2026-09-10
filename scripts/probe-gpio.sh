@@ -20,8 +20,11 @@
 #
 # What is put back: `bela_daemon`, the remote directory, the run, and
 # the two LED pins — `gpio_probe --release`, before pass 1, after each
-# pass and from the handler. What is not put back is printed at the end
-# of every run, along with how to check it.
+# pass and from the handler. Anything the probe changed and could not
+# put back it prints as `LEFT CHANGED`, where it happened. A probe
+# killed between a change and its restore prints nothing, and nothing
+# here can print it for it: `/sys/class/leds` and `/sys/class/gpio` are
+# where that shows.
 set -eu
 
 HOST="root@bela.local"
@@ -136,17 +139,6 @@ cleanup() {
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon || echo 'WARNING: bela_daemon did not start'"
-    fi
-    # Where to look, and no recipe: a killed probe can leave a trigger or
-    # a level, and an unexport keeps both. Four rounds of review went
-    # into a snippet that read them, and it was wrong every time — it
-    # exported a pin that was already exported, unexported one the reader
-    # had not claimed, and pointed at a transcript line only one pass
-    # prints.
-    if [ "$status" -ne 0 ]; then
-      echo "Killed part way, this can leave an LED trigger at none, or a pin" >&2
-      echo "driven or latched: an unexport keeps a level and a direction alike." >&2
-      echo "/sys/class/leds and /sys/class/gpio are where that shows." >&2
     fi
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
