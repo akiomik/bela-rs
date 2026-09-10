@@ -3,21 +3,14 @@
 //! An instrument, not a check: nothing here passes or fails, and it is
 //! run by a person reading the transcript. `scripts/probe-gpio.sh`
 //! builds it, copies it over and runs it in both modes; the answers go
-//! in `docs/board-facts.md`. It exits non-zero only when it could not
-//! ask a question, and says why on stderr. Anything it changed and
-//! could not put back is printed as `LEFT CHANGED` where it happened.
+//! in `docs/board-facts.md`.
 //!
 //! It creates **no audio system**, which is what lets the second mode
 //! exist: libbela refuses a second one in another process, so a probe
 //! that brought its own could not ask what an application gets while a
-//! run is up. The script starts `bela/examples/sine` for it to reach
-//! past.
+//! run is up. The script starts `bela/examples/sine` for it to reach past.
 //!
-//! `--with-run` asks about pins libbela is holding and needs something
-//! rendering. `--destructive` is separate because what it allows can
-//! stop a run: it adds question 12, and widens question 11 to a
-//! channel whose direction reads `out`. `--release` is the script's
-//! tidy-up and takes no other argument.
+//! `--with-run` needs something rendering; `--destructive` can stop it.
 //!
 //! Alone: 1 export twice; 2 `gpio_setup`; 3 repeated `gpio_read` on one
 //! descriptor; 4 `gpio_write` then `gpio_read`; 5 `gpio_dismiss` and a
@@ -28,17 +21,8 @@
 //! writing a PRU-driven channel; 12 (`--destructive`) unexporting one
 //! out from under the run; 13 what is claimed once both have gone.
 //!
-//! 8 and 13 are the same question and the script answers both, by
-//! listing `/sys/class/gpio` after this process exits — the only place
-//! it can be seen from.
-//!
-//! Each question puts back what it changed. What survives a probe
-//! *killed* between a change and its restore is an LED trigger
-//! (question 6), a pin's level (4, 11) and the direction a pin is
-//! latched at — an unexport keeps the last two, so nothing later
-//! clears them. `--release` unexports the two LED pins and nothing
-//! else, and declines while any other pin is exported. The script
-//! prints how to check all of it.
+//! 8 and 13 are answered by the script, which lists `/sys/class/gpio`
+//! once this process has exited — the only place they can be seen from.
 
 fn main() {
     imp::main();
@@ -111,8 +95,7 @@ mod imp {
 
     /// The two pins `--release` gives back. The stop button is excluded
     /// because unexporting it would change the resting state a later
-    /// run measures; `DIGITAL_D0` because `release_all` declines while
-    /// it is exported, so the loop can never reach it claimed.
+    /// run measures.
     const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN];
 
     fn trigger_path(lednum: u32) -> String {
@@ -170,9 +153,9 @@ mod imp {
             .collect()
     }
 
-    /// Whether anything looks like a run in progress. The LEDs cannot
-    /// be the signal — they are what `--release` gives back — and the
-    /// stop button outlives every run.
+    /// Whether anything looks like a run in progress. The LEDs cannot be
+    /// the signal — they are what `--release` gives back — and the stop
+    /// button outlives every run.
     fn a_run_is_up() -> bool {
         !other_pins().is_empty() || exported(DIGITAL_D0)
     }
@@ -192,15 +175,9 @@ mod imp {
     }
 
     /// Gives back the two LED pins whether or not this invocation
-    /// claimed them.
-    ///
-    /// That bluntness is the trade-off and the point: a ledger of what
-    /// was ours needs writing before each export and unwinding after
-    /// it, and an interrupt still lands between two instructions. What
-    /// keeps a pin from leaking is the layering the script has —
-    /// `timeout -s INT` bounds every run, a bounded run ends normally,
-    /// and a normal end gives back what it held — with this as the
-    /// backstop.
+    /// claimed them. Tracking which were ours needs a ledger that an
+    /// interrupt can still land inside; three attempts at one were the
+    /// substance of eight review rounds.
     fn release_all() -> Result<(), String> {
         println!("== releasing the two LED pins, claimed or not ==");
         if a_run_is_up() {
@@ -225,12 +202,8 @@ mod imp {
                 held.push(pin.to_string());
             }
         }
-        // The pin, not the return: `gpio_unexport` is the call question
-        // 5 measures refusing silently. A survivor here is not cosmetic
-        // — the release after pass 1 is what clears question 8's
-        // deliberate `gpio585`, and pass 2 would otherwise report it as
-        // a pin libbela is holding, which is the distinction its
-        // answers turn on.
+        // The pin, not the return: `gpio_unexport` refuses silently,
+        // which question 5 measures.
         if held.is_empty() {
             return Ok(());
         }
@@ -241,11 +214,10 @@ mod imp {
     }
 
     pub(crate) fn main() {
-        // Before anything is printed. libbela reports `gpio_setup`'s
-        // two failures with C `printf`, and C stdio block-buffers to a
-        // pipe — which is what the script's `probe_out=$(...)` makes
-        // it — so those lines would be flushed at exit and land away
-        // from the question that produced them.
+        // Before anything is printed. libbela reports `gpio_setup`'s two
+        // failures with C `printf`, and C stdio block-buffers to a pipe,
+        // which is what ssh makes of remote stdout — so those lines
+        // would be flushed at exit, away from the question behind them.
         unsafe { setvbuf(stdout, ptr::null_mut(), IONBF, 0) };
 
         let args: Vec<String> = env::args().skip(1).collect();
@@ -293,10 +265,7 @@ mod imp {
     fn alone_questions() -> Result<(), String> {
         println!("== alone: nothing else should be running ==");
         // This pass dismisses and unexports `LED_RUNNING`, which sysfs
-        // grants whoever asks — the one act the probe gates. Two
-        // checks: whether anything else holds pins at all, then the two
-        // this pass claims, which reaching here means an earlier probe
-        // left behind.
+        // grants whoever asks — the one act the probe gates.
         if a_run_is_up() {
             return Err(format!(
                 "a pin a run would hold is exported, so every answer below would be \
@@ -323,10 +292,13 @@ mod imp {
         println!("gpio_export({LED_RUNNING}) again = {}", unsafe {
             gpio_export(LED_RUNNING)
         });
-        // Asked, not discarded: an export outliving this question makes
-        // question 2 measure `gpio_setup` on a claimed pin under a
-        // heading that says a free one.
         give_back(LED_RUNNING);
+        if exported(LED_RUNNING) {
+            return Err(format!(
+                "gpio{LED_RUNNING} would not unexport, so question 2 would measure \
+                 gpio_setup on a claimed pin under a heading that says a free one"
+            ));
+        }
 
         println!("\n-- 2. gpio_setup --");
         let fd = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
@@ -425,10 +397,8 @@ mod imp {
             }
         }
 
-        // Called only so that a probe which links and runs is evidence
-        // for all thirteen symbols rather than the nine this pass
-        // needs. `gpio_set_value` is reached by a question, but only
-        // where question 4's restore refused.
+        // So that a probe which links and runs is evidence for all
+        // thirteen symbols, not the nine this pass needs.
         println!("\n-- the remaining four, called only to link them --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 < 0 {
@@ -485,9 +455,6 @@ mod imp {
             gpio_export(NO_SUCH_PIN)
         });
         if exported(NO_SUCH_PIN) {
-            // Not in `RELEASABLE`, and one pin outside the ones
-            // `a_run_is_up` exempts makes every later `--release`
-            // decline — after which nothing here can give back the LEDs.
             println!("  it took after all");
             give_back(NO_SUCH_PIN);
         }
@@ -515,13 +482,13 @@ mod imp {
         Ok(())
     }
 
-    /// Asks each pin for itself and returns the ones that went from
-    /// free to exported while it did — the probe's own, to be given
-    /// back. `enable_led` off is what makes that reachable.
+    /// Questions 9 and 10. Returns the pins that went from free to
+    /// exported while it asked — the probe's own, to be given back;
+    /// `enable_led` off is what makes that reachable.
     fn claim_and_read(claimed: &[(&str, u32)]) -> Vec<u32> {
         let mut ours: Vec<u32> = Vec::new();
         for &(name, pin) in claimed {
-            println!("\n-- {name} (gpio{pin}) --");
+            println!("\n-- 9 and 10. {name} (gpio{pin}) --");
             // One read, used twice: the run can end between two of
             // them, and then the line printed and the fact `ours` is
             // built from would disagree about who held the pin.
@@ -529,6 +496,8 @@ mod imp {
             println!("  exported before we ask: {was_exported}");
             println!("  direction: {}", direction(pin));
             println!("  gpio_export = {}", unsafe { gpio_export(pin) });
+            // The stop button is left exported whoever claimed it: that
+            // is the resting state `docs/board-facts.md` records.
             if !was_exported && exported(pin) && pin != STOP_BUTTON {
                 ours.push(pin);
             }
@@ -552,10 +521,9 @@ mod imp {
                 "gpio{DIGITAL_D0} (digital D0) is not exported, so nothing is rendering"
             ));
         }
-        // The run's own pins, read while it is provably up and before
-        // this pass exports anything, so the closing check reads them
-        // rather than the probe's. Which pins a run takes depends on
-        // the board and the settings, so the set is read, not named.
+        // Read while the run is provably up and before this pass exports
+        // anything. Which pins a run takes depends on the board and the
+        // settings, so the set is read, not named.
         let was = other_pins();
         if was.is_empty() {
             return Err(format!(
@@ -635,12 +603,10 @@ mod imp {
             println!("  answer; the script reports how the run ended, and 124 is the");
             println!("  undisturbed end. Otherwise the answers above are not all about a");
             println!("  board that was rendering.");
-            // Each pin's `was_exported` is read before its
-            // `gpio_export`, so a run tearing down in that window
-            // leaves D0 the probe's own with `ours` not recording it —
-            // and D0 outside `RELEASABLE` makes every later `--release`
-            // decline. Only where the run's own pins are gone, which is
-            // teardown having run rather than a hard kill.
+            // A run tearing down between a pin's `was_exported` read and
+            // its `gpio_export` leaves D0 the probe's own with `ours` not
+            // recording it. Only where the run's own pins are gone, which
+            // is teardown having run rather than a hard kill.
             if exported(DIGITAL_D0) {
                 println!("  gpio{DIGITAL_D0} outlived it, so it is this probe's");
                 give_back(DIGITAL_D0);
@@ -651,8 +617,7 @@ mod imp {
         Ok(())
     }
 
-    /// Question 12: whether taking a pin libbela holds is refused, and
-    /// what it does to the run.
+    /// Question 12.
     fn destructive_question(ours: &[u32]) {
         // The pin, not the bookkeeping: `ours` is empty both when
         // libbela had the pin already and when the probe's own
@@ -674,8 +639,6 @@ mod imp {
         let fd = unsafe { gpio_setup(LED_RUNNING, ask_as) };
         println!("  gpio_setup = {fd} (its direction was {before})");
         if fd < 0 {
-            // A bare unexport is a different thing from a claim and a
-            // release, and the transcript would not say which.
             println!("  NOT proceeding: what follows would be a bare unexport");
             let now = direction(LED_RUNNING);
             if now != before && (before == "in" || before == "out") {

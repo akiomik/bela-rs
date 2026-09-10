@@ -53,11 +53,11 @@ BIN_DIR="${CARGO_TARGET_DIR:-$ROOT/target}/$TARGET/release/examples"
 REMOTE_DIR="/tmp/bela-rs-probe-gpio"
 
 # The run must outlive the probe by a margin: a probe that outlived it
-# would measure a board with nothing running. The probe takes well
-# under a second, so 30 against a 20-second bound leaves the with-run
-# questions ~26 seconds of run to happen inside. Every remote command is
-# bounded; an unbounded one is how a script waits forever on a board
-# that stopped answering.
+# would measure a board with nothing running. The probe takes well under
+# a second, so 30 against a 20-second bound leaves the with-run questions
+# ~26 seconds of run to happen inside. Every command that *runs* something
+# is bounded by `timeout`; the short ones carry only `ConnectTimeout`, so
+# a board that answers and then stops answering will hang them.
 RUN_SECONDS=30
 PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
@@ -112,9 +112,9 @@ cleanup() {
     undo="$undo esac; done; fi"
     # The group first: `timeout` leads one with the run in it —
     # measured, wrapper 18246 pgid 18246, run 18248 pgid 18246 — so it
-    # reaches the run before `run.pid` exists. Only `$w`, and only
-    # while alive: a group signal to a pid leading no group is an ESRCH
-    # no-op, but a recycled pid would make it signal strangers.
+    # reaches the run before `run.pid` exists. What keeps any of these
+    # off a recycled pid is the pid files being removed as soon as the
+    # numbers are reaped, not the `alive` tests.
     undo="$undo; if alive \$w; then kill -INT -\$w 2>/dev/null; fi"
     undo="$undo; for t in \$p \$r; do"
     undo="$undo if alive \$t; then kill -INT \$t 2>/dev/null; fi; done"
@@ -152,16 +152,16 @@ cleanup() {
   exit "$status"
 }
 
+# A probe killed between a change and its restore leaves it, and an
+# unexport keeps a pin's level and direction alike. Read-only: what to
+# put back is the operator's call, and a value write fails on an input.
 leftovers() {
   echo
-  echo "What this probe can leave behind, and nothing here puts back:"
-  echo "  - an LED trigger at none, if it was killed inside question 6"
-  echo "  - gpio584 or gpio637 driven, if it was killed between a write"
-  echo "    and the restore a line later"
-  echo "Both survive an unexport. With nothing running, check and clear with:"
+  echo "If it was killed part way, look at what it had changed. With nothing"
+  echo "running:"
   echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'"
   echo "  ssh $HOST 'for p in 584 637; do echo \$p > /sys/class/gpio/export;"
-  echo "    cat /sys/class/gpio/gpio\$p/value; echo 0 > /sys/class/gpio/gpio\$p/value;"
+  echo "    cat /sys/class/gpio/gpio\$p/direction /sys/class/gpio/gpio\$p/value;"
   echo "    echo \$p > /sys/class/gpio/unexport; done'"
 }
 
