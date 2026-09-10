@@ -104,9 +104,18 @@ cleanup() {
     # `--no-block`, so systemctl queues the job and returns instead of
     # taking sshd down under the connection and handing back 255 on
     # every successful run.
-    ssh -o ConnectTimeout=10 "$HOST" \
-      "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>/dev/null ||
-      echo "WARNING: could not reach $HOST to reboot it; its GPIO is as this left it" >&2
+    # Its stderr kept and its status not read as "unreachable": the
+    # remote command's own status comes back here too, so a board that
+    # answered and refused the reboot — inhibited, unit unavailable —
+    # would otherwise be reported as unreachable with the reason thrown
+    # away, on the one step whose failure leaves the GPIO as this left
+    # it.
+    # shellcheck disable=SC2029 # the remote path is meant to expand here
+    if ! why=$(ssh -o ConnectTimeout=10 "$HOST" \
+      "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>&1); then
+      echo "WARNING: $HOST was not rebooted; its GPIO is as this left it." >&2
+      echo "$why" >&2
+    fi
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and walk into
@@ -195,10 +204,19 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # probe's own pin as one libbela is holding — the distinction its
   # answers turn on. Nothing else needs giving back: the reboot at the
   # end covers the rest.
-  echo 585 > /sys/class/gpio/unexport 2>/dev/null
-  if [ -e /sys/class/gpio/gpio585 ]; then
-    echo 'gpio585 would not unexport, so pass 2 would report it as libbela pin'
-    exit 5
+  #
+  # Only where the probe reached question 8. A pass that refused at its
+  # entry guard did so because something else is holding pins, and this
+  # would then take gpio585 from that run — the act the guard exists to
+  # prevent. 585 is LED_UNDERRUN, which the probe derives as BANK0 + 46;
+  # the two are tied by hand, and the check below is what says so if the
+  # bases ever move.
+  if [ \$probe_status -eq 0 ]; then
+    echo 585 > /sys/class/gpio/unexport 2>/dev/null
+    if [ -e /sys/class/gpio/gpio585 ]; then
+      echo 'gpio585 would not unexport, so pass 2 would report it as a libbela pin'
+      exit 5
+    fi
   fi
   exit \$probe_status
 " || alone_status=$?

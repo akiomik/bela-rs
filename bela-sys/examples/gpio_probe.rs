@@ -339,6 +339,11 @@ mod imp {
         });
 
         println!("\n-- 6. led_set_trigger --");
+        // The unreadable-file arm below does not call it, so a pass in
+        // which every number took that arm would be evidence for twelve
+        // of the thirteen while exiting 0 — which the block after this
+        // one refuses for its own four.
+        let mut trigger_called = false;
         for &n in LED_NUMBERS {
             // Read first, and only write what can be put back: a file
             // that exists but will not say what it holds would
@@ -348,11 +353,13 @@ mod imp {
                     println!("  lednum {n}: not asked — its trigger could not be read");
                 } else {
                     let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+                    trigger_called = true;
                     println!("  lednum {n}: ret {ret} (no such file to begin with)");
                 }
                 continue;
             };
             let ret = unsafe { led_set_trigger(n, c"none".as_ptr()) };
+            trigger_called = true;
             // `led_set_trigger` answers -1 for a failed `open` and a
             // failed `write` alike, so ask the file: a write that failed
             // after the attribute took `none` would otherwise be skipped
@@ -374,6 +381,14 @@ mod imp {
                 // four triggers changed rather than one.
                 break;
             }
+        }
+
+        if !trigger_called {
+            return Err(
+                "every lednum named a file whose trigger could not be read, so \
+                 led_set_trigger went uncalled and this pass is not evidence for it"
+                    .to_owned(),
+            );
         }
 
         // So that a probe which links and runs is evidence for all
