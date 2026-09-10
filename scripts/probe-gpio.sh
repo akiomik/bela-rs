@@ -242,7 +242,13 @@ cleanup() {
     undo="$undo || { echo 'WARNING: pins were NOT released:'; echo \"\$out\"; tidy=7; }; fi"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
-      undo="$undo; systemctl start bela_daemon"
+      # Its status into `tidy` as well. The explicit `exit` below is
+      # what carries the release's refusal out, and it would otherwise
+      # be the last command — so a daemon that would not restart left
+      # the ssh at 0 and the script saying "The board answered", with
+      # the board's audio service down. The WARNING this reaches names
+      # `bela_daemon` precisely because it was written to catch this.
+      undo="$undo; systemctl start bela_daemon || tidy=7"
     fi
     # Carried out, and last, so that neither the daemon nor the removal
     # is skipped by it.
@@ -610,9 +616,6 @@ ssh -o ConnectTimeout=10 "$HOST" "
   if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
   exit \$release_status
 " || with_run_status=$?
-# The window is closed: pass 2's questions are done, and the release
-# inside the block above has run.
-WITH_RUN_RAN=no
 
 echo
 # Pass 1's own failure exits above, at the point where continuing
@@ -627,6 +630,8 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "Pass 2's ssh failed (255): a transport failure, which says nothing" >&2
     echo "about whether the probe ran or what it left." >&2
   elif [ "$with_run_status" -eq 4 ]; then
+    # Nothing ran, so there is no window to have been killed inside.
+    WITH_RUN_RAN=no
     echo "Pass 2 found no run to ask beside: see sine's output above. No" >&2
     echo "question was put and nothing was tidied. If its wrapper died while" >&2
     echo "the run itself kept going, that branch keeps run.pid and the" >&2
@@ -648,6 +653,9 @@ if [ "$with_run_status" -ne 0 ]; then
     echo "above stops wherever it stopped, and is not a complete measurement." >&2
     echo "The tidy-up after it did run." >&2
   elif [ "$with_run_status" -eq 124 ] || [ "$with_run_status" -eq 137 ]; then
+    # The probe itself returned 0, so question 11 put back what it
+    # wrote; only the release after it went wrong.
+    WITH_RUN_RAN=no
     echo "Pass 2's tidy-up hit its own timeout: the questions were asked and" >&2
     echo "the transcript above stands, but a pin may be left exported." >&2
     if [ "$with_run_status" -eq 137 ]; then
@@ -655,15 +663,29 @@ if [ "$with_run_status" -ne 0 ]; then
       echo "further than wherever it was." >&2
     fi
   elif [ "$with_run_status" -eq 3 ]; then
+    # As above: the probe returned 0.
+    WITH_RUN_RAN=no
     echo "Pass 2 asked its questions — the transcript above stands — but the" >&2
     echo "release that follows them declined, so a pin may be left exported." >&2
     echo "See its message above." >&2
   else
+    if [ "$with_run_status" -eq 2 ]; then
+      # As in pass 1: a level the probe could not put back exits 6, the
+      # precedence rule in `main` putting that ahead of "could not ask".
+      # So a 2 is provably a pass that left nothing driven. An
+      # unexpected status is not, and does not clear it.
+      WITH_RUN_RAN=no
+    fi
     echo "Pass 2 exited $with_run_status: it could not ask, rather than" >&2
     echo "getting a surprising answer." >&2
   fi
   exit 1
 fi
+# Pass 2 returned 0, so question 11 put back whatever it wrote — the
+# probe reports it otherwise. 5 and 255 deliberately do not clear it:
+# 5 is the probe killed part way through, which is the window that
+# advice is for, and 255 says nothing about whether it ran.
+WITH_RUN_RAN=no
 echo "The board answered. Record the findings in docs/board-facts.md."
 echo
 echo "If a pin is still exported above that was not before, this probe"
