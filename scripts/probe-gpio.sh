@@ -110,6 +110,8 @@ INTERRUPTED=0
 # nothing to have left behind and telling an operator to go and check
 # four files is noise.
 PROBE_RAN=no
+# The same, for pass 2's own window; see where it is armed.
+WITH_RUN_RAN=no
 # Whether the handler has already run. On a signal it runs, exits, and
 # the EXIT trap runs it again; without this the second pass opens
 # another restore ssh — whose failure would report pins and a daemon
@@ -234,18 +236,33 @@ cleanup() {
     # daemon is stopped and so before this is copied: without the guard
     # an interrupt in that window reports pins it never claimed, and so
     # does the second run of this handler, after `$REMOTE_DIR` is gone.
+    undo="$undo; tidy=0"
     undo="$undo; if [ -x $REMOTE_DIR/gpio_probe ]; then"
     undo="$undo out=\$(timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release 2>&1)"
-    undo="$undo || { echo 'WARNING: pins were NOT released:'; echo \"\$out\"; }; fi"
+    undo="$undo || { echo 'WARNING: pins were NOT released:'; echo \"\$out\"; tidy=7; }; fi"
     undo="$undo; rm -rf $REMOTE_DIR"
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon"
     fi
+    # Carried out, and last, so that neither the daemon nor the removal
+    # is skipped by it.
+    undo="$undo; exit \$tidy"
+    # And into the exit status. The WARNING above is written on the
+    # board's stdout, where a scripted caller does not see it, and the
+    # compound that prints it succeeds — so a run whose questions all
+    # answered and whose tidy-up declined used to print "The board
+    # answered" and exit 0 over a board left claimed. 7, because it is
+    # neither a pass that failed (1) nor a usage error (2), and because
+    # the questions above it did stand.
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
-    ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
+    if ! ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null; then
       echo "WARNING: could not restore $HOST — check for a leftover sine" \
         "process, an exported gpio584, gpio585 or gpio637," \
         "$REMOTE_DIR, and bela_daemon" >&2
+      if [ "$status" -eq 0 ]; then
+        status=7
+      fi
+    fi
   fi
   # Question 6 sets an LED trigger to `none` and puts it back a line
   # later, and nothing here can cover a probe killed in between — the
@@ -269,6 +286,18 @@ cleanup() {
     echo "    cat /sys/class/gpio/gpio584/value;" >&2
     echo "    echo 0 > /sys/class/gpio/gpio584/value;" >&2
     echo "    echo 584 > /sys/class/gpio/unexport'" >&2
+  fi
+  # Pass 2's window, which the flag above is cleared before. Only with
+  # --destructive: question 11's write takes only where gpio637 reads
+  # `out`, and that is what --destructive reaches.
+  if [ "$status" -ne 0 ] && [ "$WITH_RUN_RAN" = yes ] && [ -n "$DESTRUCTIVE" ]; then
+    echo "If this run was interrupted, gpio637 may be left driven: question 11" >&2
+    echo "writes it and puts it back a line later, and nothing here restores a" >&2
+    echo "pin's level. With nothing running, read and clear it with:" >&2
+    echo "  ssh $HOST 'echo 637 > /sys/class/gpio/export;" >&2
+    echo "    cat /sys/class/gpio/gpio637/value;" >&2
+    echo "    echo 0 > /sys/class/gpio/gpio637/value;" >&2
+    echo "    echo 637 > /sys/class/gpio/unexport'" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and then walk into
@@ -469,6 +498,11 @@ fi
 # leave one at `none`, so the advice below would send an operator to
 # check four files this run cannot have touched.
 PROBE_RAN=no
+# Pass 2's own residue, and only under `--destructive`: question 11
+# writes gpio637 and puts it back a line later, and that write can only
+# take where the pin's direction reads `out`, which is the case
+# `--destructive` exists to reach. Nothing here restores a level.
+WITH_RUN_RAN=yes
 
 echo
 echo "=============================================================="
@@ -576,6 +610,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
   exit \$release_status
 " || with_run_status=$?
+# The window is closed: pass 2's questions are done, and the release
+# inside the block above has run.
+WITH_RUN_RAN=no
 
 echo
 # Pass 1's own failure exits above, at the point where continuing

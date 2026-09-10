@@ -956,7 +956,9 @@ than off this board.
 
 **An unexport does not undo a drive.** Read by hand, not by the probe:
 looking at a pin after unexporting it means exporting it again, and no
-question does that. So this row is reproduced by running
+question does that. So this row is reproduced by running, with nothing
+rendering — the unexports below would otherwise take the running LED
+from libbela, which is the act `--destructive` exists to gate:
 
 ```sh
 echo 584 > /sys/class/gpio/export

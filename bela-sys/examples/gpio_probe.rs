@@ -870,6 +870,48 @@ mod imp {
         Ok(())
     }
 
+    /// Asks each of the four pins for itself and returns the ones that
+    /// went from free to exported while it did — the probe's own, to be
+    /// given back, or the closing listing reports its leak as an answer.
+    /// `enable_led` off is what makes that reachable: libbela claims
+    /// neither LED then.
+    fn claim_and_read(claimed: &[(&str, u32)]) -> Vec<u32> {
+        let mut ours: Vec<u32> = Vec::new();
+        for &(name, pin) in claimed {
+            println!("\n-- {name} (gpio{pin}) --");
+            // One read, used twice. The run can end between two of
+            // them — `sine` reaching its own timeout while this is on
+            // the fourth pin — and then the line printed and the fact
+            // `ours` is built from would disagree about who held the
+            // pin, which is the distinction every answer here turns on.
+            let was_exported = exported(pin);
+            println!("  exported before we ask: {was_exported}");
+            println!("  direction: {}", direction(pin));
+            println!("  gpio_export = {}", unsafe { gpio_export(pin) });
+            if !was_exported && exported(pin) {
+                if pin == STOP_BUTTON {
+                    // Exported by this probe rather than found, and not
+                    // given back: an exported gpio586 is the resting
+                    // state this board is documented as having, which
+                    // is why `RELEASABLE` excludes it and why libbela
+                    // opens it with `unexport = false`. Reachable
+                    // because `PRU::initialise` opens it after the
+                    // digital channels this pass gates on — the four
+                    // seconds the script waits make it unlikely, not
+                    // impossible.
+                    println!("  it was not exported until this probe asked, and is left");
+                    println!("  exported on purpose: that is this board's resting state");
+                } else {
+                    ours.push(pin);
+                }
+            }
+            let mut value: PIN_VALUE = 0xdead_beef;
+            let ret = unsafe { gpio_get_value(pin, &raw mut value) };
+            println!("  gpio_get_value = {ret}, *value {value:#x}");
+        }
+        ours
+    }
+
     /// Says whether a run was still up when the with-run questions
     /// finished, and fails the pass where it was not: answers gathered
     /// after a run ended are answers about an idle board under a
@@ -958,29 +1000,7 @@ mod imp {
         }
 
         // 9 and 10: claiming and reading pins libbela is holding.
-        // Whatever we exported that libbela had not — which happens
-        // with `enable_led` off, where it claims neither LED — is ours
-        // to give back, or the closing listing reports our own leak as
-        // an answer.
-        let mut ours: Vec<u32> = Vec::new();
-        for (name, pin) in claimed {
-            println!("\n-- {name} (gpio{pin}) --");
-            // One read, used twice. The run can end between two of
-            // them — `sine` reaching its own timeout while this is on
-            // the fourth pin — and then the line printed and the fact
-            // `ours` is built from would disagree about who held the
-            // pin, which is the distinction every answer here turns on.
-            let was_exported = exported(pin);
-            println!("  exported before we ask: {was_exported}");
-            println!("  direction: {}", direction(pin));
-            println!("  gpio_export = {}", unsafe { gpio_export(pin) });
-            if !was_exported && exported(pin) {
-                ours.push(pin);
-            }
-            let mut value: PIN_VALUE = 0xdead_beef;
-            let ret = unsafe { gpio_get_value(pin, &raw mut value) };
-            println!("  gpio_get_value = {ret}, *value {value:#x}");
-        }
+        let ours = claim_and_read(&claimed);
 
         // 11: writing to a pin the PRU drives. On this board the pin
         // is an input and the write cannot take, which is the answer
