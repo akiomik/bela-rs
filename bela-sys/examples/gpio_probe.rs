@@ -1088,7 +1088,13 @@ mod imp {
                     // stopped reading.
                     let now = direction(LED_RUNNING);
                     let readable = |d: &str| d == "in" || d == "out";
-                    if now == direction_before {
+                    // `readable(&now)` first, and not only in the arm
+                    // below: `direction` renders a read failure as the
+                    // error's own text, so a pin whose file has gone
+                    // gives the same string twice and `now ==
+                    // direction_before` would call that "unchanged" —
+                    // three assertions about a pin that cannot be read.
+                    if readable(&now) && now == direction_before {
                         println!("  its direction is unchanged, so nothing to put back");
                         // The direction, not the level. libbela's "only
                         // write if it has changed" guard never fires: it

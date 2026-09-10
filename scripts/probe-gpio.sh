@@ -322,9 +322,21 @@ alone_status=0
 # can take fifteen seconds: an interrupt inside it would otherwise send
 # an operator to check four LED triggers that question 6 had not reached.
 echo "-- giving back anything an earlier invocation left --"
+pre_release=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "cd $REMOTE_DIR &&
-  timeout -s INT -k 5 15 ./gpio_probe --release" || true
+  timeout -s INT -k 5 15 ./gpio_probe --release" || pre_release=$?
+# Not swallowed. The probe declines with 3 for two different states —
+# a run is up, or a pin refused to unexport — and only the first is the
+# one pass 1's guard goes on to explain. On the second, the advice
+# below and in the probe, that `--release` gives a claimed pin back, is
+# advice this release has just disproved.
+if [ "$pre_release" -ne 0 ]; then
+  echo "The release above did not finish (exit $pre_release); its message says" >&2
+  echo "which state it found. Where it names a pin that would not unexport, the" >&2
+  echo "advice that follows about --release giving a pin back does not apply to" >&2
+  echo "that pin: the same call has already refused it." >&2
+fi
 echo
 
 # Question 6 touches the LED triggers, and it is in this pass only. The
