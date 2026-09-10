@@ -884,11 +884,15 @@ rounds.
   './sine'` matches the ssh command line of any script that mentions
   the binary, this one included, and takes the connection down with
   the run.
-- **What works is the recorded pid.** `kill -INT` on the pid of the
-  `timeout` managing the run is relayed to the run, libbela's teardown
-  goes through, and its exports are released: measured with fifteen
-  `gpio6*` entries during a run and `gpio586` alone one second after
-  the signal.
+- **What works is a pid, however it was come by.** `kill -INT` on the
+  pid of the `timeout` managing the run is relayed to the run,
+  libbela's teardown goes through, and its exports are released:
+  measured with fifteen `gpio6*` entries during a run and `gpio586`
+  alone one second after the signal. `scripts/probe-gpio.sh` reaches
+  the run rather than the wrapper, and finds it through
+  `/proc/<pid>/exe`, which still names the binary — a pid nobody had to
+  write down and that cannot have been recycled between the writing and
+  the reading.
 
 ## Reaching a pin through sysfs
 

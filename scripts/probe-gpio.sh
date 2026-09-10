@@ -135,7 +135,10 @@ cleanup() {
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon || echo 'WARNING: bela_daemon did not start'"
     fi
-    # A probe killed between a change and its restore leaves it, and an
+    # Exporting a pin that is already exported fails and, worse, the
+# unexport after it would remove an export the reader did not make — so
+# the check looks before it claims. A probe killed between a change and
+# its restore leaves it, and an
     # unexport keeps a pin's level and direction alike. Printed on every
     # exit that got as far as touching the board, which is where an
     # interrupt can have left something — and before the tidy-up, whose
@@ -158,9 +161,13 @@ leftovers() {
   echo "If it was killed part way, look at what it had changed. With nothing"
   echo "running:"
   echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'"
-  echo "  ssh $HOST 'for p in 584 637; do echo \$p > /sys/class/gpio/export;"
-  echo "    cat /sys/class/gpio/gpio\$p/direction /sys/class/gpio/gpio\$p/value;"
-  echo "    echo \$p > /sys/class/gpio/unexport; done'"
+  echo "  ssh $HOST 'for p in 584 637; do d=/sys/class/gpio/gpio\$p;"
+  echo "    if [ -d \$d ]; then cat \$d/direction \$d/value;"
+  echo "    else echo \$p > /sys/class/gpio/export; cat \$d/direction \$d/value;"
+  echo "      echo \$p > /sys/class/gpio/unexport; fi; done'"
+  echo "The direction to put back is in the transcript above, on the line"
+  echo "reading \"its direction before any of this\": an unexport keeps a"
+  echo "direction, and only a pass that reached its end restores one."
 }
 
 # 255 is ssh's own and says nothing about whether the probe ran or what
