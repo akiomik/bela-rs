@@ -178,6 +178,16 @@ mod imp {
     /// Called from each place the alone pass can stop after question 2
     /// has written `out` into `direction`, which drives the line low.
     fn put_back(before: Option<&(String, PIN_VALUE)>) {
+        // `gpio_setup` exports before it opens, so its failure has two
+        // shapes: the export took — the trap this probe documents — or
+        // the export itself failed and the pin was never claimed. In the
+        // second, every call below fails on a directory that is not
+        // there and the report would send an operator to a board that is
+        // fine.
+        if !exported(LED_RUNNING) {
+            println!("  gpio{LED_RUNNING} is not exported, so nothing here was changed");
+            return;
+        }
         let Some((d, v)) = before else {
             println!("  gpio_set_value(LOW) = {}", unsafe {
                 gpio_set_value(LED_RUNNING, arg::LOW)
@@ -495,8 +505,8 @@ mod imp {
         }
 
         // So that a probe which links and runs is evidence for all
-        // thirteen symbols, not the nine this pass needs. `gpio_set_value`
-        // also does work here: it is what puts the pin back to LOW.
+        // thirteen symbols, not the nine this pass needs.
+        // `gpio_set_value` also does work here, in `put_back`.
         println!("\n-- the remaining four --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 < 0 {

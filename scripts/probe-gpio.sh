@@ -311,9 +311,16 @@ ssh -o ConnectTimeout=10 "$HOST" "
   echo '-- the run has now ended; its last lines --'
   tail -5 sine.log
   echo
-  echo '-- question 13: what is claimed after both processes exited --'
-  ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
-  echo
+  # Only where the probe reached it, as pass 1 does with question 8: a
+  # pass that refused at its entry guard, or was killed part way, never
+  # asked question 13, and this listing under that heading is a board at
+  # rest — or the probe's own leftover — copied into the record as the
+  # answer to a question nobody put.
+  if [ \$probe_status -eq 0 ]; then
+    echo '-- question 13: what is claimed after both processes exited --'
+    ls /sys/class/gpio | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
+    echo
+  fi
   # After the listing, so question 13 answers before anything is
   # tidied, and after the wait, so the release is not looking at
   # libbela's pins.
