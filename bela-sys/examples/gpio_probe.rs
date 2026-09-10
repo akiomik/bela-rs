@@ -222,11 +222,18 @@ mod imp {
     /// `DIGITAL_D0` is not here either, for a different reason from
     /// the stop button's: `release_all` returns before the loop
     /// whenever that pin is exported, so the loop could only ever be
-    /// reached with it already free. Neither pass can leak it — the
-    /// alone pass never touches it, and the with-run pass refuses to
-    /// start unless libbela has already exported it — so listing it
-    /// would only print `was free, now free` on every release, in a
-    /// transcript whose point is telling claimed pins from free ones.
+    /// reached with it already free, and listing it would print `was
+    /// free, now free` on every release in a transcript whose point is
+    /// telling claimed pins from free ones.
+    ///
+    /// That leaves one way for it to be claimed and not given back, and
+    /// `still_a_run` is where it is handled: the with-run pass reads
+    /// each pin's `was_exported` two lines before exporting it, so a
+    /// run tearing down in that window leaves the export the probe's
+    /// own with `ours` not recording it. Being outside this list *and*
+    /// outside `a_run_is_up`'s exemptions is what makes that worth
+    /// handling there — one left behind makes every later `--release`
+    /// decline.
     const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN];
 
     /// Whether anything on the board looks like a run in progress.
@@ -600,7 +607,8 @@ mod imp {
                 eprintln!(
                     "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go \
                      back; the line is not known to be low, and an unexport keeps \
-                     whatever it holds"
+                     whatever it holds. The link-only block below writes it low again \
+                     and reads it back, which is what says how this ended."
                 );
                 *left_changed = true;
             }
@@ -743,6 +751,18 @@ mod imp {
             println!("  gpio_set_value(LOW) = {}", unsafe {
                 gpio_set_value(LED_RUNNING, arg::LOW)
             });
+            // Read back, because this is the last chance to: question 4
+            // reports a level it could not put back, and three writes
+            // since — this one, `gpio_setup` and `gpio_set_dir`, both of
+            // which drive the line low — may have put it back after
+            // that line was printed. The pin is unexported a moment
+            // from now and nothing can read it again. The status stays
+            // 6 either way: a `value` write that refused is worth
+            // stopping pass 2 for, and this settles what was left
+            // rather than whether anything was.
+            let mut level: PIN_VALUE = 0xdead_beef;
+            let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut level) };
+            println!("  the line now reads: ret {read}, *value {level:#x}");
             // `gpio_dismiss` returns `0` whatever happened, so the
             // pin is what to check, not the call. Left exported it
             // would show up in question 8's listing as a second leak
@@ -1230,11 +1250,6 @@ mod imp {
         Ok(())
     }
 
-    /// What `/sys/class/gpio` holds, with the `gpiochip*` directories
-    /// and the `export`/`unexport` attribute files left out: all of
-    /// them are always there and none says who claimed what. What is
-    /// left is exactly the set of claimed pins, so two listings can be
-    /// compared directly.
     /// The pins a run is holding right now, minus the four this probe
     /// asks about — so a later reading of the same set answers "is that
     /// run still up" without the answer depending on what the probe
@@ -1272,6 +1287,11 @@ mod imp {
             .collect())
     }
 
+    /// What `/sys/class/gpio` holds, with the `gpiochip*` directories
+    /// and the `export`/`unexport` attribute files left out: all of
+    /// them are always there and none says who claimed what. What is
+    /// left is exactly the set of claimed pins, so two listings can be
+    /// compared directly.
     fn listing() -> String {
         let Ok(entries) = fs::read_dir("/sys/class/gpio") else {
             return "<unreadable>".to_owned();
