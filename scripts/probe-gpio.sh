@@ -18,17 +18,12 @@
 # `--destructive` adds question 12 and widens question 11; both contend
 # with a live run, which is why they are opt-in.
 #
-# What is put back: `bela_daemon`, the remote directory, the run, and
-# the two LED pins — `gpio_probe --release`, before pass 1, after each
-# pass and from the handler. It declines while any other pin is
-# exported, which does not cover a run with `enable_led` on and both
-# `use_analog` and `use_digital` off: that run exports the two LEDs and
-# nothing else, and this takes them. Losing an LED export is measured as
-# something a run does not notice. Anything the probe changed and could not
-# put back it prints as `LEFT CHANGED`, where it happened. A probe
-# killed between a change and its restore prints nothing, and nothing
-# here can print it for it: `/sys/class/leds` and `/sys/class/gpio` are
-# where that shows.
+# This leaves the board's GPIO in an arbitrary state, and then reboots
+# it. Exports, directions, levels and LED triggers all survive an
+# unexport, and a `kill -9` runs none of the probe's own restore code —
+# so no amount of restoring here could be complete, while a reboot is,
+# and costs no code. The board is away for about forty seconds at the
+# end of every run, including a Ctrl-C.
 set -eu
 
 HOST="root@bela.local"
@@ -69,7 +64,6 @@ RUN_SECONDS=30
 PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
 
-DAEMON_WAS_RUNNING=0
 BOARD_PREPARED=no
 # Set by the traps to the status that signal owes, because `$?` when a
 # signal lands is whatever the last command left — 0 if it arrived
@@ -89,64 +83,30 @@ cleanup() {
   fi
   CLEANED=yes
   if [ "$BOARD_PREPARED" = yes ]; then
-    # One connection: an unreachable board makes each of these cost a
-    # full ConnectTimeout.
+    # A reboot, not a tidy-up. Everything this probe changes — the
+    # exports, the directions, the levels, the LED triggers — survives an
+    # unexport, and a `kill -9` runs none of the probe's own restore
+    # code, so no amount of it can put the board back. A reboot puts all
+    # of it back, and it also ends any run still holding the audio
+    # device, which is what the kill ladder here used to be for.
     #
-    # The kill comes first. By executable, not by a pid written down:
-    # libbela renames the process — `comm` becomes `sine:<pid>:<n>`,
-    # measured — so `pkill -x sine` matches nothing and reports success,
-    # and `pkill -f ./sine` matches the ssh running this script, while
-    # `/proc/<pid>/exe` still points at the binary. A pid file needs
-    # writing, removing when the number is reaped, and reading back
-    # under the assumption that neither the write nor the removal was
-    # interrupted; this needs none of that and cannot signal a recycled
-    # number. The trailing glob matches a deleted binary, which
-    # `readlink` marks.
+    # What it costs: about forty seconds, and the board is gone for them.
+    # This script already stops `bela_daemon` and runs two audio programs
+    # back to back, so it is not something to run beside other work; and
+    # a board left with an arbitrary GPIO state is worse than a board
+    # that is briefly away. `bela_daemon` comes back on its own if it is
+    # enabled, which is why nothing here records whether it was running.
     #
-    # What it costs: a run that has not `execve`d yet is invisible here,
-    # where a pid file would have named it. That window ends before
-    # `Bela_startAudio` — so the run is not holding the audio device or
-    # any pin inside it, and if `rm -rf` below removes the binary first,
-    # the wrapper fails to start it at all. Both outcomes are the one
-    # this is for.
-    #
-    # Graceful and bounded: `-9` skips libbela's teardown and orphans
-    # its twenty-two exports, and `-INT` returns as soon as the signal
-    # is queued, so the daemon below would start while the run still
-    # held the device. The `timeout` wrapper is left alone — it exits
-    # when its child does.
-    undo="alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&"
-    undo="$undo ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }"
-    undo="$undo; p="
-    undo="$undo; for c in /proc/[0-9]*; do"
-    undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
-    undo="$undo $REMOTE_DIR/sine*) p=\"\$p \${c#/proc/}\" ;;"
-    undo="$undo esac; done"
-    undo="$undo; some() { for t in \$p; do alive \$t && return 0; done; return 1; }"
-    undo="$undo; for t in \$p; do kill -INT \$t 2>/dev/null; done"
-    undo="$undo; n=0; while some && [ \$n -lt 6 ]; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; for t in \$p; do"
-    undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
-    # And any probe of ours still running, or the release below would
-    # give back pins it then exports again.
-    undo="$undo; for c in /proc/[0-9]*; do"
-    undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
-    undo="$undo $REMOTE_DIR/gpio_probe*) kill -9 \${c#/proc/} 2>/dev/null ;;"
-    undo="$undo esac; done"
-    # Then the pins. Its stderr onto stdout, because the ssh below
-    # discards remote stderr and a refusal written there would go
-    # nowhere. Guarded on the binary: BOARD_PREPARED is set before it
-    # is copied.
-    undo="$undo; if [ -x $REMOTE_DIR/gpio_probe ]; then"
-    undo="$undo out=\$(timeout -s INT -k 5 15 $REMOTE_DIR/gpio_probe --release 2>&1)"
-    undo="$undo || { echo 'WARNING: pins were NOT released:'; echo \"\$out\"; }; fi"
-    undo="$undo; rm -rf $REMOTE_DIR"
-    if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
-      undo="$undo; systemctl start bela_daemon || echo 'WARNING: bela_daemon did not start'"
-    fi
-    # shellcheck disable=SC2029 # the remote paths are meant to expand here
-    ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
-      echo "WARNING: could not reach $HOST to restore it; nothing above says what ran" >&2
+    # `rm -rf` first, in the same call, because `/tmp` is not guaranteed
+    # to be a tmpfs on every image.
+    echo "Rebooting $HOST: this probe leaves its GPIO in an arbitrary state." >&2
+    # shellcheck disable=SC2029 # the remote path is meant to expand here
+    # `--no-block`, so systemctl queues the job and returns instead of
+    # taking sshd down under the connection and handing back 255 on
+    # every successful run.
+    ssh -o ConnectTimeout=10 "$HOST" \
+      "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>/dev/null ||
+      echo "WARNING: could not reach $HOST to reboot it; its GPIO is as this left it" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and walk into
@@ -183,9 +143,6 @@ trap 'INTERRUPTED=130; cleanup' INT
 trap 'INTERRUPTED=143; cleanup' TERM
 
 echo "Preparing $HOST..."
-if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>/dev/null; then
-  DAEMON_WAS_RUNNING=1
-fi
 # The directory goes before the flag is armed: `cleanup`'s ssh is
 # allowed to fail, so an earlier run can have left the binaries behind,
 # and the handler's exe scan would find one of those rather than
@@ -212,20 +169,6 @@ done
 # shellcheck disable=SC2029 # the remote path is meant to expand here
 ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/gpio_probe $REMOTE_DIR/sine"
 
-# Before the questions, not only after them: question 8 answers by
-# leaving gpio585 exported, and it can only answer where the pin was
-# free to begin with. Where this declines a run is up, and the probe's
-# own guard names the pin a moment later.
-echo
-echo "-- giving back anything an earlier invocation left --"
-pre_release=0
-# shellcheck disable=SC2029
-ssh -o ConnectTimeout=10 "$HOST" "cd $REMOTE_DIR &&
-  timeout -s INT -k 5 15 ./gpio_probe --release" || pre_release=$?
-if [ "$pre_release" -ne 0 ]; then
-  echo "That release did not finish (exit $pre_release); its message says why." >&2
-fi
-
 echo
 echo "=============================================================="
 echo "Pass 1: the probe alone"
@@ -250,16 +193,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
     echo \"\$claimed\" | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
     echo
   fi
-  # Question 8 leaves one pin exported on purpose and the listing above
-  # is its answer. Give it back, so pass 2 starts from the resting
-  # state; the probe declines this where a run is up.
-  #
-  # Its status counts, unlike pass 2's: a gpio585 still here is one
-  # pass 2 would report as libbela's.
-  release_status=0
-  timeout -s INT -k 5 15 ./gpio_probe --release || release_status=\$?
-  if [ \$probe_status -ne 0 ]; then exit \$probe_status; fi
-  exit \$release_status
+  # Question 8 leaves gpio585 exported on purpose and the listing above
+  # is its answer. Pass 2 has to start without it, or it reports the
+  # probe's own pin as one libbela is holding — the distinction its
+  # answers turn on. Nothing else needs giving back: the reboot at the
+  # end covers the rest.
+  echo 585 > /sys/class/gpio/unexport 2>/dev/null || true
+  exit \$probe_status
 " || alone_status=$?
 
 if [ "$alone_status" -ne 0 ]; then
@@ -327,10 +267,6 @@ ssh -o ConnectTimeout=10 "$HOST" "
     echo \"\$claimed\" | grep -vE 'gpiochip|^export\$|^unexport\$' | tr '\n' ' '
     echo
   fi
-  # After the listing, so question 13 answers before anything is
-  # tidied, and after the wait, so the release is not looking at
-  # libbela's pins.
-  timeout -s INT -k 5 15 ./gpio_probe --release || true
   exit \$probe_status
 " || with_run_status=$?
 

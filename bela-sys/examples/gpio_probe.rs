@@ -23,6 +23,13 @@
 //!
 //! 8 and 13 are answered by the script, which lists `/sys/class/gpio`
 //! once this process has exited — the only place they can be seen from.
+//!
+//! It leaves the board's GPIO in whatever state its last question left:
+//! exports, directions and levels all survive an unexport, and a probe
+//! killed mid-question leaves whatever it was holding. Putting that back
+//! from here cannot be done — a `kill -9` runs none of this code — so
+//! nothing here tries. `scripts/probe-gpio.sh` reboots the board
+//! instead, which puts all of it back and needs no code at all.
 
 fn main() {
     imp::main();
@@ -93,11 +100,6 @@ mod imp {
     /// have `usr1`..`usr4`, so the sweep covers both.
     const LED_NUMBERS: &[u32] = &[0, 1, 2, 3, 4];
 
-    /// The two pins `--release` gives back. The stop button is excluded
-    /// because unexporting it would change the resting state a later
-    /// run measures.
-    const RELEASABLE: &[u32] = &[LED_RUNNING, LED_UNDERRUN];
-
     fn trigger_path(lednum: u32) -> String {
         format!("/sys/class/leds/beaglebone:green:usr{lednum}/trigger")
     }
@@ -155,80 +157,16 @@ mod imp {
             .collect())
     }
 
-    /// Whether anything looks like a run in progress. The LEDs cannot be
-    /// the signal — they are what `--release` gives back — and the stop
-    /// button outlives every run.
+    /// Whether anything looks like a run in progress: any exported pin
+    /// other than the two LEDs, which this pass claims itself, and the
+    /// stop button, which outlives every run.
     ///
-    /// So a run with `use_analog` and `use_digital` both off exports
-    /// nothing this can see, and `--release` will take its two LEDs.
-    /// Not closable: sysfs offers no ownership, so two exported LEDs
-    /// are the same bytes whoever left them, and telling them apart is
-    /// the ledger `release_all` says why it does not keep. The cost is
-    /// measured — `docs/board-facts.md` records that a run does not
-    /// notice losing an LED export — and `bela/examples/sine`, which
-    /// the script runs, has both on.
+    /// A run with `use_analog` and `use_digital` both off exports
+    /// nothing this can see. sysfs offers no ownership, so two exported
+    /// LEDs are the same bytes whoever left them; `bela/examples/sine`,
+    /// which the script runs, has both settings on.
     fn a_run_is_up() -> Result<bool, String> {
         Ok(!other_pins()?.is_empty() || exported(DIGITAL_D0))
-    }
-
-    /// Puts `LED_RUNNING` back to what question 1 read, while it is
-    /// still exported — the last moment it can be, an unexport keeping a
-    /// direction and a level alike.
-    ///
-    /// Called from each place the alone pass can stop after question 2
-    /// has written `out` into `direction`, which drives the line low.
-    fn put_back(before: Option<&(String, PIN_VALUE)>, written: bool) {
-        // An unexported pin cannot be reached from here, and whether
-        // that matters is the caller's to know: `gpio_setup` exports
-        // before it opens, so a failure at its export step leaves a pin
-        // nothing has written to, while question 5's `gpio_dismiss`
-        // unexports one that questions 2 and 4 did write to — and a
-        // level and a direction both survive an unexport.
-        if !exported(LED_RUNNING) {
-            if written {
-                eprintln!(
-                    "LEFT CHANGED: gpio{LED_RUNNING} was written and is no longer \
-                     exported, so nothing here can put it back; an unexport keeps what \
-                     the line holds"
-                );
-            } else {
-                println!("  gpio{LED_RUNNING} is not exported and nothing wrote to it");
-            }
-            return;
-        }
-        let Some((d, v)) = before else {
-            println!("  gpio_set_value(LOW) = {}", unsafe {
-                gpio_set_value(LED_RUNNING, arg::LOW)
-            });
-            println!("  what it held before this pass was not readable, so nothing here");
-            println!("  puts it back; it is left as the calls above left it");
-            return;
-        };
-        let out = d == "out";
-        println!("  gpio_set_dir({d}) = {}", unsafe {
-            gpio_set_dir(LED_RUNNING, if out { arg::OUTPUT } else { arg::INPUT })
-        });
-        // An input holds no level — writing one returns `-EPERM`, which
-        // is what question 11 measures on `D0` — so putting the
-        // direction back is what puts an input's level back. The call is
-        // made either way, being one of the four the link block needs.
-        let want = if out && *v != 0 { arg::HIGH } else { arg::LOW };
-        let ret = unsafe { gpio_set_value(LED_RUNNING, want) };
-        if out {
-            println!("  gpio_set_value({v:#x}), putting the level back = {ret}");
-        } else {
-            println!("  gpio_set_value(LOW) on an input, for the link = {ret}");
-        }
-        let now_dir = direction(LED_RUNNING);
-        let mut now: PIN_VALUE = 0xdead_beef;
-        let read = unsafe { gpio_get_value(LED_RUNNING, &raw mut now) };
-        println!("  it now reads: direction {now_dir}, ret {read}, *value {now:#x}");
-        if read != 0 || &now_dir != d || (out && now != *v) {
-            eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} was {d} {v:#x} and reads {now_dir} \
-                 {now:#x}; an unexport keeps both"
-            );
-        }
     }
 
     /// Unexports `pin` and then asks the pin, `gpio_unexport` being the
@@ -245,50 +183,6 @@ mod imp {
         }
     }
 
-    /// Gives back the two LED pins whether or not this invocation
-    /// claimed them. Tracking which were ours needs a ledger that an
-    /// interrupt can still land inside; three attempts at one were the
-    /// substance of eight review rounds.
-    fn release_all() -> Result<(), String> {
-        println!("== releasing the two LED pins, claimed or not ==");
-        let mut holding = other_pins().map_err(|e| format!("NOT released: {e}"))?;
-        if exported(DIGITAL_D0) {
-            holding.push(DIGITAL_D0);
-        }
-        if !holding.is_empty() {
-            holding.sort_unstable();
-            let named: Vec<String> = holding.iter().map(|p| format!("gpio{p}")).collect();
-            return Err(format!(
-                "NOT released: {} exported, so either a run is up and the LEDs are its, \
-                 or one was killed hard enough to skip libbela's teardown. Either way \
-                 they are not this probe's to take back.",
-                named.join(" ")
-            ));
-        }
-        let mut held = Vec::new();
-        for &pin in RELEASABLE {
-            let was = exported(pin);
-            let ret = unsafe { gpio_unexport(pin) };
-            println!(
-                "  gpio_unexport({pin}) = {ret} (was {}, now {})",
-                if was { "exported" } else { "free" },
-                if exported(pin) { "exported" } else { "free" }
-            );
-            if exported(pin) {
-                held.push(pin.to_string());
-            }
-        }
-        // The pin, not the return: `gpio_unexport` refuses silently,
-        // which question 5 measures.
-        if held.is_empty() {
-            return Ok(());
-        }
-        Err(format!(
-            "NOT released: gpio{} would not unexport, silently",
-            held.join(", gpio")
-        ))
-    }
-
     pub(crate) fn main() {
         // Before anything is printed. libbela reports `gpio_setup`'s two
         // failures with C `printf`, and C stdio block-buffers to a pipe,
@@ -299,22 +193,10 @@ mod imp {
         let args: Vec<String> = env::args().skip(1).collect();
         if let Some(bad) = args
             .iter()
-            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive" | "--release"))
+            .find(|a| !matches!(a.as_str(), "--with-run" | "--destructive"))
         {
             eprintln!("unknown argument: {bad}");
             process::exit(2);
-        }
-
-        if args.iter().any(|a| a == "--release") {
-            if args.len() != 1 {
-                eprintln!("--release does its work and stops; it takes nothing else");
-                process::exit(2);
-            }
-            if let Err(why) = release_all() {
-                eprintln!("{why}");
-                process::exit(2);
-            }
-            return;
         }
 
         let with_run = args.iter().any(|a| a == "--with-run");
@@ -376,26 +258,6 @@ mod imp {
         });
         give_back(LED_RUNNING);
 
-        // Read while the pin is still exported: question 2 writes `out`
-        // into `direction`, which drives the line low, and an unexport
-        // keeps both. This is the file's own rule — only write what can
-        // be put back — and `None` is what "cannot" looks like.
-        let exported_now = unsafe { gpio_export(LED_RUNNING) };
-        let before = {
-            let d = direction(LED_RUNNING);
-            let mut v: PIN_VALUE = 0xdead_beef;
-            let ret = unsafe { gpio_get_value(LED_RUNNING, &raw mut v) };
-            println!(
-                "before question 2 writes to it: gpio_export {exported_now}, direction \
-                 {d}, gpio_get_value {ret}, *value {v:#x}"
-            );
-            if ret == 0 && (d == "in" || d == "out") {
-                Some((d, v))
-            } else {
-                println!("  not both readable, so nothing here can be put back to it");
-                None
-            }
-        };
         // The last unexport before question 2, so the one its heading
         // depends on: a pin still claimed here sends `gpio_setup` down
         // `gpio_export`'s already-exported fast path, and the row that
@@ -417,7 +279,6 @@ mod imp {
             // `gpio_setup` exports before it opens, so a failure here
             // can leave the pin claimed — the trap this probe exists to
             // document.
-            put_back(before.as_ref(), false);
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup on a free pin returned {fd}"));
         }
@@ -447,7 +308,6 @@ mod imp {
         let fd2 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         println!("a fresh descriptor: {fd2}");
         if fd2 < 0 {
-            put_back(before.as_ref(), true);
             give_back(LED_RUNNING);
             return Err(format!("gpio_setup for question 4 returned {fd2}"));
         }
@@ -459,10 +319,7 @@ mod imp {
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // An unexport keeps the level, so a HIGH that stayed would stay
         // after this pass ended.
-        // Not reported here if it fails: `put_back` below restores the
-        // level question 1 recorded, on every path out of this pass, and
-        // says so when it cannot.
-        println!("  putting it back to LOW: {}", unsafe {
+        println!("  gpio_write(fd2, LOW) = {}", unsafe {
             gpio_write(fd2, arg::LOW)
         });
 
@@ -515,11 +372,9 @@ mod imp {
 
         // So that a probe which links and runs is evidence for all
         // thirteen symbols, not the nine this pass needs.
-        // `gpio_set_value` also does work here, in `put_back`.
         println!("\n-- the remaining four --");
         let fd3 = unsafe { gpio_setup(LED_RUNNING, arg::OUTPUT) };
         if fd3 < 0 {
-            put_back(before.as_ref(), true);
             give_back(LED_RUNNING);
             return Err(format!(
                 "gpio_setup({LED_RUNNING}) returned {fd3}, so four of the thirteen went \
@@ -537,7 +392,11 @@ mod imp {
         if ro >= 0 {
             println!("  gpio_fd_close = {}", unsafe { gpio_fd_close(ro) });
         }
-        put_back(before.as_ref(), true);
+        // The pin is an input by now, so this cannot take; the point is
+        // the link, and `-1` on an input is what question 11 measures.
+        println!("  gpio_set_value(LOW) = {}", unsafe {
+            gpio_set_value(LED_RUNNING, arg::LOW)
+        });
         // `gpio_dismiss` returns 0 whatever happened, so ask the pin.
         let _ = unsafe { gpio_dismiss(fd3, LED_RUNNING) };
         if exported(LED_RUNNING) {
