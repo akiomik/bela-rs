@@ -1038,10 +1038,11 @@ With `sine` rendering, in another process:
   and `gpio_dismiss` returned `0`; the export was gone afterwards, and
   `sine` was still up when the probe finished and then **ended at 124**
   — its own `timeout`, which is the undisturbed end. `OUTPUT_PIN`
-  rather than `INPUT_PIN` because `gpio_setup` needs only *a* direction
-  to open its descriptor, and an unexport keeps the one it finds — so
-  asking as an input would leave the run's LED pin latched as one, and
-  that, not the unexport, would be what the run had to survive. The
+  because that is what the pin already read: the probe asks as the
+  direction it finds, `gpio_setup` needing only *a* direction to open
+  its descriptor and an unexport keeping the one it is left with — so
+  asking as anything else would leave the run's LED pin latched at it,
+  and that, not the unexport, would be what the run had to survive. The
   status is the evidence rather than the liveness check: a run that
   aborted a moment later would still have been alive for that. So the
   collision is silent in both directions: nothing refuses the claim,

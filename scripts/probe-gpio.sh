@@ -97,12 +97,14 @@ BOARD_PREPARED=no
 
 # Modelled on scripts/probe-io.sh's `restore`, which had all of this
 # right already.
-# Set by the INT/TERM traps, because `$?` at the moment a signal lands
-# is whatever the last command left — `0` if it arrived between two
-# `echo`s. Without this an interrupted run exits `0` and suppresses its
-# own "an LED trigger may be left" advice, which is written for exactly
-# that run.
-INTERRUPTED=no
+# Set by the INT/TERM traps to the status that signal owes, because
+# `$?` at the moment a signal lands is whatever the last command left —
+# `0` if it arrived between two `echo`s. Without this an interrupted run
+# exits `0` and suppresses its own advice about what may be left, which
+# is written for exactly that run. Two values rather than one: 130 is
+# 128+SIGINT, and a caller that sent SIGTERM and read 130 would be told
+# the wrong signal.
+INTERRUPTED=0
 # Whether the probe has been started on the board at all. The advice
 # about LED triggers is about question 6, so before that there is
 # nothing to have left behind and telling an operator to go and check
@@ -116,8 +118,8 @@ CLEANED=no
 
 cleanup() {
   status=$?
-  if [ "$INTERRUPTED" = yes ] && [ "$status" -eq 0 ]; then
-    status=130
+  if [ "$INTERRUPTED" -ne 0 ] && [ "$status" -eq 0 ]; then
+    status=$INTERRUPTED
   fi
   if [ "$CLEANED" = yes ]; then
     exit "$status"
@@ -255,6 +257,18 @@ cleanup() {
     echo "If this run was interrupted, an LED trigger may be left at none." >&2
     echo "Check with:" >&2
     echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'" >&2
+    # And the level, for the same reason and on the same path. Question
+    # 4 writes gpio584 high and writes it back two lines later, and an
+    # unexport keeps whatever the line holds — measured, in
+    # docs/board-facts.md — so the release this handler ran does not
+    # undo it. Read through a fresh export, with nothing running: an
+    # unexport while a run holds the pin would take it from the run.
+    echo "The same window can leave gpio584 driven high. With nothing running," >&2
+    echo "read and clear it with:" >&2
+    echo "  ssh $HOST 'echo 584 > /sys/class/gpio/export;" >&2
+    echo "    cat /sys/class/gpio/gpio584/value;" >&2
+    echo "    echo 0 > /sys/class/gpio/gpio584/value;" >&2
+    echo "    echo 584 > /sys/class/gpio/unexport'" >&2
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
   # without this a Ctrl-C during pass 1 would tidy up and then walk into
@@ -278,7 +292,8 @@ done
 # business touching a board, and a trap set earlier would answer a
 # cross-compile failure by stopping whatever the board was running.
 trap cleanup EXIT
-trap 'INTERRUPTED=yes; cleanup' INT TERM
+trap 'INTERRUPTED=130; cleanup' INT
+trap 'INTERRUPTED=143; cleanup' TERM
 
 echo "Preparing $HOST..."
 if ssh -o ConnectTimeout=10 "$HOST" "systemctl is-active --quiet bela_daemon" 2>/dev/null; then
