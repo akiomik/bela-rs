@@ -113,11 +113,13 @@ cleanup() {
     undo="$undo; p="
     undo="$undo; for c in /proc/[0-9]*; do"
     undo="$undo case \"\$(readlink \$c/exe 2>/dev/null)\" in"
-    undo="$undo $REMOTE_DIR/sine*) p=\${c#/proc/} ;;"
+    undo="$undo $REMOTE_DIR/sine*) p=\"\$p \${c#/proc/}\" ;;"
     undo="$undo esac; done"
-    undo="$undo; if alive \$p; then kill -INT \$p 2>/dev/null; n=0"
-    undo="$undo; while alive \$p && [ \$n -lt 6 ]; do sleep 1; n=\$((n+1)); done"
-    undo="$undo; if alive \$p; then kill -9 \$p 2>/dev/null; fi; fi"
+    undo="$undo; some() { for t in \$p; do alive \$t && return 0; done; return 1; }"
+    undo="$undo; for t in \$p; do kill -INT \$t 2>/dev/null; done"
+    undo="$undo; n=0; while some && [ \$n -lt 6 ]; do sleep 1; n=\$((n+1)); done"
+    undo="$undo; for t in \$p; do"
+    undo="$undo if alive \$t; then kill -9 \$t 2>/dev/null; fi; done"
     # And any probe of ours still running, or the release below would
     # give back pins it then exports again.
     undo="$undo; for c in /proc/[0-9]*; do"
@@ -135,17 +137,15 @@ cleanup() {
     if [ "$DAEMON_WAS_RUNNING" -eq 1 ]; then
       undo="$undo; systemctl start bela_daemon || echo 'WARNING: bela_daemon did not start'"
     fi
-    # Exporting a pin that is already exported fails and, worse, the
-# unexport after it would remove an export the reader did not make — so
-# the check looks before it claims. A probe killed between a change and
-# its restore leaves it, and an
-    # unexport keeps a pin's level and direction alike. Printed on every
-    # exit that got as far as touching the board, which is where an
-    # interrupt can have left something — and before the tidy-up, whose
-    # last act is restarting `bela_daemon`: the snippet exports and
-    # unexports pins, and would take them from whatever the daemon
-    # started.
-    leftovers
+    # Where to look, and no recipe: a killed probe can leave a trigger or
+    # a level, and an unexport keeps both. Four rounds of review went
+    # into a snippet that read them, and it was wrong every time — it
+    # exported a pin that was already exported, unexported one the reader
+    # had not claimed, and pointed at a transcript line only one pass
+    # prints.
+    echo "Killed part way, this can leave an LED trigger at none, or a pin" >&2
+    echo "driven or latched: an unexport keeps a level and a direction alike." >&2
+    echo "/sys/class/leds and /sys/class/gpio are where that shows." >&2
     # shellcheck disable=SC2029 # the remote paths are meant to expand here
     ssh -o ConnectTimeout=10 "$HOST" "$undo" 2>/dev/null ||
       echo "WARNING: could not reach $HOST to restore it; nothing above says what ran" >&2
@@ -156,26 +156,12 @@ cleanup() {
   exit "$status"
 }
 
-leftovers() {
-  echo
-  echo "If it was killed part way, look at what it had changed. With nothing"
-  echo "running:"
-  echo "  ssh $HOST 'grep -o \"\\[[a-z0-9-]*\\]\" /sys/class/leds/beaglebone:green:usr*/trigger'"
-  echo "  ssh $HOST 'for p in 584 637; do d=/sys/class/gpio/gpio\$p;"
-  echo "    if [ -d \$d ]; then cat \$d/direction \$d/value;"
-  echo "    else echo \$p > /sys/class/gpio/export; cat \$d/direction \$d/value;"
-  echo "      echo \$p > /sys/class/gpio/unexport; fi; done'"
-  echo "The direction to put back is in the transcript above, on the line"
-  echo "reading \"its direction before any of this\": an unexport keeps a"
-  echo "direction, and only a pass that reached its end restores one."
-}
-
 # 255 is ssh's own and says nothing about whether the probe ran or what
 # it left; scripts/probe-fft.sh keeps the same distinction.
 pass_failed() {
   if [ "$2" -eq 255 ]; then
     echo "$1's ssh failed (255): a transport failure. Nothing above says what" >&2
-    echo "ran, and the run may still be up on the board." >&2
+    echo "ran." >&2
   else
     echo "$1 did not finish (exit $2); the transcript above says where it" >&2
     echo "stopped." >&2
@@ -329,7 +315,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
 echo
 if [ "$with_run_status" -ne 0 ]; then
   pass_failed "Pass 2" "$with_run_status"
-  echo "4 means no run was there to ask beside." >&2
+  echo "4 means no run was there to ask beside; a 255 leaves one that may" >&2
+  echo "still be up, this being the pass that starts it." >&2
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."

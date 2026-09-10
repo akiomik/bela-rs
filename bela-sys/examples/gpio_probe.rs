@@ -321,7 +321,12 @@ mod imp {
         // This is the file's own rule: only write what can be put back.
         let _ = unsafe { gpio_export(LED_RUNNING) };
         let direction_before = direction(LED_RUNNING);
-        println!("its direction before any of this: {direction_before}");
+        let mut level_before: PIN_VALUE = 0xdead_beef;
+        let read_before = unsafe { gpio_get_value(LED_RUNNING, &raw mut level_before) };
+        println!(
+            "before any of this: direction {direction_before}, gpio_get_value {read_before} \
+             *value {level_before:#x}"
+        );
         give_back(LED_RUNNING);
 
         println!("\n-- 2. gpio_setup --");
