@@ -154,8 +154,10 @@ cleanup() {
       echo "WARNING: the reboot of $HOST was not confirmed. This failing does" >&2
       echo "not mean it did not happen — a board going down looks the same from" >&2
       echo "here as one that stopped answering — but it does not mean it did, so" >&2
-      echo "treat the board as this left it: GPIO arbitrary, bela_daemon stopped," >&2
-      echo "which the reboot is what would have started again, where enabled." >&2
+      echo "treat the board as this left it. The transcript above says how far" >&2
+      echo "that got: bela_daemon is stopped from the line that says so, and the" >&2
+      echo "GPIO is arbitrary once the questions have begun. Neither is true of a" >&2
+      echo "run that could not reach the board at all." >&2
       echo "$why" >&2
       # Unconditionally: a board still holding an arbitrary state is
       # what a caller has to act on, and a pass that failed is already
@@ -185,6 +187,15 @@ pass_failed() {
     echo "stopped." >&2
   fi
 }
+
+# As three of the four siblings and the smoke test do — probe-fft.sh
+# does not — and for the same reason: without it the
+# build fails at the link with fifteen lines of missing -lbela and
+# friends, which says nothing about what is actually wrong.
+if [ -z "${BELA_SYSROOT:-}" ]; then
+  echo "BELA_SYSROOT is not set; see docs/cross-compile.md" >&2
+  exit 2
+fi
 
 echo "Building the probe and an audio example for $TARGET..."
 cargo build -p bela-sys --release --target "$TARGET" --example gpio_probe
@@ -241,8 +252,11 @@ echo "=============================================================="
 # failing ssh before the assignment ran.
 alone_status=0
 board "
-  # A double quote or a backquote anywhere below, comments included,
-  # would end this argument and hand ssh the rest as more of them.
+  # All of this is one double-quoted argument. An *unescaped* double
+  # quote anywhere below, comments included, ends it and hands ssh the
+  # rest as further arguments; a backquote is worse, running its
+  # contents here and splicing the output in. Escaped ones are fine and
+  # are used below.
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe
   probe_status=\$?
@@ -303,8 +317,11 @@ echo "Pass 2: the probe beside a run${DESTRUCTIVE:+ (destructive)}"
 echo "=============================================================="
 with_run_status=0
 board "
-  # A double quote or a backquote anywhere below, comments included,
-  # would end this argument and hand ssh the rest as more of them.
+  # All of this is one double-quoted argument. An *unescaped* double
+  # quote anywhere below, comments included, ends it and hands ssh the
+  # rest as further arguments; a backquote is worse, running its
+  # contents here and splicing the output in. Escaped ones are fine and
+  # are used below.
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
