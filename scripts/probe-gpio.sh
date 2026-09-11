@@ -75,6 +75,12 @@ CLEANED=no
 
 cleanup() {
   status=$?
+  # Before anything else, and not only to stop this running twice: a
+  # second Ctrl-C goes to the whole process group, so without this it
+  # kills the reboot ssh below — leaving the board with bela_daemon
+  # stopped and its GPIO arbitrary, on the one path that puts both
+  # back. SIG_IGN is inherited, so the child is covered too.
+  trap '' INT TERM
   if [ "$INTERRUPTED" -ne 0 ] && [ "$status" -eq 0 ]; then
     status=$INTERRUPTED
   fi
@@ -276,13 +282,24 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # --destructive, which is the act that gate exists for. (Not 586:
   # bela_button.service holds that one from boot, so the probe never
   # reads it as free.) The 585 here is
-  # tied by hand to the probe's BANK0 + 46; come apart, this waits out
-  # its eight seconds and the probe then refuses as though nothing were
-  # rendering.
+  # tied by hand to the probe's BANK0 + 46.
   for _ in 1 2 3 4 5 6 7 8; do
     [ -e /sys/class/gpio/gpio585 ] && break
     sleep 1
   done
+  # And a refusal where it never appeared, rather than asking anyway.
+  # The probe cannot make this call for itself: its own entry guard is
+  # gpio637, which prepareGPIO exports before the PRU firmware is
+  # loaded and so before either LED pin, and it supports a run whose
+  # LEDs are off. So a fall-through here is a probe that finds 584 and
+  # 585 free, records them as its own, and unexports them at the end,
+  # out of a live run and without --destructive.
+  if [ ! -e /sys/class/gpio/gpio585 ]; then
+    echo 'gpio585 never appeared, so what a run holds cannot be told from what'
+    echo 'is free: the run may be slow to start, its LED may be off, or the 585'
+    echo 'here has come apart from the probe. Nothing was asked.'
+    exit 6
+  fi
   # Through /proc rather than a signal-0: under a shell which reaps only
   # at wait, a run that died a second ago is still a zombie a signal-0
   # succeeds on.
