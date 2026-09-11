@@ -18,7 +18,7 @@
 //! covers; 8 does an export outlive the process.
 //!
 //! With a run up: 9 claiming one of libbela's pins; 10 reading one; 11
-//! writing a PRU-driven channel; 12 (`--destructive`) unexporting one
+//! writing a digital channel a run holds; 12 (`--destructive`) unexporting one
 //! out from under the run; 13 what is claimed once both have gone.
 //!
 //! 8 and 13 are answered by the script, which lists `/sys/class/gpio`
@@ -532,7 +532,7 @@ mod imp {
             ("digital D0", DIGITAL_D0),
         ]);
 
-        println!("\n-- 11. writing gpio{DIGITAL_D0} while the PRU drives it --");
+        println!("\n-- 11. writing gpio{DIGITAL_D0} while a run holds it --");
         let d0_direction = direction(DIGITAL_D0);
         println!("  its direction is {d0_direction}");
         if d0_direction == "out" && !destructive {
@@ -695,16 +695,18 @@ mod imp {
                 // direction drives the line low.
                 // Whether it got that far is not readable from here:
                 // `gpio_setup` also returns negative from an `open` that
-                // failed before any write. The PRU drives this pin every
-                // block and takes it back, which is why this is a line
-                // of transcript and nothing more.
+                // failed before any write. Either way the reboot is what
+                // puts it back: this question's own answer is that a run
+                // does not take its LED pin back, every `--destructive`
+                // pass having left gpio584 unexported for the rest of
+                // the run.
                 println!("  its direction still reads {before}, which does not mean");
                 println!("  untouched: where gpio_setup reached the write, that drove");
-                println!("  the line low, and the PRU takes this pin back");
+                println!("  the line low, and nothing in the run puts it back");
             } else {
                 // The direction and not the level: writing `out` drives
-                // the line low, measured in docs/board-facts.md. The PRU
-                // takes this pin back.
+                // the line low, measured in docs/board-facts.md, and
+                // nothing in the run restores it.
                 println!("  putting its direction back to {before}: {}", unsafe {
                     gpio_set_dir(
                         LED_RUNNING,

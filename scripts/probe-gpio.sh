@@ -23,7 +23,9 @@
 # unexport, and a `kill -9` runs none of the probe's own restore code —
 # so no amount of restoring here could be complete, while a reboot is,
 # and costs no code. The board is away for about forty seconds at the
-# end of every run, including a Ctrl-C and a closed terminal.
+# end of every run that reached it, a Ctrl-C or a closed terminal
+# included; one that stops at the argument or build checks reboots
+# nothing, having changed nothing.
 set -eu
 
 HOST="root@bela.local"
@@ -93,7 +95,7 @@ BOARD_PREPARED=no
 # between two `echo`s.
 INTERRUPTED=0
 # On a signal the handler runs, exits, and the EXIT trap runs it again;
-# without this the second pass opens another restore ssh.
+# without this the second pass asks for another reboot.
 CLEANED=no
 
 cleanup() {
@@ -167,8 +169,8 @@ cleanup() {
     fi
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
-  # without this a Ctrl-C during pass 1 would tidy up and walk into
-  # pass 2 with the directory deleted.
+  # without this a Ctrl-C during pass 1 would ask for the reboot and
+  # then walk into pass 2 against a board on its way down.
   exit "$status"
 }
 
