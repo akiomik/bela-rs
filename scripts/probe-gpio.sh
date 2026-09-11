@@ -5,8 +5,9 @@
 # Usage: scripts/probe-gpio.sh [user@host] [--destructive]
 #   host defaults to root@bela.local
 #
-# BELA_SYSROOT must point at a synced sysroot (scripts/sync-sysroot.sh)
-# and BELA_CC at a cross compiler; see docs/cross-compile.md.
+# BELA_SYSROOT must point at a synced sysroot (scripts/sync-sysroot.sh).
+# BELA_CC names the cross compiler, and can stay unset where the
+# wrapper's default is the one installed; see docs/cross-compile.md.
 #
 # An experiment, not a check, the way scripts/probe-io.sh is: no pass
 # and no fail, read by a person, and its findings belong in
