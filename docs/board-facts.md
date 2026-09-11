@@ -1040,9 +1040,10 @@ With `sine` rendering, in another process:
   returned a descriptor, `3`, its direction reading `out` beforehand,
   and `gpio_dismiss` returned `0`; the export was gone afterwards, and
   `sine` was still up when the probe finished and then **ended at 124**
-  — its own `timeout`. The status is the evidence rather than the
-  liveness check: a run that aborted a moment later would still have
-  been alive for that. `timeout` reports 124 whether the run went down
+  — its own `timeout`. The status is the evidence, and is why the
+  script asks the run for nothing else: a check that it was alive when
+  the probe finished would have passed for a run that aborted a moment
+  later. `timeout` reports 124 whether the run went down
   on the `INT` or had to be killed five seconds after it, so what rules
   the second out is the bullet below: the exports were all released. So the collision is
   silent in both directions: nothing refuses the claim, and nothing
