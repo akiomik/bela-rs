@@ -70,13 +70,27 @@ CYCLE_COUNT="${CYCLE_COUNT:-5}"
 # ceiling: a cut-short run reports fewer cycles than were asked for,
 # which is exactly what a crash looks like.
 CYCLES_TIMEOUT=$((CYCLE_COUNT * 6 + 30))
-# How long the holder process keeps the audio device for the busy probe,
-# and how long the probe waits before trying again. The wait has to
-# outlast the holder from later than it started.
+# How long the holder keeps the audio device, how long after it the
+# probe starts, and how long the probe then waits. The wait has to see
+# the holder out — the four is a cycle's startup and teardown either
+# side of the hold — because the oracle behind the probe would be
+# refused by a holder still up (#167).
 HOLD_SECONDS=6
-BUSY_WAIT_SECONDS=8
-# How long to wait before asking a second time whether the board is
-# back.
+HOLDER_HEAD_START=2
+BUSY_WAIT_SECONDS=$((HOLD_SECONDS + 4 - HOLDER_HEAD_START))
+BUSY_TIMEOUT=$((BUSY_WAIT_SECONDS + 30))
+HOLDER_CEILING=$((HOLD_SECONDS + ORACLE_TIMEOUT))
+# `remote` has no terminal, so Ctrl-C ends the local ssh and leaves the
+# board-side run to whichever of these ceilings it was given, plus the
+# five seconds probe-remote.sh allows for the kill after it.
+LONGEST_LEFTOVER=0
+for t in "$ORACLE_TIMEOUT" "$CYCLES_TIMEOUT" "$PROBE_TIMEOUT" \
+  "$BUSY_TIMEOUT" "$HOLDER_CEILING"; do
+  [ "$t" -le "$LONGEST_LEFTOVER" ] || LONGEST_LEFTOVER=$t
+done
+LONGEST_LEFTOVER=$((LONGEST_LEFTOVER + 5))
+# How long to wait before asking again — whether the board is back, or
+# whether the holder has reported.
 RECOVERY_WAIT=2
 
 daemon_was_active=no
@@ -97,6 +111,8 @@ restore() {
   if [ "$board_prepared" = yes ]; then
     # One connection, because an unreachable board makes each of these
     # cost a full ConnectTimeout.
+    # Nothing here kills what an interrupt leaves running: a ceiling
+    # ends it, and the preflight says so when a later run meets it.
     undo="rm -rf $REMOTE_DIR"
     if [ "$daemon_was_active" = yes ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -158,11 +174,18 @@ status_of() {
   sed -n 's/^probe-exit=//p' "$1" | tail -1
 }
 
-# A run cut short by the clock reports fewer cycles than it was asked
-# for, which reads exactly like a crash. Say which it was.
+# Whether a run was turned away because something already holds the
+# board. On the message rather than the code: `Bela_initAudio` returns
+# -1 from nineteen places, and only this one says so.
+refused() {
+  grep -q "already running in another process" "$1"
+}
+
+# A run cut short by the clock is missing the same fields a crashed one
+# is. Say which it was.
 timed_out() {
   case "$(status_of "$1")" in
-  124 | 137) echo " - TIMED OUT, so the shortfall is the clock, not a crash" ;;
+  124 | 137) echo " - TIMED OUT at the ceiling, not a crash" ;;
   *) ;;
   esac
 }
@@ -192,7 +215,18 @@ wedged() {
   echo
   echo "The board no longer gives an audio system, and a second look a"
   echo "few seconds later did not find it back. The last line below is"
-  echo "where it was noticed. Reboot before probing again:"
+  echo "where it was noticed."
+  advice="Reboot before probing again:"
+  if refused "$LOG_DIR/oracle.log"; then
+    echo
+    echo "That last look was refused rather than broken: something holds"
+    echo "the board. After the busy probe it is likely this run's own"
+    echo "holder, which goes within $((HOLDER_CEILING + 5)) seconds of"
+    echo "starting — $LONGEST_LEFTOVER for the longest-lived probe here."
+    advice="Wait it out, and reboot only if it is still refused:"
+  fi
+  echo
+  echo "$advice"
   echo
   echo "    ssh $HOST reboot"
   echo
@@ -224,9 +258,11 @@ fi
 board_prepared=yes
 remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 
-# The remote half. Bounded, because a probe that hangs holds the audio
-# device and every later run would fail for that reason instead of the
-# one being measured.
+# The remote half. Bounded, for two reasons: `remote` runs a probe in
+# the foreground with no clock of its own, so one that does not end is
+# one this script waits on forever; and a probe that hangs keeps the
+# board for its whole life, so every later run is refused (measured,
+# see docs/board-facts.md).
 cat > "$LOG_DIR/probe-remote.sh" <<'REMOTE'
 #!/bin/sh
 # usage: probe-remote.sh <timeout-seconds> <probe-arguments...>
@@ -247,6 +283,12 @@ echo "Checking the board is working to begin with..."
 if ! oracle; then
   echo "the board does not give an audio system before any probe has run:" >&2
   echo "  $(oracle_detail)" >&2
+  if refused "$LOG_DIR/oracle.log"; then
+    echo "  that is another process holding the board, not a broken one." >&2
+    echo "  An interrupted run of this script leaves whatever it was" >&2
+    echo "  running for up to $LONGEST_LEFTOVER seconds; otherwise look" >&2
+    echo "  for a project or another operator's run." >&2
+  fi
   sed 's/^/        /' "$LOG_DIR/oracle.log" >&2
   exit 1
 fi
@@ -312,18 +354,48 @@ for probe in $PROBES; do
     detail="$detail (exit $(status_of "$log"))"
     ;;
   busy)
-    # A holder keeps the audio device while the probe tries to take it,
-    # then goes; the probe waits it out and tries again in the same
-    # process. Detached, so the ssh call returns immediately — and the
-    # one remote process here that no `timeout` bounds, which is #164.
-    remote "cd $REMOTE_DIR && nohup ./init_failure render-check $HOLD_SECONDS \
-      > holder.log 2>&1 & echo started" > /dev/null
-    sleep 2
-    run_probe "$PROBE_TIMEOUT" busy-probe "$BUSY_WAIT_SECONDS" > "$log"
-    remote "cat $REMOTE_DIR/holder.log" > "$LOG_DIR/holder.log" 2>/dev/null || true
+    # A holder keeps the audio device while the probe tries to take it
+    # and is refused. The probe's second attempt measures nothing: the
+    # first poisoned its own claim (#167). Nothing ends the holder but
+    # its ceiling.
+    remote "setsid sh $REMOTE_DIR/probe-remote.sh \
+      $HOLDER_CEILING render-check $HOLD_SECONDS \
+      > $REMOTE_DIR/holder.log 2>&1 & echo started" > /dev/null
+    sleep "$HOLDER_HEAD_START"
+    run_probe "$BUSY_TIMEOUT" busy-probe "$BUSY_WAIT_SECONDS" > "$log"
+    # The holder reports after its teardown, which can be later than
+    # the probe returns. A log that is missing rather than silent means
+    # nothing was launched, and there is nothing to wait for.
+    waited=0
+    while remote "cat $REMOTE_DIR/holder.log" > "$LOG_DIR/holder.log" \
+      2>/dev/null &&
+      [ -z "$(field "$LOG_DIR/holder.log" cycle)" ] &&
+      [ -z "$(status_of "$LOG_DIR/holder.log")" ] &&
+      [ "$waited" -lt "$HOLDER_CEILING" ]; do
+      sleep "$RECOVERY_WAIT"
+      waited=$((waited + RECOVERY_WAIT))
+    done
+    # A holder that never reported has its reason in that log, and
+    # nothing else would show it.
+    case "$(field "$LOG_DIR/holder.log" cycle)$(status_of "$LOG_DIR/holder.log")" in
+    "") sed 's/^/    holder: /' "$LOG_DIR/holder.log" >&2 ;;
+    esac
     detail="first=$(field "$log" busy-first) second=$(field "$log" busy-second)"
+    # Both halves: the refusal says somebody held the board, the
+    # holder's cycle says it was this run's.
+    if ! refused "$log"; then
+      detail="$detail - CONTENTION NOT SHOWN: the probe was not refused"
+    else
+      case "$(field "$LOG_DIR/holder.log" cycle)" in
+      rendered-* | up-but-silent) ;;
+      *)
+        detail="$detail - CONTENTION NOT SHOWN: the probe was refused, but"
+        detail="$detail nothing here says the holder is what refused it"
+        ;;
+      esac
+    fi
     detail="$detail (holder $(field "$LOG_DIR/holder.log" cycle), \
-exit $(status_of "$log"))"
+probe exit $(status_of "$log"))$(timed_out "$log")"
     ;;
   *)
     run_probe "$PROBE_TIMEOUT" "$probe" > "$log"
@@ -341,6 +413,8 @@ exit $(status_of "$log"))"
   sed 's/^/    /' "$log"
   echo "  -> $detail"
 
+  # A holder that overran its hold is still on the board here, and
+  # this reads that as damage rather than as held: #167.
   if oracle; then
     after="board still works: $(oracle_detail)"
   else
