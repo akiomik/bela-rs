@@ -131,7 +131,10 @@ cleanup() {
     # $REMOTE_DIR here as well hid its own failure behind systemctl's
     # success; the first thing every run does is remove it, under
     # `set -e` and before anything on the board has been changed, so
-    # the freshness that matters is that one and not this.
+    # the freshness that matters is that one and not this. This image
+    # does not need either: `/tmp` is on the root ext4 filesystem, and
+    # systemd empties it at boot (`D /tmp 1777 root root -`), measured
+    # after a reboot with the removal gone.
     if ! why=$(ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 \
       -o ServerAliveCountMax=3 "$HOST" \
       "systemctl --no-block reboot" 2>&1); then
