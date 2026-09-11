@@ -912,9 +912,10 @@ the probe's first pass calls every one, so a pass that ran is evidence
 for the link as well as for the answers below. Nothing else in the
 workspace calls them, so no other build here would find out.
 
-Alone, on a board where nothing had claimed anything, the family
-behaved as `bela_sys`'s documentation says, through the bindings
-rather than by hand:
+Alone, with nothing rendering and the pin under test free — the
+resting `gpio586` is always there, and the probe's entry guard allows
+it and nothing else — the family behaved as `bela_sys`'s documentation
+says, through the bindings rather than by hand:
 
 | asked | answered |
 |---|---|
@@ -931,7 +932,7 @@ rather than by hand:
 | `led_set_trigger(1..=4, ...)` | `0` |
 | `gpio_export(99999)` | `-1` |
 
-The second row of `gpio_read` is the defect in its clearest form: the
+The second of those three reads is the defect in its clearest form: the
 pin was low, the first read said so, and the second said **high**,
 having read the `'\n'` that follows the value and found it is not
 `'0'`. Only the third fails. A caller polling a pin on one descriptor

@@ -341,8 +341,7 @@ board "
   #
   # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
   # wrapper, so its being alive says nothing about how far libbela has
-  # got. And for 592, the ADC reset, which is the last pin this run
-  # Two pins, because they answer two different questions.
+  # got. Two pins, because they answer two different questions.
   #
   # 585, the underrun LED, is the last of the four the probe asks
   # about: prepareGPIO takes the digitals, the chip selects and the
