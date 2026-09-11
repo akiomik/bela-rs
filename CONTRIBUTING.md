@@ -144,22 +144,50 @@ There are also probes, which are not checks:
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-init-failure.sh [user@host] [probe...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-io.sh [user@host] [run...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-fft.sh [user@host]
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-command-line.sh [user@host] [case...]
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-gpio.sh [user@host] [--destructive]
 ```
 
-The first measures what a failed `Bela_initAudio` leaves behind by
-producing the crash on purpose. The second measures how a board
-configures its analog and digital I/O, by bringing an audio system up
-one configuration per process and reporting the `BelaContext` each one
-produces. The third measures what NE10's FFT does to its arguments —
-whether a transform writes into its input, whether the inverse scales,
-which lengths work — which no header answers; alone among the three it
-creates no audio system, so it leaves `bela_daemon` running and needs
-no board state put back. Nothing about any of them passes or fails —
-they answer questions, and the answers belong in
-[docs/board-facts.md](docs/board-facts.md), or in
-[docs/fft.md](docs/fft.md) for the FFT, which is why they are separate
-from the smoke test. Run one when a claim in those files needs
-checking against a board, not as part of the routine before pushing.
+`probe-init-failure.sh` measures what a failed `Bela_initAudio` leaves
+behind by producing the crash on purpose. `probe-io.sh` measures how a
+board configures its analog and digital I/O, by bringing an audio
+system up one configuration per process and reporting the
+`BelaContext` each one produces. `probe-command-line.sh` measures where
+libbela rejects a standard command-line option it cannot use — the
+parse, `Bela_initAudio`, `Bela_startAudio`, or nowhere at all — one
+case per process. `probe-fft.sh` measures what NE10's FFT does to its
+arguments — whether a transform writes into its input, whether the
+inverse scales, which lengths work — which no header answers; nothing
+it runs brings an audio system up, so it is the only one that leaves
+`bela_daemon` running and needs no board state put back.
+`probe-gpio.sh` measures what the sysfs GPIO family does to a pin, one
+that is free and one libbela is holding while a run is up, which is
+what the safe API in
+[#156](https://github.com/akiomik/bela-rs/issues/156) waits on. Its
+probe creates no audio system, which is what lets it run beside one —
+but the script starts `bela/examples/sine` for it to reach past, and
+that one does. It is the one that takes the board away: it stops
+`bela_daemon`, leaves the GPIO in whatever state its last question
+left, and asks the
+board to reboot at the end of every invocation that reached it, a
+Ctrl-C or a closed terminal included — about forty seconds, after
+which `bela_daemon` starts again if it is enabled, and not otherwise.
+Restoring instead cannot be made complete, a `kill -9` running none of
+the probe's own code; the script's own header says why.
+
+Nothing about any of them passes or fails — they answer questions, and
+the answers belong in [docs/board-facts.md](docs/board-facts.md), or
+in [docs/fft.md](docs/fft.md) for the FFT, which is why they are
+separate from the smoke test. Run one when a claim in those files
+needs checking against a board, not as part of the routine before
+pushing.
+
+`--destructive` adds the question of what unexporting one of libbela's
+own pins does to the run holding it, and it also lets the probe write
+a digital channel whose direction reads `out`, which contends with
+whatever drives it. Both are opt-in because both act on a pin a live
+run is holding; what that does to the run is one of the things being
+measured, so it is not something to do by default.
 
 After updating a board image, also check that the vendored headers
 still match what the board now ships:

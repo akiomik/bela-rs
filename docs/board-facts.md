@@ -827,18 +827,21 @@ LED (`GPIO0_45`) at `gpio584` and the red underrun LED (`GPIO0_46`) at
   direction, so this is the only way the two can disagree.
 - **The stop button pin outlives every run.** `gpio586`
   (`GPIO0_47`) was exported before the first run and after the last,
-  whatever the LED setting was. libbela opens it with
-  `Gpio::open(..., unexport = false)`, unlike the LEDs, so the export
-  is left behind for the next program rather than cleaned up.
+  whatever the LED setting was. Two things keep it there:
+  `bela_button.service` is enabled and runs `bela-cape-btn --pin 586`,
+  which holds an open descriptor on the pin's `value` from boot; and
+  libbela opens it with `Gpio::open(..., unexport = false)`, unlike the
+  LEDs, so a run does not take it away on the way out either.
 
 Read again on 2026-09-08, over ssh with nothing running: no audio
 system was created, so this is the board at rest rather than during a
 run.
 
 - **At rest `/sys/class/gpio` holds `gpio586` and nothing else** —
-  that, `export`, `unexport` and the four `gpiochip*` directories. It
-  is the bullet above from the other end: a board that has run Bela is
-  left holding the stop button's export and no other pin.
+  beside `export`, `unexport` and the four `gpiochip*` directories,
+  which are always there and name no claim. It is not a leftover from
+  a run: the service in the bullet above holds it from boot, so a board
+  that has never run Bela shows the same listing.
 - **The two banks a `Gpio::Pin` names are `gpiochip539` and
   `gpiochip631`.** `600000.gpio` is bank 0, base 539, 92 lines;
   `601000.gpio` is bank 1, base 631, 52 lines. So `GPIO0_n` is sysfs
@@ -857,60 +860,205 @@ run.
   path is written for has `usr0` to `usr3`. At rest the four triggers
   were `heartbeat`, `mmc1`, `activity` and `none`, and
   `blue:bela-power` was `heartbeat`. What is measured here is that the
-  file is there to write, not what writing it does.
-- **`gpio_read` is correct once per descriptor, then wrong, then
-  broken — and not even once if anything has written.** It reads one
-  byte and never rewinds (`core/GPIOcontrol.cpp:269-286`), and a sysfs
-  `value` file holds `"0\n"` or `"1\n"`. Three bare one-byte reads of
-  an exported `gpio584` held high, with no `lseek` between them,
-  returned `'1'`, `'\n'` and then nothing:
+  file is there to write.
+- **Writing a trigger back does not restore its parameters.** `usr1`
+  and `usr3` carry an `invert` attribute beside their trigger. Set
+  `invert` to `1` on `usr1`, write `heartbeat` to its `trigger` again,
+  and `invert` reads `0` — so a caller that records the bracketed name
+  and writes it back, as `bela-sys/examples/gpio_probe.rs` does, has
+  put the trigger back and not its configuration.
 
-  | read | byte | what `gpio_read` reports |
-  |---:|---|---|
-  | 1 | `'1'` | high — correct |
-  | 2 | `'\n'` | high, because `'\n'` is not `'0'` — whatever the pin is doing |
-  | 3 | — (0 bytes) | `-1`, and so does every call after it |
+## What a Bela program is called while it runs
 
-  With `lseek(fd, 0, SEEK_SET)` before each read the same three
-  returned `'1'`, `'1'`, `'1'`. So a descriptor from `gpio_setup` or
-  `gpio_fd_open` answers one `gpio_read` and needs rewinding by the
-  caller after that; the defect is libbela's, and nothing in the
-  header says so. `gpio_get_value` is unaffected, opening and closing
-  the file around each reading, and libbela's own `Gpio` never reaches
-  either, going to the mapped registers instead.
+Collected 2026-09-08 while writing `scripts/probe-gpio.sh`, whose
+cleanup depends on getting this right and did not, for several
+rounds.
 
-The bullets above were read by hand. A throwaway binary (not in the
-repository) linked against `bela-sys` then asked through the real
-functions, so that what is recorded is what libbela does rather than
-what a re-implementation of it does. It created no audio system, and
-`gpio584` and the `usr1` trigger were put back afterwards.
+- **libbela renames the process, so nothing is called what it was
+  built as.** `bela/examples/sine`, run as `./sine`, has
+  `/proc/<pid>/comm` reading `sine:2640:18042` — the binary's name,
+  its pid, and a third number — while `/proc/<pid>/cmdline` stays
+  `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine` kills
+  nothing. It does say so: procps-ng 4.0.2 on this board exits `1` when
+  no process matched, so the no-op is silent only where a caller drops
+  the status.
+- **Three scripts here were written before this was known.**
+  `probe-io.sh`, `probe-command-line.sh` and `probe-init-failure.sh`
+  each kill a run with `pkill -9 -x <name>`, which by the above matches
+  nothing and says so to a caller that keeps the status. Filed as
+  [#162](https://github.com/akiomik/bela-rs/issues/162); recorded here
+  so that this section is not read as describing a tree that acts on
+  it.
+- **Matching on the command line instead is worse.** `pkill -f
+  './sine'` matches the ssh command line of any script that mentions
+  the binary, this one included, and takes the connection down with
+  the run.
+- **What works is a pid, however it was come by.** `kill -INT` on the
+  pid of the `timeout` managing the run is relayed to the run,
+  libbela's teardown goes through, and its exports are released:
+  measured with fifteen `gpio6*` entries during a run and `gpio586`
+  alone one second after the signal. `/proc/<pid>/exe` still names the
+  binary the rename hides, so a pid can be found without one being
+  written down.
 
-- **All thirteen are in the library the crate links.** `nm -D
-  --defined-only /root/Bela/lib/libbela.so` lists `gpio_setup`,
-  `gpio_export`, `gpio_unexport`, `gpio_set_dir`, `gpio_set_value`,
-  `gpio_get_value`, `gpio_set_edge`, `gpio_fd_open`, `gpio_fd_close`,
-  `gpio_write`, `gpio_read`, `gpio_dismiss` and `led_set_trigger`, all
-  as `T`. The binary linked and ran, so this is a link as much as a
-  listing. Nothing in the workspace calls them, so no build here would
-  otherwise find out.
-- **A `gpio_write` leaves the next `gpio_read` nothing to read.** The
-  two share the descriptor's file offset and neither rewinds, and
-  `gpio_write` puts two bytes (`core/GPIOcontrol.cpp:296-303`) into a
-  two-byte file. `gpio_setup(584, OUTPUT_PIN as c_int)` returned
-  descriptor 3, `gpio_write(fd, HIGH as c_int)` returned 0, and the
-  next `gpio_read` returned `-1` with its `unsigned int *value` still
-  holding the `0xdeadbeef` it had been given — so the failure is
-  fail-fast rather than a stale reading, and a pin cannot be written
-  and read back on one descriptor at all.
-- **`led_set_trigger(0, ...)` fails and says so; `1` works.** The first
-  returned `-1` and printed `gpio/led-set-trigger: No such file or
-  directory`, which is the `usr0` a Gem does not have. The second
-  returned 0 and changed the trigger.
-- **A second unexport fails silently.** `gpio_dismiss(fd, 584)`
-  returned 0 and removed the export; the `gpio_unexport(584)` after it
-  returned `-1` and printed nothing, the `unexport` file having opened
-  and only the write into it having failed. That is the silent-failure
-  path in the small.
+## Reaching a pin through sysfs
+
+Collected 2026-09-08 with `scripts/probe-gpio.sh`, which runs
+`bela-sys/examples/gpio_probe` twice: alone, and then beside
+`bela/examples/sine` while that holds the audio device. The probe
+creates no audio system of its own, which is the only reason the
+second pass can exist — libbela refuses a second one in another
+process, so a probe that brought its own could not ask what an
+application gets while a run is up. The answers here are what
+[#156](https://github.com/akiomik/bela-rs/issues/156) waits on.
+
+**All thirteen are in the library the crate links**: `nm -D
+--defined-only /root/Bela/lib/libbela.so` lists every one as `T`, and
+the probe's first pass calls every one, so a pass that ran is evidence
+for the link as well as for the answers below. Nothing else in the
+workspace calls them, so no other build here would find out.
+
+Alone, with nothing rendering and the pin under test free — the
+resting `gpio586` is always there, and the probe's entry guard allows
+it and nothing else — the family behaved as `bela_sys`'s documentation
+says, through the bindings rather than by hand:
+
+| asked | answered |
+|---|---|
+| `gpio_export` on a free pin | `0`, and the pin appears |
+| `gpio_export` again on it | `0` — the fast path, indistinguishable |
+| `gpio_setup(pin, OUTPUT_PIN)` | a descriptor, `3`; `direction` reads `out` |
+| three `gpio_read`s on it | `0`/`0x0`, then `0`/`0x1`, then `-1` with the out-param left at the `0xdeadbeef` it was given |
+| the same three, with an `lseek` back to 0 before each | `0`/`0x0` three times |
+| `gpio_get_value` | `0`, and the true reading |
+| `gpio_write` then `gpio_read` | write `0`, the very next read `-1`, out-param again untouched |
+| `gpio_dismiss` | `0`, and the export is gone |
+| `gpio_unexport` after it | `-1`, silently |
+| `led_set_trigger(0, ...)` | `-1`, `No such file or directory` |
+| `led_set_trigger(1..=4, ...)` | `0` |
+| `gpio_export(99999)` | `-1` |
+
+The second of those three reads is the defect in its clearest form: the
+pin was low, the first read said so, and the second said **high**,
+having read the `'\n'` that follows the value and found it is not
+`'0'`. Only the third fails. A caller polling a pin on one descriptor
+gets one true answer, then a lie, then an error.
+
+The `lseek` row is the control, and is what makes the missing rewind
+the *cause* rather than a guess that fits: the same descriptor, the
+same three calls, rewound before each, answers correctly every time.
+The code it points at is `gpio_read` in `core/GPIOcontrol.cpp`, which
+reads one byte and never seeks; the `gpio_write` row is the same offset
+from the other side, that function writing two bytes where the file
+holds two (`wc -c` on a `value` file gives `2`), after which the
+descriptor is at its end and the next read has nothing left.
+And on both failing rows the `unsigned int *value` still held the
+`0xdeadbeef` the probe put there, which is the measurement behind the
+soundness condition `bela-sys`'s documentation states. That is
+`gpio_read` only: no `gpio_get_value` was seen to fail in either pass,
+so the same claim for it is read off `core/GPIOcontrol.cpp` rather
+than off this board.
+
+**An unexport does not undo a drive.** Read by hand, not by the probe:
+no question drives a pin and then exports it again to see what the
+unexport left. So it is reproduced by running the block below, with
+nothing rendering — its unexports would otherwise take the running LED
+from libbela, which is the act `--destructive` exists to gate:
+
+```sh
+echo 584 > /sys/class/gpio/export
+cat /sys/class/gpio/gpio584/direction          # what to put back
+echo out > /sys/class/gpio/gpio584/direction
+echo 1 > /sys/class/gpio/gpio584/value
+echo 584 > /sys/class/gpio/unexport
+echo 584 > /sys/class/gpio/export
+cat /sys/class/gpio/gpio584/direction /sys/class/gpio/gpio584/value
+echo 0 > /sys/class/gpio/gpio584/value
+# and, where the first cat read `in`: echo in > .../gpio584/direction
+echo 584 > /sys/class/gpio/unexport
+```
+
+The second `cat` gives `out` and `1`, and the same sequence with `0`
+gives `out` and `0`. The line keeps both across the unexport rather
+than being freed back to an input — which is why nothing that only
+unexports can put a level back, and why a probe that drove a pin and
+could not undrive it says so rather than relying on the teardown below.
+
+The `0` before the last line is not a restore: an input holds no level
+to put back, and where the first `cat` read `out` the level was gone at
+the third line already — writing `out` drives the line low, which is
+the finding below. It is there because without it, pasting this leaves
+the blue LED's line high. The direction is restorable, which is what
+the first `cat` is for, and it has to go back before the last line, the
+pin having to be exported for it.
+
+Two more from the same by-hand session, on the same pin:
+
+- **Writing `out` to `direction` drives the line low.** A pin already
+  `out` and reading `1`, given `out` again, reads `0` afterwards. Only
+  `high` and `low` carry a level, so a direction restored with `out` is
+  a direction restored and a level lost.
+- **Setting `in` does not pull the line down.** The same pin driven
+  high and then given `in` reads `1` as an input. Whether the indicator
+  is lit is not something sysfs answers — it reads the line — so
+  nothing here should claim it.
+
+**An export outlives the process that made it.** The last question of
+this pass exports a pin and exits without unexporting it on purpose,
+and `gpio585` was still there when the script listed `/sys/class/gpio`
+afterwards. An export is a change to a global filesystem, not a
+resource the kernel reclaims on exit, so anything wrapping these has to
+unexport on the way out or leave the pin claimed for whatever runs
+next. This is the alone pass because it has to be: with a run up,
+`gpio585` is a pin libbela is holding, and a listing that still shows
+it says nothing about who left it.
+
+With `sine` rendering, in another process:
+
+- **Twenty-two pins are exported while a run is up.** `gpio584`,
+  `585`, `586`, `588`, `591`, `592`, `593`, `633`–`637`, `640`, `642`,
+  `644`, `647`–`653`. All twenty-two are accounted for: the two LEDs
+  (`GPIO0_45`, `GPIO0_46`), the stop button (`GPIO0_47`), the SPI DAC
+  and ADC chip selects (`GPIO0_49` and `GPIO1_13`, the pair
+  `bela_hw_settings.h` names for this board), the ADC reset
+  (`GPIO0_53`), and the sixteen digital channels — fourteen in bank 1
+  plus `GPIO0_52` and `GPIO0_54`, which are `D14` and `D15`. One
+  of the twenty-two is not the run's doing: `gpio586` is the resting
+  state this file records above and outlives every run.
+- **Nothing refuses.** `gpio_export` returned `0` for the running LED,
+  the underrun LED, the stop button and `D0` alike — the fast path
+  again, which is the same `0` a fresh export gives. An application
+  asking for a pin libbela is holding is told it succeeded.
+- **Everything reads.** `gpio_get_value` returned `0` for all four,
+  each with a level. Which level is not recorded: the running LED read
+  `1` in one pass and `0` in another, so the reading is the moment's
+  and not a fact about the pin. Sysfs offers no ownership, so a second
+  reader is simply a second reader.
+- **A write to a digital channel fails, and the direction is why.**
+  `gpio_set_value(D0, HIGH)` returned `-1`; the pin's `direction` file
+  reads `in`, which is what "every channel starts as an input" above
+  means from the sysfs side, and a value cannot be written to an
+  input. The two LEDs read `out`, so nothing here says a write to one
+  of those would fail. This row is from a pin reading `in`, where a
+  write cannot take and so cannot contend with a driver; an output pin
+  needs `--destructive`, as the question below does.
+- **A program can take an LED away from a live run, and the run does
+  not notice.** With `--destructive`, `gpio_setup(gpio584, OUTPUT_PIN)`
+  returned a descriptor, `3`, its direction reading `out` beforehand,
+  and `gpio_dismiss` returned `0`; the export was gone afterwards, and
+  `sine` was still up when the probe finished and then **ended at 124**
+  — its own `timeout`. The status is the evidence, and is why the
+  script asks the run for nothing else: a check that it was alive when
+  the probe finished would have passed for a run that aborted a moment
+  later. `timeout` reports 124 whether the run went down
+  on the `INT` or had to be killed five seconds after it, so what rules
+  the second out is the bullet below: the exports were all released. So the collision is
+  silent in both directions: nothing refuses the claim, and nothing
+  reports the loss.
+- **libbela's own teardown is unaffected by any of it.** After both
+  processes ended, `/sys/class/gpio` held `gpio586` and nothing else —
+  the resting state this file already records — including on the run
+  whose LED pin had been unexported out from under it.
 
 ## The Multiplexer Capelet
 

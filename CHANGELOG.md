@@ -23,8 +23,11 @@ and this project adheres to
   file I/O, one pin at a time, and are the only way to a pin that is
   not one of the sixteen digital channels. They are unsafe and
   unwrapped: `docs/scope.md` lists what they do that is surprising,
-  and `docs/board-facts.md` has the measurements behind it. A safe
-  API is [#156](https://github.com/akiomik/bela-rs/issues/156).
+  and `docs/board-facts.md` has the measurements behind it, which
+  `bela-sys/examples/gpio_probe.rs` and `scripts/probe-gpio.sh` take —
+  what an application gets when it asks for a pin libbela is holding,
+  and what an export outlives. A safe API is
+  [#156](https://github.com/akiomik/bela-rs/issues/156).
 
   Nothing a device build links or needs changes: `libbela` exports all
   thirteen already.
