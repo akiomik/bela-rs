@@ -225,7 +225,11 @@ mod imp {
             alone_questions()
         };
         if let Err(why) = asked {
-            eprintln!("could not ask: {why}");
+            // Not "could not ask": some of these are refusals before
+            // anything was asked and some are answers that must not be
+            // read as a board's, and what a reader needs from both is
+            // the same instruction.
+            eprintln!("do not record this: {why}");
             process::exit(2);
         }
     }
@@ -447,6 +451,12 @@ mod imp {
         if exported(NO_SUCH_PIN) {
             println!("  it took after all");
             give_back(NO_SUCH_PIN);
+            if exported(NO_SUCH_PIN) {
+                return Err(format!(
+                    "gpio{NO_SUCH_PIN} took and would not go back, so question 8's \
+                     listing would show it and pass 2 would read it as a run"
+                ));
+            }
         }
 
         println!("\n-- 8. does an export outlive the process that made it? --");
@@ -596,6 +606,14 @@ mod imp {
                 give_back(*pin);
             }
         }
+        // Asked after the loop, not read off `give_back`: it reports to
+        // stderr and returns nothing, and the pin is the thing anyway.
+        // What this decides is question 13, which the script prints only
+        // on a zero exit and its closing note calls the probe's answer —
+        // so one of this probe's pins left in that listing would be read
+        // as libbela's. Refused at the end rather than here, so the
+        // lines below are in the transcript that says why.
+        let kept: Vec<u32> = ours.iter().copied().filter(|pin| exported(*pin)).collect();
 
         println!("\n-- was a run still up when these finished? --");
         if let Some(pin) = was.iter().find(|pin| exported(**pin)) {
@@ -633,6 +651,17 @@ mod imp {
         }
 
         println!("\nleaving /sys/class/gpio at: {}", listing());
+        if !kept.is_empty() {
+            return Err(format!(
+                "this pass exported {} and could not give {} back, so question 13 \
+                 would list a pin of the probe's under a heading that says libbela's",
+                kept.iter()
+                    .map(|p| format!("gpio{p}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                if kept.len() == 1 { "it" } else { "them" }
+            ));
+        }
         Ok(())
     }
 

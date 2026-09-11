@@ -144,20 +144,24 @@ There are also probes, which are not checks:
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-init-failure.sh [user@host] [probe...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-io.sh [user@host] [run...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-fft.sh [user@host]
+BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-command-line.sh [user@host] [case...]
 BELA_SYSROOT="$PWD/bela-sysroot" scripts/probe-gpio.sh [user@host] [--destructive]
 ```
 
-The first measures what a failed `Bela_initAudio` leaves behind by
-producing the crash on purpose. The second measures how a board
-configures its analog and digital I/O, by bringing an audio system up
-one configuration per process and reporting the `BelaContext` each one
-produces. The third measures what NE10's FFT does to its arguments —
-whether a transform writes into its input, whether the inverse scales,
-which lengths work — which no header answers; alone among the first
-three it creates no audio system, so it leaves `bela_daemon` running
-and needs no board state put back. The fourth measures what the sysfs
-GPIO family does to a pin, one that is free and one libbela is holding
-while a run is up, which is what the safe API in
+`probe-init-failure.sh` measures what a failed `Bela_initAudio` leaves
+behind by producing the crash on purpose. `probe-io.sh` measures how a
+board configures its analog and digital I/O, by bringing an audio
+system up one configuration per process and reporting the
+`BelaContext` each one produces. `probe-command-line.sh` measures where
+libbela rejects a standard command-line option it cannot use — the
+parse, `Bela_initAudio`, `Bela_startAudio`, or nowhere at all — one
+case per process. `probe-fft.sh` measures what NE10's FFT does to its
+arguments — whether a transform writes into its input, whether the
+inverse scales, which lengths work — which no header answers; it is
+the one that needs no audio system at all, so it leaves `bela_daemon`
+running and needs no board state put back. `probe-gpio.sh` measures
+what the sysfs GPIO family does to a pin, one that is free and one
+libbela is holding while a run is up, which is what the safe API in
 [#156](https://github.com/akiomik/bela-rs/issues/156) waits on. Its
 probe creates no audio system either, and that is what lets it run
 beside one: the script starts `bela/examples/sine` for it to reach
