@@ -196,6 +196,24 @@ mod imp {
             eprintln!("printf from libbela below may be flushed at exit, out of order");
         }
 
+        // Every pin number below is BANK0 or BANK1 plus an offset, and
+        // those two bases are this board's, measured. On a board whose
+        // banks are numbered differently the same arithmetic reaches
+        // arbitrary lines — and with a run up it would export and
+        // unexport them. Cheap to check, and the labels are in
+        // docs/board-facts.md.
+        for (base, label) in [(BANK0, "600000.gpio"), (BANK1, "601000.gpio")] {
+            let path = format!("/sys/class/gpio/gpiochip{base}/label");
+            match fs::read_to_string(&path) {
+                Ok(read) if read.trim() == label => {}
+                _ => {
+                    eprintln!("do not record this: gpiochip{base} does not read {label}, so");
+                    eprintln!("the pin numbers here are not this board's");
+                    process::exit(2);
+                }
+            }
+        }
+
         let args: Vec<String> = env::args().skip(1).collect();
         if let Some(bad) = args
             .iter()

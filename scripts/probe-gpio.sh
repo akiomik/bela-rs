@@ -342,24 +342,29 @@ board "
   # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
   # wrapper, so its being alive says nothing about how far libbela has
   # got. And for 592, the ADC reset, which is the last pin this run
-  # exports at all: prepareGPIO takes the digitals, the chip selects
-  # and the running LED, then PRU::initialise opens the stop button,
-  # the underrun LED, and this one last. On an earlier pin the probe found the
-  # underrun LED free, took it as its own and unexported it at the end,
-  # out of a live run and without --destructive, which is the act that
-  # gate exists for; and the listing it prints first would be the
-  # twenty-one pins of that window rather than the twenty-two
-  # docs/board-facts.md records. (Never the stop button:
+  # Two pins, because they answer two different questions.
+  #
+  # 585, the underrun LED, is the last of the four the probe asks
+  # about: prepareGPIO takes the digitals, the chip selects and the
+  # running LED, then PRU::initialise opens the stop button and this
+  # one. Waiting for it is what stops the probe finding a pin free that
+  # the run has not reached yet, taking it as its own and unexporting
+  # it at the end — out of a live run and without --destructive, which
+  # is the act that gate exists for. (Never the stop button:
   # bela_button.service holds that one from boot, so the probe cannot
-  # read it as free.) Tied by hand to BANK0 + 53, to this run having
-  # analog in, which is what libbela opens it for, and to this board
-  # being a GemStereo: es9080CodecResetPin is bank 0 line 53 on this
-  # SoC too, and the codec branches that take it — BelaEs9080,
-  # BelaRevC, GemMulti — open it from the codec constructor, long
-  # before any of the pins above. On one of those this gate would
-  # return at once.
+  # read it as free.)
+  #
+  # 592, the ADC reset, is the last pin this run exports at all, and is
+  # what makes the listing the probe prints first the twenty-two
+  # docs/board-facts.md records rather than the twenty-one of that
+  # window. That half is tied to this board being a GemStereo:
+  # es9080CodecResetPin is bank 0 line 53 on this SoC too, and the
+  # codec branches that take it — BelaEs9080, BelaRevC, GemMulti —
+  # open it from their constructor, before any of the pins above. On
+  # one of those this pin says nothing, which is why the pin that
+  # matters for the claim is waited for on its own account.
   for _ in 1 2 3 4 5 6 7 8; do
-    [ -e /sys/class/gpio/gpio592 ] && break
+    [ -e /sys/class/gpio/gpio585 ] && [ -e /sys/class/gpio/gpio592 ] && break
     sleep 1
   done
   # And a refusal where it never appeared, rather than asking anyway.
@@ -370,12 +375,12 @@ board "
   # that the run has not reached yet, records them as its own, and
   # unexports them at the end, out of a live run and without
   # --destructive.
-  if [ ! -e /sys/class/gpio/gpio592 ]; then
+  if [ ! -e /sys/class/gpio/gpio585 ] || [ ! -e /sys/class/gpio/gpio592 ]; then
     # No cause named: a run that never started, one that started slowly
     # and one that tore down again all arrive here, and its output says
     # which better than a guess would.
-    echo 'gpio592 never appeared, so what this run holds cannot be told from what'
-    echo 'is free. Nothing was asked. sine output so far:'
+    echo 'gpio585 or gpio592 never appeared, so what this run holds cannot be'
+    echo 'told from what is free. Nothing was asked. sine output so far:'
     cat sine.log
     exit 6
   fi
