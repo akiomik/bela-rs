@@ -36,6 +36,12 @@ for arg in "$@"; do
     echo "unknown option: $arg (only --destructive is one)" >&2
     exit 2
     ;;
+  "")
+    # Not a host, and taking it would discard the default silently and
+    # fail several commands later at `ssh ""`.
+    echo "empty host given" >&2
+    exit 2
+    ;;
   *)
     # One positional. A second used to overwrite the first silently,
     # and `probe-gpio.sh destructive` became `ssh destructive`.
@@ -105,8 +111,6 @@ cleanup() {
     # that is briefly away. `bela_daemon` comes back on its own if it is
     # enabled, which is why nothing here records whether it was running.
     #
-    # `rm -rf` first, in the same call, because `/tmp` is not guaranteed
-    # to be a tmpfs on every image.
     echo "Rebooting $HOST: this probe leaves its GPIO in an arbitrary state." >&2
     # `--no-block`, so systemctl queues the job and returns instead of
     # taking sshd down under the connection and handing back 255 on
@@ -123,10 +127,14 @@ cleanup() {
     # would otherwise be reported as unreachable with the reason thrown
     # away, on the one step whose failure leaves the GPIO as this left
     # it.
-    # shellcheck disable=SC2029 # the remote path is meant to expand here
+    # One command, so the status below has one meaning. Removing
+    # $REMOTE_DIR here as well hid its own failure behind systemctl's
+    # success; the first thing every run does is remove it, under
+    # `set -e` and before anything on the board has been changed, so
+    # the freshness that matters is that one and not this.
     if ! why=$(ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 \
       -o ServerAliveCountMax=3 "$HOST" \
-      "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>&1); then
+      "systemctl --no-block reboot" 2>&1); then
       echo "WARNING: the reboot of $HOST was not confirmed. This failing does" >&2
       echo "not mean it did not happen — a board going down looks the same from" >&2
       echo "here as one that stopped answering — but it does not mean it did, so" >&2
