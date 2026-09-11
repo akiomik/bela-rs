@@ -127,9 +127,11 @@ cleanup() {
     if ! why=$(ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 \
       -o ServerAliveCountMax=3 "$HOST" \
       "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>&1); then
-      echo "WARNING: $HOST was not rebooted, so its GPIO is as this left it and" >&2
-      echo "bela_daemon is still stopped; the reboot is what would have started" >&2
-      echo "it again, where it is enabled." >&2
+      echo "WARNING: the reboot of $HOST was not confirmed. This failing does" >&2
+      echo "not mean it did not happen — a board going down looks the same from" >&2
+      echo "here as one that stopped answering — but it does not mean it did, so" >&2
+      echo "treat the board as this left it: GPIO arbitrary, bela_daemon stopped," >&2
+      echo "which the reboot is what would have started again, where enabled." >&2
       echo "$why" >&2
       # And into the exit status, or `probe-gpio.sh && next-step` walks
       # onto that board. 7 rather than 1: the questions above were
@@ -339,7 +341,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
     alive \$sine_pid || run_died
     echo 'gpio592 never appeared, so what this run holds cannot be told from what'
     echo 'is free: it may be slow to start, it may have no analog in, or the 592'
-    echo 'here has come apart from libbela. It is still up; its output so far:'
+    echo 'here has come apart from libbela. It was up when this asked; its'
+    echo 'output so far:'
     cat sine.log
     exit 6
   fi
