@@ -337,7 +337,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
     # and one that tore down again all arrive here, and its output says
     # which better than a guess would.
     echo 'gpio592 never appeared, so what this run holds cannot be told from what'
-    echo 'is free. Nothing was asked. sine said:'
+    echo 'is free. Nothing was asked. sine output so far:'
     cat sine.log
     exit 6
   fi
