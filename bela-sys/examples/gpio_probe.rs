@@ -316,7 +316,9 @@ mod imp {
         let ret = unsafe { gpio_read(fd2, &raw mut value) };
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
         // An unexport keeps the level and setting `in` does not pull the
-        // line down, so a HIGH that stayed is a lit LED until the reboot.
+        // line down, so a HIGH that stayed is a line left driven until
+        // the reboot. The line, not the indicator: sysfs reads one and
+        // says nothing about the other.
         // On whether the write took, as question 11 is: a put-back that
         // failed after a HIGH that failed leaves nothing to put back.
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };

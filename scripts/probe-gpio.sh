@@ -221,9 +221,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # and this 585 is tied by hand to the probe's BANK0 + 46. Writing an
   # un-exported number to the unexport attribute fails, measured.
   if [ \$probe_status -eq 0 ]; then
-    if ! echo 585 > /sys/class/gpio/unexport 2>/dev/null; then
-      echo 'gpio585 was not there to give back: question 8 left some other pin,'
-      echo 'so the 585 here and BANK0 + 46 in the probe have come apart'
+    # Its stderr kept: the write being rejected and the attribute not
+    # opening at all both land here, and the shell's own message is what
+    # tells them apart.
+    if ! echo 585 > /sys/class/gpio/unexport; then
+      echo 'gpio585 could not be given back. If the write was rejected, question 8'
+      echo 'left some other pin and the 585 here has come apart from the probe;'
+      echo 'the line above says which.'
       exit 5
     fi
   fi
@@ -300,7 +304,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
 echo
 if [ "$with_run_status" -ne 0 ]; then
   pass_failed "Pass 2" "$with_run_status"
-  echo "4 means no run was there to ask beside." >&2
+  if [ "$with_run_status" -eq 4 ]; then
+    echo "No run was there to ask beside; sine's output is above." >&2
+  fi
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."
