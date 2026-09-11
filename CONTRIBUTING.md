@@ -157,16 +157,18 @@ libbela rejects a standard command-line option it cannot use — the
 parse, `Bela_initAudio`, `Bela_startAudio`, or nowhere at all — one
 case per process. `probe-fft.sh` measures what NE10's FFT does to its
 arguments — whether a transform writes into its input, whether the
-inverse scales, which lengths work — which no header answers; it is
-the one that needs no audio system at all, so it leaves `bela_daemon`
-running and needs no board state put back. `probe-gpio.sh` measures
-what the sysfs GPIO family does to a pin, one that is free and one
-libbela is holding while a run is up, which is what the safe API in
+inverse scales, which lengths work — which no header answers; nothing
+it runs brings an audio system up, so it is the only one that leaves
+`bela_daemon` running and needs no board state put back.
+`probe-gpio.sh` measures what the sysfs GPIO family does to a pin, one
+that is free and one libbela is holding while a run is up, which is
+what the safe API in
 [#156](https://github.com/akiomik/bela-rs/issues/156) waits on. Its
-probe creates no audio system either, and that is what lets it run
-beside one: the script starts `bela/examples/sine` for it to reach
-past. It is the one that takes the board away: it stops `bela_daemon`,
-leaves the GPIO in whatever state its last question left, and asks the
+probe creates no audio system, which is what lets it run beside one —
+but the script starts `bela/examples/sine` for it to reach past, and
+that one does. It is the one that takes the board away: it stops
+`bela_daemon`, leaves the GPIO in whatever state its last question
+left, and asks the
 board to reboot at the end of every invocation that reached it, a
 Ctrl-C or a closed terminal included — about forty seconds, after
 which `bela_daemon` starts again if it is enabled, and not otherwise.

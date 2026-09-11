@@ -401,7 +401,13 @@ mod imp {
                 println!("  lednum {n}: ret {ret}, still [{before}] — unchanged");
                 continue;
             }
-            println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
+            // The name, and only the name. A trigger with attributes
+            // of its own loses them here: measured, `usr1` holds
+            // `heartbeat` and an `invert`, and writing `heartbeat` back
+            // sets `invert` to 0 whatever it was. Reading and replacing
+            // those too would be the restore layer this probe does not
+            // have — the reboot is what puts them back.
+            println!("  lednum {n}: ret {ret} (was [{before}], putting the name back)");
             if let Err(e) = fs::write(trigger_path(n), &before) {
                 println!("  lednum {n}: could not be put back ({e})");
                 // Stop asking: whatever refused this is as likely to
@@ -518,7 +524,13 @@ mod imp {
             // listing that reads as the resting state and is not. In
             // practice `bela_button.service` holds that pin from boot,
             // so it is always already there; the test is what makes
-            // that a measurement rather than an assumption.
+            // that a measurement rather than an assumption. Where that
+            // service is disabled and this is run by hand rather than
+            // by the script, the probe can export gpio586 before
+            // `PRU::initialise` opens it and give it back at the end,
+            // and libbela keeps the fd it opened with `unexport =
+            // false` — the script's wait for gpio585 is what makes that
+            // unreachable there.
             if !was_exported && exported(pin) {
                 ours.push(pin);
             }

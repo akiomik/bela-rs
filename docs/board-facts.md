@@ -860,7 +860,13 @@ run.
   path is written for has `usr0` to `usr3`. At rest the four triggers
   were `heartbeat`, `mmc1`, `activity` and `none`, and
   `blue:bela-power` was `heartbeat`. What is measured here is that the
-  file is there to write, not what writing it does.
+  file is there to write.
+- **Writing a trigger back does not restore its parameters.** `usr1`
+  and `usr3` carry an `invert` attribute beside their trigger. Set
+  `invert` to `1` on `usr1`, write `heartbeat` to its `trigger` again,
+  and `invert` reads `0` — so a caller that records the bracketed name
+  and writes it back, as `bela-sys/examples/gpio_probe.rs` does, has
+  put the trigger back and not its configuration.
 
 ## What a Bela program is called while it runs
 
