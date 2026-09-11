@@ -1006,13 +1006,12 @@ With `sine` rendering, in another process:
 
 - **Twenty-two pins are exported while a run is up.** `gpio584`,
   `585`, `586`, `588`, `591`, `592`, `593`, `633`–`637`, `640`, `642`,
-  `644`, `647`–`653`. Twenty-one of them are accounted for by what
-  this file and `digital_gpio_mapping.h` already name: the two LEDs
+  `644`, `647`–`653`. All twenty-two are accounted for: the two LEDs
   (`GPIO0_45`, `GPIO0_46`), the stop button (`GPIO0_47`), the SPI DAC
-  chip select (`GPIO0_49`), the ADC reset (`GPIO0_53`), and the
-  sixteen digital channels — fourteen in bank 1 plus `GPIO0_52` and
-  `GPIO0_54`, which are `D14` and `D15`. The twenty-second, `gpio644`
-  (`GPIO1_13`), matches nothing named here and is not identified. One
+  and ADC chip selects (`GPIO0_49` and `GPIO1_13`, the pair
+  `bela_hw_settings.h` names for this board), the ADC reset
+  (`GPIO0_53`), and the sixteen digital channels — fourteen in bank 1
+  plus `GPIO0_52` and `GPIO0_54`, which are `D14` and `D15`. One
   of the twenty-two is not the run's doing: `gpio586` is the resting
   state this file records above and outlives every run.
 - **Nothing refuses.** `gpio_export` returned `0` for the running LED,
