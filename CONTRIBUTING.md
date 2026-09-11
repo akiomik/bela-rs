@@ -165,21 +165,23 @@ past. It is the one that takes the board away: it stops `bela_daemon`,
 leaves the GPIO in whatever state its last question left, and reboots
 the board at the end of every invocation that reached it, Ctrl-C
 included — about forty seconds, after which `bela_daemon` starts again
-if it is enabled, and not otherwise. Restoring instead cannot be made complete,
-a `kill -9` running none of the probe's own code; the script's own
-header says why at length.
+if it is enabled, and not otherwise. Restoring instead cannot be made
+complete, a `kill -9` running none of the probe's own code; the
+script's own header says why.
 
-`--destructive` adds the question of what unexporting one of
-libbela's own pins does to the run holding it, and it also lets the
-probe write a digital channel whose direction reads `out`, which
-contends with whatever drives it. Both are opt-in because both act on
-a pin a live run is holding; what that does to the run is one of the
-things being measured, so it is not something to do by default. Nothing about any of them passes or fails
-— they answer questions, and the answers belong in
-[docs/board-facts.md](docs/board-facts.md), or in
-[docs/fft.md](docs/fft.md) for the FFT, which is why they are separate
-from the smoke test. Run one when a claim in those files needs
-checking against a board, not as part of the routine before pushing.
+Nothing about any of them passes or fails — they answer questions, and
+the answers belong in [docs/board-facts.md](docs/board-facts.md), or
+in [docs/fft.md](docs/fft.md) for the FFT, which is why they are
+separate from the smoke test. Run one when a claim in those files
+needs checking against a board, not as part of the routine before
+pushing.
+
+`--destructive` adds the question of what unexporting one of libbela's
+own pins does to the run holding it, and it also lets the probe write
+a digital channel whose direction reads `out`, which contends with
+whatever drives it. Both are opt-in because both act on a pin a live
+run is holding; what that does to the run is one of the things being
+measured, so it is not something to do by default.
 
 After updating a board image, also check that the vendored headers
 still match what the board now ships:

@@ -189,7 +189,15 @@ mod imp {
         // failures with C `printf`, and C stdio block-buffers to a pipe,
         // which is what ssh makes of remote stdout — so those lines
         // would be flushed at exit, away from the question behind them.
-        unsafe { setvbuf(stdout, ptr::null_mut(), IONBF, 0) };
+        let unbuffered = unsafe { setvbuf(stdout, ptr::null_mut(), IONBF, 0) };
+        if unbuffered != 0 {
+            // Said once, here: every libbela diagnostic below may then
+            // appear at exit rather than under the question that
+            // provoked it, and a transcript read in order would put it
+            // under the wrong one.
+            eprintln!("setvbuf returned {unbuffered}: C stdout is still buffered, so any");
+            eprintln!("printf from libbela below may be flushed at exit, out of order");
+        }
 
         let args: Vec<String> = env::args().skip(1).collect();
         if let Some(bad) = args
@@ -671,10 +679,13 @@ mod imp {
             let now = direction(LED_RUNNING);
             if now == before {
                 // Not proof it was untouched. libbela's `gpio_set_dir`
-                // compares its argument against a `read(fd, buf, 4)`
-                // that leaves the buffer unterminated, so the `strcmp`
-                // never matches and it writes whenever it reaches the
-                // write — and writing a direction drives the line low.
+                // reads the direction back into the same buffer it
+                // built the path in, so the four bytes it reads leave
+                // `out\n` in front of the rest of that path: the
+                // `strcmp` against `out` meets the newline where it
+                // wants the terminator, never matches, and it writes
+                // whenever it reaches the write — and writing a
+                // direction drives the line low.
                 // Whether it got that far is not readable from here:
                 // `gpio_setup` also returns negative from an `open` that
                 // failed before any write. The PRU drives this pin every

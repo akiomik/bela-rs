@@ -977,11 +977,13 @@ than being freed back to an input — which is why nothing that only
 unexports can put a level back, and why a probe that drove a pin and
 could not undrive it says so rather than relying on the teardown below.
 
-The `0` before the last line is the level restore, and it is the
-finding being used: without it, pasting this leaves the blue LED's line
-high. The direction is not restored by anything here either, which is what
-the first `cat` is for — and it has to go back before the last line,
-the pin having to be exported for it.
+The `0` before the last line is not a restore: an input holds no level
+to put back, and where the first `cat` read `out` the level was gone at
+the third line already — writing `out` drives the line low, which is
+the finding below. It is there because without it, pasting this leaves
+the blue LED's line high. The direction is restorable, which is what
+the first `cat` is for, and it has to go back before the last line, the
+pin having to be exported for it.
 
 Two more from the same by-hand session, on the same pin:
 
