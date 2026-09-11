@@ -218,12 +218,13 @@ board "rm -rf $REMOTE_DIR"
 # Armed before the stop, as the sibling scripts do: an interrupt during
 # that call can leave the daemon stopped.
 BOARD_PREPARED=yes
-# `||` and not `&&`: the four sibling scripts use `;` here and carry on,
-# and a unit that is masked or not loaded at all exits 5 — which `&&`
-# turned into `set -e` ending the probe. Not swallowed either: a daemon
-# that would not stop holds the audio device, and pass 2 would report
-# that as no run being there to ask beside.
-# shellcheck disable=SC2029
+# `||` and not `&&`: the three siblings that stop the daemon use `;`
+# here and carry on — probe-fft.sh needs no audio system and does not
+# stop it at all — and a unit that is masked or not loaded exits 5,
+# which `&&` turned into `set -e` ending the probe. Not swallowed
+# either: a daemon that would not stop holds the audio device, so this
+# script's own run cannot start, and pass 2 reports that as gpio592
+# never appearing, with sine's error under it.
 board "systemctl stop bela_daemon || echo 'WARNING: bela_daemon would not stop'
        mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
