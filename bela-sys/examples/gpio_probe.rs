@@ -336,7 +336,19 @@ mod imp {
         println!("gpio_dismiss = {}", unsafe {
             gpio_dismiss(fd2, LED_RUNNING)
         });
-        println!("  still exported: {}", exported(LED_RUNNING));
+        let dismissed = !exported(LED_RUNNING);
+        println!("  still exported: {}", !dismissed);
+        if !dismissed {
+            // As question 2 does with its own heading: the call below is
+            // only a *second* unexport if the dismiss took, and one that
+            // is really the first would answer 0 under a row that
+            // records -1.
+            give_back(LED_RUNNING);
+            return Err(format!(
+                "gpio_dismiss returned but left gpio{LED_RUNNING} exported, so what \
+                 follows would be a first unexport under a heading that says second"
+            ));
+        }
         println!("gpio_unexport (second time) = {}", unsafe {
             gpio_unexport(LED_RUNNING)
         });

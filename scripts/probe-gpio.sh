@@ -100,6 +100,13 @@ CLEANED=no
 
 cleanup() {
   status=$?
+  # And nothing below may end this handler early. Under `set -e` a
+  # failed write ends it where it stands, and the announcement below
+  # writes to a stderr that a closed terminal has already taken away —
+  # measured: with stderr closed, the handler stops at that echo and
+  # the reboot never runs, which is the case the header promises is
+  # covered. Every status this function needs, it tests for itself.
+  set +e
   # Before anything else, and not only to stop this running twice: a
   # second Ctrl-C goes to the whole process group, so without this it
   # kills the reboot ssh below — leaving the board with bela_daemon
@@ -236,9 +243,10 @@ BOARD_PREPARED=yes
 # here and carry on — probe-fft.sh needs no audio system and does not
 # stop it at all — and a unit that is masked or not loaded exits 5,
 # which `&&` turned into `set -e` ending the probe. Not swallowed
-# either: a daemon that would not stop holds the audio device, so this
-# script's own run cannot start, and pass 2 reports that as gpio592
-# never appearing, with sine's error under it.
+# either: a daemon that would not stop is running a project, and a
+# project exports pins — pass 1's own entry guard sees them, refuses,
+# and pass 2 never runs. Only a project with analog, digital and the
+# LEDs all off would get past that and leave pass 2 to report it.
 board "systemctl stop bela_daemon || echo 'WARNING: bela_daemon would not stop'
        mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
