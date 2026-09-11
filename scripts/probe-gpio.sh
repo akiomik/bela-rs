@@ -192,10 +192,14 @@ done
 trap cleanup EXIT
 trap 'INTERRUPTED=130; cleanup' INT
 trap 'INTERRUPTED=143; cleanup' TERM
-# And HUP, which a closed terminal or a dropped ssh sends: a shell that
-# dies of a signal it does not trap runs no EXIT trap, so without this
-# the board keeps `bela_daemon` stopped and whatever GPIO the last
-# question left, with no reboot and nothing said.
+# And HUP, which a closed terminal or a dropped ssh sends. Measured
+# with this line removed, on a live run: bash as `/bin/sh` runs the EXIT
+# trap even when it dies of an untrapped HUP, so the board was rebooted
+# either way. What this adds is a status the script chose rather than
+# "killed by signal", the same 128 + n its INT and TERM handlers give,
+# and HUP among what `cleanup` disarms while it reboots. POSIX promises
+# none of that, so a `/bin/sh` that is not bash need not behave as
+# measured here.
 trap 'INTERRUPTED=129; cleanup' HUP
 
 echo "Preparing $HOST..."
