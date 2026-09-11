@@ -73,8 +73,9 @@ mod imp {
     const LED_RUNNING: u32 = BANK0 + 45;
     /// `GPIO0_46`, claimed with the one above.
     const LED_UNDERRUN: u32 = BANK0 + 46;
-    /// `GPIO0_47`. libbela opens it with `unexport = false`, so it is
-    /// exported before any run and stays — the board's resting state.
+    /// `GPIO0_47`, exported before any run and after it:
+    /// `bela_button.service` holds it from boot, and libbela opens it
+    /// with `unexport = false`. The board's resting state.
     const STOP_BUTTON: u32 = BANK0 + 47;
     /// `GPIO1_6`, header `P1_21`, from `digital_gpio_mapping.h`.
     const DIGITAL_D0: u32 = BANK1 + 6;
@@ -481,7 +482,10 @@ mod imp {
             // is the resting state only where it was already there, and
             // `was_exported` is what says so. One this probe created is
             // its own, and leaving it would put a pin in question 13's
-            // listing that reads as the resting state and is not.
+            // listing that reads as the resting state and is not. In
+            // practice `bela_button.service` holds that pin from boot,
+            // so it is always already there; the test is what makes
+            // that a measurement rather than an assumption.
             if !was_exported && exported(pin) {
                 ours.push(pin);
             }
@@ -603,6 +607,8 @@ mod imp {
             // in an order this cannot see. One sample cannot tell those
             // apart, and unexporting on the wrong guess takes a pin from
             // a run that is still letting go of it.
+            // Not the stop button: `bela_button.service` holds it from
+            // boot, so it says nothing about a run.
             let still: Vec<String> = [LED_RUNNING, LED_UNDERRUN, DIGITAL_D0]
                 .into_iter()
                 .filter(|pin| exported(*pin))
@@ -664,17 +670,24 @@ mod imp {
             // returns where it is not.
             let now = direction(LED_RUNNING);
             if now == before {
-                // Not untouched. libbela's `gpio_set_dir` compares its
-                // argument against a `read(fd, buf, 4)` that leaves the
-                // buffer unterminated, so the `strcmp` never matches and
-                // it always writes — and writing a direction drives the
-                // line low. The PRU drives this pin every block and
-                // takes it back, which is why this is a line of
-                // transcript and not a LEFT CHANGED.
-                println!("  its direction still reads {before}, but gpio_setup wrote it:");
-                println!("  that drives the line low, and the PRU takes this pin back");
+                // Not proof it was untouched. libbela's `gpio_set_dir`
+                // compares its argument against a `read(fd, buf, 4)`
+                // that leaves the buffer unterminated, so the `strcmp`
+                // never matches and it writes whenever it reaches the
+                // write — and writing a direction drives the line low.
+                // Whether it got that far is not readable from here:
+                // `gpio_setup` also returns negative from an `open` that
+                // failed before any write. The PRU drives this pin every
+                // block and takes it back, which is why this is a line
+                // of transcript and not a LEFT CHANGED.
+                println!("  its direction still reads {before}, which does not mean");
+                println!("  untouched: where gpio_setup reached the write, that drove");
+                println!("  the line low, and the PRU takes this pin back");
             } else {
-                println!("  restoring its direction to {before}: {}", unsafe {
+                // The direction and not the level: writing `out` drives
+                // the line low, measured in docs/board-facts.md. The PRU
+                // takes this pin back.
+                println!("  putting its direction back to {before}: {}", unsafe {
                     gpio_set_dir(
                         LED_RUNNING,
                         if before == "out" {

@@ -100,7 +100,6 @@ cleanup() {
     # `rm -rf` first, in the same call, because `/tmp` is not guaranteed
     # to be a tmpfs on every image.
     echo "Rebooting $HOST: this probe leaves its GPIO in an arbitrary state." >&2
-    # shellcheck disable=SC2029 # the remote path is meant to expand here
     # `--no-block`, so systemctl queues the job and returns instead of
     # taking sshd down under the connection and handing back 255 on
     # every successful run.
@@ -172,7 +171,6 @@ ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
 # Armed before the stop, as the sibling scripts do: an interrupt during
 # that call can leave the daemon stopped.
 BOARD_PREPARED=yes
-# shellcheck disable=SC2029
 # `||` and not `&&`: the four sibling scripts use `;` here and carry on,
 # and a unit that is masked or not loaded at all exits 5 — which `&&`
 # turned into `set -e` ending the probe. Not swallowed either: a daemon
@@ -197,6 +195,8 @@ echo "=============================================================="
 alone_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
+  # A double quote or a backquote anywhere below, comments included,
+  # would end this argument and hand ssh the rest as more of them.
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $PROBE_TIMEOUT ./gpio_probe
   probe_status=\$?
@@ -226,8 +226,8 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # The write's status, not whether gpio585 is gone afterwards: an
   # existence test cannot tell a pin given back from a pin that was
   # never this number, and this 585 is tied by hand to the probe's
-  # BANK0 + 46. Writing an
-  # un-exported number to the unexport attribute fails, measured.
+  # BANK0 + 46. Writing an un-exported number to the unexport attribute
+  # fails: question 5 above is that measurement.
   if [ \$probe_status -eq 0 ]; then
     # Its stderr kept: the write being rejected and the attribute not
     # opening at all both land here, and the shell's own message is what
@@ -258,30 +258,27 @@ echo "=============================================================="
 with_run_status=0
 # shellcheck disable=SC2029
 ssh -o ConnectTimeout=10 "$HOST" "
+  # A double quote or a backquote anywhere below, comments included,
+  # would end this argument and hand ssh the rest as more of them.
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
   timeout -s INT -k 5 $RUN_SECONDS ./sine > sine.log 2>&1 &
   sine_pid=\$!
   # This shell's own business: the wrapper it waits on. Nothing is
   # written down for the handler, which reboots rather than killing.
   #
-  # Wait for the run to have claimed a pin, not for a fixed four
-  # seconds: \$sine_pid is the timeout wrapper, so its being alive says
-  # nothing about whether PRU::initialise has exported the digital
-  # channels. A start that ran long — cold cache, or the daemon slow to
-  # let go of the audio device — had the probe refuse as though nothing
-  # were rendering, which is a start-up race reported as a settings
-  # problem, and it costs the reboot. Eight seconds at most, and it
-  # usually returns in two or three. (No quotes in here: this comment is
-  # inside the double-quoted ssh string.)
-  # 585 is the underrun LED, and it is the last of the four pins the
-  # probe asks about to appear: prepareGPIO exports the digitals and the
-  # chip selects, and PRU::initialise opens the stop button and this one
-  # after it returns. Waiting on an earlier pin let the probe find 585
-  # and 586 free, take them as its own, and give them back at the end —
-  # unexporting them from a live run without --destructive, which is the
-  # act that gate exists for. Tied by hand to the probe's BANK0 + 46, as
-  # the 585 below is; come apart, this burns its eight seconds and the
-  # probe then refuses as though nothing were rendering.
+  # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
+  # wrapper, so its being alive says nothing about how far libbela has
+  # got. And for 585, the last of the four pins the probe asks about to
+  # appear — prepareGPIO exports the digitals and the chip selects, and
+  # PRU::initialise opens the stop button and this one after it returns.
+  # On an earlier pin the probe found 585 free, took it as its own and
+  # unexported it at the end, out of a live run and without
+  # --destructive, which is the act that gate exists for. (Not 586:
+  # bela_button.service holds that one from boot, so the probe never
+  # reads it as free.) The 585 here is
+  # tied by hand to the probe's BANK0 + 46; come apart, this waits out
+  # its eight seconds and the probe then refuses as though nothing were
+  # rendering.
   for _ in 1 2 3 4 5 6 7 8; do
     [ -e /sys/class/gpio/gpio585 ] && break
     sleep 1

@@ -827,9 +827,11 @@ LED (`GPIO0_45`) at `gpio584` and the red underrun LED (`GPIO0_46`) at
   direction, so this is the only way the two can disagree.
 - **The stop button pin outlives every run.** `gpio586`
   (`GPIO0_47`) was exported before the first run and after the last,
-  whatever the LED setting was. libbela opens it with
-  `Gpio::open(..., unexport = false)`, unlike the LEDs, so the export
-  is left behind for the next program rather than cleaned up.
+  whatever the LED setting was. Two things keep it there:
+  `bela_button.service` is enabled and runs `bela-cape-btn --pin 586`,
+  which holds an open descriptor on the pin's `value` from boot; and
+  libbela opens it with `Gpio::open(..., unexport = false)`, unlike the
+  LEDs, so a run does not take it away on the way out either.
 
 Read again on 2026-09-08, over ssh with nothing running: no audio
 system was created, so this is the board at rest rather than during a
@@ -837,9 +839,9 @@ run.
 
 - **At rest `/sys/class/gpio` holds `gpio586` and nothing else** —
   beside `export`, `unexport` and the four `gpiochip*` directories,
-  which are always there and name no claim. It is the bullet above
-  from the other end: a board that has run Bela is left holding the
-  stop button's export and no other pin.
+  which are always there and name no claim. It is not a leftover from
+  a run: the service in the bullet above holds it from boot, so a board
+  that has never run Bela shows the same listing.
 - **The two banks a `Gpio::Pin` names are `gpiochip539` and
   `gpiochip631`.** `600000.gpio` is bank 0, base 539, 92 lines;
   `601000.gpio` is bank 1, base 631, 52 lines. So `GPIO0_n` is sysfs
@@ -940,9 +942,9 @@ the *cause* rather than a guess that fits: the same descriptor, the
 same three calls, rewound before each, answers correctly every time.
 The code it points at is `gpio_read` in `core/GPIOcontrol.cpp`, which
 reads one byte and never seeks; the `gpio_write` row is the same offset
-from the other side, that function writing two bytes into a two-byte
-file, after which the descriptor is at its end and the next read has
-nothing left.
+from the other side, that function writing two bytes where the file
+holds two (`wc -c` on a `value` file gives `2`), after which the
+descriptor is at its end and the next read has nothing left.
 And on both failing rows the `unsigned int *value` still held the
 `0xdeadbeef` the probe put there, which is the measurement behind the
 soundness condition `bela-sys`'s documentation states. That is
@@ -1018,10 +1020,11 @@ With `sine` rendering, in another process:
   the underrun LED, the stop button and `D0` alike — the fast path
   again, which is the same `0` a fresh export gives. An application
   asking for a pin libbela is holding is told it succeeded.
-- **Everything reads.** `gpio_get_value` answered on all four: the
-  running LED `1`, the underrun LED `0`, the stop button `1`, `D0`
-  `0`. Sysfs offers no ownership, so a second reader is simply a
-  second reader.
+- **Everything reads.** `gpio_get_value` returned `0` for all four,
+  each with a level. Which level is not recorded: the running LED read
+  `1` in one pass and `0` in another, so the reading is the moment's
+  and not a fact about the pin. Sysfs offers no ownership, so a second
+  reader is simply a second reader.
 - **A write to a digital channel fails, and the direction is why.**
   `gpio_set_value(D0, HIGH)` returned `-1`; the pin's `direction` file
   reads `in`, which is what "every channel starts as an input" above
