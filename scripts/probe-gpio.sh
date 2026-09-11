@@ -64,13 +64,28 @@ REMOTE_DIR="/tmp/bela-rs-probe-gpio"
 # would measure a board with nothing running. The probe takes well under
 # a second, and the wait for it to claim a pin is bounded at eight, so
 # 8 + 20 + 5 is what has to fit inside 40. Every command that *runs* something
-# is bounded by `timeout`; the short ones carry only `ConnectTimeout`, so
-# a board that answers and then stops answering will hang them until
-# Ctrl-C. The reboot is the exception both ways: it cannot be Ctrl-C'd,
-# so it carries `ServerAliveInterval` instead.
+# is bounded by `timeout` on the board; every ssh from here goes
+# through `board` below, and the one `scp` carries the same options.
 RUN_SECONDS=40
 PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
+
+# Every ssh goes through this. A board that answers and then stops
+# answering — a wedged kernel, a link that drops — would otherwise hang
+# the run for as long as it takes someone to notice, and nothing can
+# fire the EXIT trap while it hangs, so the board waits there with
+# `bela_daemon` stopped and its GPIO arbitrary. ServerAlive gives up
+# after about fifteen seconds of *unanswered keepalives*, not of
+# quiet: pass 2 sends nothing for half a minute while it waits out the
+# run, and a healthy sshd answers throughout. The `timeout` in the
+# remote commands bounds the remote work, which is a different thing
+# and does not help here. Anything `$`-shaped in the command reaching
+# this expands locally, which is meant — `$REMOTE_DIR` is this
+# script's value, and a remote one has to be written `\$`.
+board() {
+  ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+    "$HOST" "$@"
+}
 
 BOARD_PREPARED=no
 # Set by the traps to the status that signal owes, because `$?` when a
@@ -135,9 +150,7 @@ cleanup() {
     # does not need either: `/tmp` is on the root ext4 filesystem, and
     # systemd empties it at boot (`D /tmp 1777 root root -`), measured
     # after a reboot with the removal gone.
-    if ! why=$(ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 \
-      -o ServerAliveCountMax=3 "$HOST" \
-      "systemctl --no-block reboot" 2>&1); then
+    if ! why=$(board "systemctl --no-block reboot" 2>&1); then
       echo "WARNING: the reboot of $HOST was not confirmed. This failing does" >&2
       echo "not mean it did not happen — a board going down looks the same from" >&2
       echo "here as one that stopped answering — but it does not mean it did, so" >&2
@@ -165,8 +178,8 @@ pass_failed() {
     echo "$1 asked its questions; what follows them did not finish. Its own" >&2
     echo "lines above say which." >&2
   elif [ "$2" -eq 255 ]; then
-    echo "$1's ssh failed (255): a transport failure. Nothing above says what" >&2
-    echo "ran." >&2
+    echo "$1's ssh failed (255): a transport failure. Whatever is above had" >&2
+    echo "already been sent, so read it for where it stops." >&2
   else
     echo "$1 did not finish (exit $2); the transcript above says where it" >&2
     echo "stopped." >&2
@@ -201,8 +214,7 @@ trap 'INTERRUPTED=129; cleanup' HUP
 echo "Preparing $HOST..."
 # A fresh directory, so a failed reboot from an earlier run cannot leave
 # this one running its binaries.
-# shellcheck disable=SC2029 # the remote path is meant to expand here
-ssh -o ConnectTimeout=10 "$HOST" "rm -rf $REMOTE_DIR"
+board "rm -rf $REMOTE_DIR"
 # Armed before the stop, as the sibling scripts do: an interrupt during
 # that call can leave the daemon stopped.
 BOARD_PREPARED=yes
@@ -212,14 +224,13 @@ BOARD_PREPARED=yes
 # that would not stop holds the audio device, and pass 2 would report
 # that as no run being there to ask beside.
 # shellcheck disable=SC2029
-ssh -o ConnectTimeout=10 "$HOST" \
-  "systemctl stop bela_daemon || echo 'WARNING: bela_daemon would not stop'
-   mkdir -p $REMOTE_DIR"
+board "systemctl stop bela_daemon || echo 'WARNING: bela_daemon would not stop'
+       mkdir -p $REMOTE_DIR"
 for binary in gpio_probe sine; do
-  scp -q -o ConnectTimeout=10 "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
+  scp -q -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+    "$BIN_DIR/$binary" "$HOST:$REMOTE_DIR/$binary"
 done
-# shellcheck disable=SC2029 # the remote path is meant to expand here
-ssh -o ConnectTimeout=10 "$HOST" "chmod +x $REMOTE_DIR/gpio_probe $REMOTE_DIR/sine"
+board "chmod +x $REMOTE_DIR/gpio_probe $REMOTE_DIR/sine"
 
 echo
 echo "=============================================================="
@@ -228,8 +239,7 @@ echo "=============================================================="
 # Not `status=$?` on the next line: `set -e` would end the script on a
 # failing ssh before the assignment ran.
 alone_status=0
-# shellcheck disable=SC2029
-ssh -o ConnectTimeout=10 "$HOST" "
+board "
   # A double quote or a backquote anywhere below, comments included,
   # would end this argument and hand ssh the rest as more of them.
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }
@@ -291,8 +301,7 @@ echo "=============================================================="
 echo "Pass 2: the probe beside a run${DESTRUCTIVE:+ (destructive)}"
 echo "=============================================================="
 with_run_status=0
-# shellcheck disable=SC2029
-ssh -o ConnectTimeout=10 "$HOST" "
+board "
   # A double quote or a backquote anywhere below, comments included,
   # would end this argument and hand ssh the rest as more of them.
   cd $REMOTE_DIR || { echo 'the remote directory is gone'; exit 1; }

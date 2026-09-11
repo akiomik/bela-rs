@@ -325,10 +325,10 @@ mod imp {
         let mut value: PIN_VALUE = 0xdead_beef;
         let ret = unsafe { gpio_read(fd2, &raw mut value) };
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
-        // On whether the write took, as question 11 is: a put-back that
-        // failed after a HIGH that failed leaves nothing to put back.
-        // The line, not the indicator: sysfs reads one and says nothing
-        // about the other.
+        // Unconditionally, unlike question 11, which writes back only
+        // what its own write took: here both writes are the probe's and
+        // the reboot has whatever they leave. The line, not the
+        // indicator: sysfs reads one and says nothing about the other.
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };
         println!("  gpio_write(fd2, LOW) = {put_back}");
 
@@ -584,8 +584,8 @@ mod imp {
                 give_back(*pin);
             }
         }
-        // Asked after the loop, not read off `give_back`: it reports to
-        // stderr and returns nothing, and the pin is the thing anyway.
+        // Asked after the loop, not read off `give_back`, which returns
+        // nothing — and the pin is the thing anyway.
         // What this decides is question 13, which the script prints only
         // on a zero exit and its closing note calls the probe's answer —
         // so one of this probe's pins left in that listing would be read
