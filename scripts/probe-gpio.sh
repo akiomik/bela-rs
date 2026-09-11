@@ -290,6 +290,11 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # finished is what question 12 leans on.
   alive() { [ -n \"\$1\" ] && st=\$(cat /proc/\$1/status 2>/dev/null) &&
     ! printf '%s' \"\$st\" | grep -qE '^State:[[:space:]]*Z'; }
+  run_died() {
+    echo 'sine did not stay up; its output was:'
+    cat sine.log
+    exit 4
+  }
   # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
   # wrapper, so its being alive says nothing about how far libbela has
   # got. And for 592, the ADC reset, which is the last pin this run
@@ -302,19 +307,20 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # twenty-one pins of that window rather than the twenty-two
   # docs/board-facts.md records. (Never the stop button:
   # bela_button.service holds that one from boot, so the probe cannot
-  # read it as free.) Tied by hand to BANK0 + 53, and to this run
-  # having analog in, which is what libbela opens it for.
+  # read it as free.) Tied by hand to BANK0 + 53, to this run having
+  # analog in, which is what libbela opens it for, and to this board
+  # being a GemStereo: es9080CodecResetPin is bank 0 line 53 on this
+  # SoC too, and the codec branches that take it — BelaEs9080,
+  # BelaRevC, GemMulti — open it from the codec constructor, long
+  # before any of the pins above. On one of those this gate would
+  # return at once.
   # Liveness first: a run that never started is the likeliest way to
   # get here — the daemon still holding the audio device is what the
   # WARNING above is for — and without this the wait spends its eight
   # seconds and then reports a missing pin, which is a dead run
   # described as a slow one.
   for _ in 1 2 3 4 5 6 7 8; do
-    if ! alive \$sine_pid; then
-      echo 'sine did not stay up; its output was:'
-      cat sine.log
-      exit 4
-    fi
+    alive \$sine_pid || run_died
     [ -e /sys/class/gpio/gpio592 ] && break
     sleep 1
   done
@@ -327,9 +333,13 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # unexports them at the end, out of a live run and without
   # --destructive.
   if [ ! -e /sys/class/gpio/gpio592 ]; then
+    # Asked again, and not read off the loop: that look is a sleep old,
+    # and a run that exported 592 and then tore down releases it, so
+    # the test above fails for the one reason this message denies.
+    alive \$sine_pid || run_died
     echo 'gpio592 never appeared, so what this run holds cannot be told from what'
     echo 'is free: it may be slow to start, it may have no analog in, or the 592'
-    echo 'here has come apart from libbela. It was still up; its output so far:'
+    echo 'here has come apart from libbela. It is still up; its output so far:'
     cat sine.log
     exit 6
   fi
