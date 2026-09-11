@@ -633,10 +633,21 @@ mod imp {
         // one it finds, so asking as an input would latch the run's LED
         // pin as one for the rest of the run.
         let before = direction(LED_RUNNING);
-        let ask_as = if before == "in" {
-            arg::INPUT
-        } else {
-            arg::OUTPUT
+        // And refused where that is not a direction. `direction` renders
+        // a read failure as its own text, which is what a run tearing
+        // down between the check above and this line gives — and mapping
+        // it to `OUTPUT` would export a free pin, dismiss it, and record
+        // that under a heading about taking a pin from a live run. It is
+        // the most load-bearing answer here; it must not be an
+        // interaction with no run in it.
+        let ask_as = match before.as_str() {
+            "in" => arg::INPUT,
+            "out" => arg::OUTPUT,
+            _ => {
+                println!("  NOT asked: its direction reads {before}, so what it holds is");
+                println!("  not known and asking as a guess would latch that guess");
+                return;
+            }
         };
         let fd = unsafe { gpio_setup(LED_RUNNING, ask_as) };
         println!("  gpio_setup = {fd} (its direction was {before})");

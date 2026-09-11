@@ -56,11 +56,11 @@ REMOTE_DIR="/tmp/bela-rs-probe-gpio"
 
 # The run must outlive the probe by a margin: a probe that outlived it
 # would measure a board with nothing running. The probe takes well under
-# a second, so 30 against a 20-second bound leaves the with-run questions
-# ~26 seconds of run to happen inside. Every command that *runs* something
+# a second, and the wait for it to claim a pin is bounded at eight, so
+# 8 + 20 + 5 is what has to fit inside 40. Every command that *runs* something
 # is bounded by `timeout`; the short ones carry only `ConnectTimeout`, so
 # a board that answers and then stops answering will hang them.
-RUN_SECONDS=30
+RUN_SECONDS=40
 PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
 
@@ -116,6 +116,12 @@ cleanup() {
       echo "WARNING: $HOST was not rebooted, so its GPIO is as this left it and" >&2
       echo "bela_daemon is still stopped — the reboot is what starts it again." >&2
       echo "$why" >&2
+      # And into the exit status, or `probe-gpio.sh && next-step` walks
+      # onto that board. 7 rather than 1: the questions above were
+      # answered, and what failed was the step after them.
+      if [ "$status" -eq 0 ]; then
+        status=7
+      fi
     fi
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
@@ -217,8 +223,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # prevent.
   #
   # The write's status, not whether gpio585 is gone afterwards: an
-  # existence test cannot tell "given back" from "never this number",
-  # and this 585 is tied by hand to the probe's BANK0 + 46. Writing an
+  # existence test cannot tell a pin given back from a pin that was
+  # never this number, and this 585 is tied by hand to the probe's
+  # BANK0 + 46. Writing an
   # un-exported number to the unexport attribute fails, measured.
   if [ \$probe_status -eq 0 ]; then
     # Its stderr kept: the write being rejected and the attribute not
@@ -255,7 +262,20 @@ ssh -o ConnectTimeout=10 "$HOST" "
   sine_pid=\$!
   # This shell's own business: the wrapper it waits on. Nothing is
   # written down for the handler, which reboots rather than killing.
-  sleep 4
+  #
+  # Wait for the run to have claimed a pin, not for a fixed four
+  # seconds: \$sine_pid is the timeout wrapper, so its being alive says
+  # nothing about whether PRU::initialise has exported the digital
+  # channels. A start that ran long — cold cache, or the daemon slow to
+  # let go of the audio device — had the probe refuse as though nothing
+  # were rendering, which is a start-up race reported as a settings
+  # problem, and it costs the reboot. Eight seconds at most, and it
+  # usually returns in two or three. (No quotes in here: this comment is
+  # inside the double-quoted ssh string.)
+  for _ in 1 2 3 4 5 6 7 8; do
+    [ -e /sys/class/gpio/gpio637 ] && break
+    sleep 1
+  done
   # Through /proc rather than a signal-0: under a shell which reaps only
   # at wait, a run that died a second ago is still a zombie a signal-0
   # succeeds on.
