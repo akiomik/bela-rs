@@ -120,8 +120,9 @@ cleanup() {
     # device, which is what the kill ladder here used to be for.
     #
     # What it costs: about forty seconds, and the board is gone for them.
-    # This script already stops `bela_daemon` and runs two audio programs
-    # back to back, so it is not something to run beside other work; and
+    # This script already stops `bela_daemon` and holds the audio device
+    # with a run of its own, so it is not something to run beside other
+    # work; and
     # a board left with an arbitrary GPIO state is worse than a board
     # that is briefly away. `bela_daemon` comes back on its own if it is
     # enabled, which is why nothing here records whether it was running.
@@ -190,8 +191,8 @@ pass_failed() {
 
 # As three of the four siblings and the smoke test do — probe-fft.sh
 # does not — and for the same reason: without it the
-# build fails at the link with fifteen lines of missing -lbela and
-# friends, which says nothing about what is actually wrong.
+# build fails at the link with seventeen lines of error, six of them a
+# missing `-l`, which say nothing about what is actually wrong.
 if [ -z "${BELA_SYSROOT:-}" ]; then
   echo "BELA_SYSROOT is not set; see docs/cross-compile.md" >&2
   exit 2
