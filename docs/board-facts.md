@@ -308,7 +308,7 @@ Captured from a verbose on-board build:
   that took it: after every case above, including the ones that
   segfaulted, the next process brought up an audio system and rendered
   the expected ~2760 blocks per second, with no reboot, no restart of
-  `bela_daemon` and nothing left to kill in between. And
+  `bela_daemon` and no intervention in between. And
   `Bela_cleanupAudio` is not the way out, which left refusing later
   attempts as the only repair `Bela::new` could make — which is what it
   now does.
@@ -874,21 +874,33 @@ Collected 2026-09-08 while writing `scripts/probe-gpio.sh`, whose
 cleanup depends on getting this right and did not, for several
 rounds.
 
-- **libbela renames the process, so nothing is called what it was
-  built as.** `bela/examples/sine`, run as `./sine`, has
-  `/proc/<pid>/comm` reading `sine:2640:18042` — the binary's name,
-  its pid, and a third number — while `/proc/<pid>/cmdline` stays
-  `./sine`. So `pgrep -x sine` finds nothing and `pkill -x sine` kills
-  nothing. It does say so: procps-ng 4.0.2 on this board exits `1` when
-  no process matched, so the no-op is silent only where a caller drops
-  the status.
-- **Three scripts here were written before this was known.**
-  `probe-io.sh`, `probe-command-line.sh` and `probe-init-failure.sh`
-  each kill a run with `pkill -9 -x <name>`, which by the above matches
-  nothing and says so to a caller that keeps the status. Filed as
-  [#162](https://github.com/akiomik/bela-rs/issues/162); recorded here
-  so that this section is not read as describing a tree that acts on
-  it.
+- **libbela renames a process that calls `Bela_initAudio`, so it is not
+  called what it was built as.** `bela/examples/sine`, run as
+  `./sine`, has `/proc/<pid>/comm` reading `sine:2640:18042` — the
+  binary's name, its pid, and a third number — while
+  `/proc/<pid>/cmdline` stays `./sine`. So `pgrep -x sine` finds
+  nothing and `pkill -x sine` kills nothing. It does say so: procps-ng
+  4.0.2 on this board exits `1` when no process matched, so the no-op
+  is silent only where a caller drops the status.
+- **Which runs it happens to** (2026-09-12). `bela/examples/io_config`
+  sampled through a run: `hardware`, which only asks libbela what the
+  board is, reads `io_config` in every sample of the milliseconds it
+  lasts, where `context` reads `io_config:2615:` by the sixth of its
+  365 — truncated at the 15 characters `comm` allows. Failing is no
+  escape either: `bela/examples/init_failure abort` brings the hardware
+  up, fails from `setup`, and runs as `init_failure:12`.
+- **Without `-x` a name does match** (2026-09-12). `pgrep` and `pkill`
+  compare the pattern to `comm` as an unanchored regular expression
+  unless `-x` is given, and the rename only appends, so `pgrep
+  init_failure` finds the `init_failure:36` that `pgrep -x
+  init_failure` misses — but what must fit in the 15 characters `comm`
+  allows is the pattern too. A copy of `sine` named
+  `sine_long_name_probe` runs as `sine_long_name_`, the rename
+  truncated away with the rest, and `pgrep sine_long_name_probe`
+  refuses before looking: "pattern that searches for process name
+  longer than 15 characters will result in zero matches". Unlike `-f`
+  below, nothing here compares the pattern to a command line, so it
+  cannot match the ssh session running it.
 - **Matching on the command line instead is worse.** `pkill -f
   './sine'` matches the ssh command line of any script that mentions
   the binary, this one included, and takes the connection down with

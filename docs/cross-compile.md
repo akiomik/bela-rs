@@ -252,13 +252,15 @@ hardware, so stop it first; start it again with
 
 **Use `ssh -t`.** Without it ssh allocates no terminal, so Ctrl-C only
 kills the local ssh client while the program keeps running on the
-board — you then have to log in and `pkill -f ./sine` to stop it. With
+board — you then have to log in and `pkill sine` to stop it. With
 `-t`, Ctrl-C reaches the program and `Bela::run` shuts down cleanly
 (it handles SIGINT, SIGTERM and SIGHUP, so `systemctl stop` and a
 dropped connection are clean too).
 
 Note that Bela renames the process, so `pgrep -x sine` does not match
-it; use `pgrep -f './sine'`.
+it. `pgrep sine` does: without `-x` the pattern is not anchored, and
+the rename only appends. See "What a Bela program is called while it
+runs" in [docs/board-facts.md](board-facts.md).
 
 ## Updating the vendored headers
 
