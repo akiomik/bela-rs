@@ -171,17 +171,14 @@ mod imp {
     }
 
     /// Unexports `pin` and then asks the pin, `gpio_unexport` being the
-    /// call question 5 measures refusing silently.
+    /// call question 5 measures refusing silently. Callers that need it
+    /// to have worked ask again; the rest leave it to the reboot.
     fn give_back(pin: u32) {
         let ret = unsafe { gpio_unexport(pin) };
-        if exported(pin) {
-            eprintln!(
-                "LEFT CHANGED: gpio{pin} is still exported after gpio_unexport ({ret}); \
-                 a reboot is what gives it back."
-            );
-        } else {
-            println!("  gpio_unexport({pin}) = {ret}, and it is gone");
-        }
+        println!(
+            "  gpio_unexport({pin}) = {ret}, exported now: {}",
+            exported(pin)
+        );
     }
 
     pub(crate) fn main() {
@@ -334,14 +331,6 @@ mod imp {
         // about the other.
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };
         println!("  gpio_write(fd2, LOW) = {put_back}");
-        if wrote == 0 && put_back != 0 {
-            eprintln!(
-                "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
-                 ({put_back}). A pass that reaches \"the remaining four\" below writes this \
-                 pin's direction, which drives the line low; question 6 can refuse before \
-                 it, and then the line stays high for the reboot."
-            );
-        }
 
         println!("\n-- 5. gpio_dismiss, then unexport again --");
         println!("gpio_dismiss = {}", unsafe {
@@ -384,12 +373,7 @@ mod imp {
             }
             println!("  lednum {n}: ret {ret} (was [{before}], restoring)");
             if let Err(e) = fs::write(trigger_path(n), &before) {
-                let now = current_trigger(n).unwrap_or_else(|| "unreadable".to_owned());
-                eprintln!(
-                    "LEFT CHANGED: usr{n} reads `{now}` and was `{before}` ({e}); put it \
-                     back with: echo {before} > {}",
-                    trigger_path(n)
-                );
+                println!("  lednum {n}: could not be put back ({e})");
                 // Stop asking: whatever refused this is as likely to
                 // hold for the next number, and going on would leave
                 // four triggers changed rather than one.
@@ -579,13 +563,6 @@ mod imp {
                     let restore = if before == 0 { arg::LOW } else { arg::HIGH };
                     let put_back = unsafe { gpio_set_value(DIGITAL_D0, restore) };
                     println!("  writing back the {before} sampled above: {put_back}");
-                    if put_back != 0 {
-                        eprintln!(
-                            "LEFT CHANGED: gpio{DIGITAL_D0} was written HIGH and would not \
-                             go back ({put_back}); it drives against the PRU until the run \
-                             ends"
-                        );
-                    }
                 } else {
                     println!("  the write did not take, so there is nothing to put back");
                 }
@@ -720,7 +697,7 @@ mod imp {
                 // `gpio_setup` also returns negative from an `open` that
                 // failed before any write. The PRU drives this pin every
                 // block and takes it back, which is why this is a line
-                // of transcript and not a LEFT CHANGED.
+                // of transcript and nothing more.
                 println!("  its direction still reads {before}, which does not mean");
                 println!("  untouched: where gpio_setup reached the write, that drove");
                 println!("  the line low, and the PRU takes this pin back");

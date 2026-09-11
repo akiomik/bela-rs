@@ -144,13 +144,9 @@ cleanup() {
       echo "treat the board as this left it: GPIO arbitrary, bela_daemon stopped," >&2
       echo "which the reboot is what would have started again, where enabled." >&2
       echo "$why" >&2
-      # And into the exit status, or `probe-gpio.sh && next-step` walks
-      # onto that board. Unconditionally, not only where the run was
-      # otherwise clean: a pass that failed is in the transcript above
-      # and in its own message, while a board still holding an
-      # arbitrary state with `bela_daemon` stopped is the thing a
-      # caller has to act on, and it was indistinguishable from an
-      # ordinary failed pass while this only fired on a zero.
+      # Unconditionally: a board still holding an arbitrary state is
+      # what a caller has to act on, and a pass that failed is already
+      # in the transcript.
       status=7
     fi
   fi
@@ -305,20 +301,6 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # This shell's own business: the wrapper it waits on. Nothing is
   # written down for the handler, which reboots rather than killing.
   #
-  # Through /proc rather than a signal-0: under a shell which reaps only
-  # at wait, a run that died a second ago is still a zombie a signal-0
-  # succeeds on.
-  # The read has to succeed: a process reaped between the directory
-  # test and the grep made grep exit 2, which the negation turned into
-  # alive, and the line that says the run was still up when the probe
-  # finished is what question 12 leans on.
-  alive() { [ -n \"\$1\" ] && st=\$(cat /proc/\$1/status 2>/dev/null) &&
-    ! printf '%s' \"\$st\" | grep -qE '^State:[[:space:]]*Z'; }
-  run_died() {
-    echo 'sine did not stay up; its output was:'
-    cat sine.log
-    exit 4
-  }
   # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
   # wrapper, so its being alive says nothing about how far libbela has
   # got. And for 592, the ADC reset, which is the last pin this run
@@ -338,13 +320,7 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # BelaRevC, GemMulti — open it from the codec constructor, long
   # before any of the pins above. On one of those this gate would
   # return at once.
-  # Liveness first: a run that never started is the likeliest way to
-  # get here — the daemon still holding the audio device is what the
-  # WARNING above is for — and without this the wait spends its eight
-  # seconds and then reports a missing pin, which is a dead run
-  # described as a slow one.
   for _ in 1 2 3 4 5 6 7 8; do
-    alive \$sine_pid || run_died
     [ -e /sys/class/gpio/gpio592 ] && break
     sleep 1
   done
@@ -357,14 +333,11 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # unexports them at the end, out of a live run and without
   # --destructive.
   if [ ! -e /sys/class/gpio/gpio592 ]; then
-    # Asked again, and not read off the loop: that look is a sleep old,
-    # and a run that exported 592 and then tore down releases it, so
-    # the test above fails for the one reason this message denies.
-    alive \$sine_pid || run_died
+    # No cause named: a run that never started, one that started slowly
+    # and one that tore down again all arrive here, and its output says
+    # which better than a guess would.
     echo 'gpio592 never appeared, so what this run holds cannot be told from what'
-    echo 'is free: it may be slow to start, it may have no analog in, or the 592'
-    echo 'here has come apart from libbela. It was up when this asked; its'
-    echo 'output so far:'
+    echo 'is free. Nothing was asked. sine said:'
     cat sine.log
     exit 6
   fi
@@ -372,14 +345,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   probe_status=\$?
   echo
   echo '-- what the run did while that happened --'
-  if alive \$sine_pid; then
-    echo '   still up at the moment the probe finished'
-  else
-    echo '   ALREADY GONE before the probe finished'
-  fi
-  # The status, not just liveness: a run that aborts a second after the
-  # probe touched its pin is still alive for the check above. 124 is
-  # timeout ending it, which is the undisturbed end here.
+  # Its status and not a liveness check: a run that aborts a second
+  # after the probe touched its pin was alive for any such check, which
+  # is why docs/board-facts.md leans on this line instead.
   wait \$sine_pid
   sine_status=\$?
   case \$sine_status in
@@ -408,9 +376,6 @@ ssh -o ConnectTimeout=10 "$HOST" "
 echo
 if [ "$with_run_status" -ne 0 ]; then
   pass_failed "Pass 2" "$with_run_status"
-  if [ "$with_run_status" -eq 4 ]; then
-    echo "No run was there to ask beside; sine's output is above." >&2
-  fi
   exit 1
 fi
 echo "The board answered. Record the findings in docs/board-facts.md."
