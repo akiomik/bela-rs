@@ -114,10 +114,8 @@ restore() {
   status=$?
   if [ "$board_prepared" = yes ]; then
     # One connection, because an unreachable board makes each of these
-    # cost a full ConnectTimeout. The kill comes first: a run still
-    # holding the audio device would make the next thing to run here
-    # fail for a reason of its own.
-    undo="pkill -9 -x io_config; rm -rf $REMOTE_DIR"
+    # cost a full ConnectTimeout.
+    undo="rm -rf $REMOTE_DIR"
     if [ "$daemon_was_active" = yes ]; then
       undo="$undo; systemctl start bela_daemon"
     fi

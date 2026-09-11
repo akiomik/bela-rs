@@ -241,7 +241,7 @@ RESULTS="$LOG_DIR/results"
 restore() {
   status=$?
   if [ "$board_prepared" = yes ]; then
-    undo="pkill -9 -x command_line; rm -rf $REMOTE_DIR"
+    undo="rm -rf $REMOTE_DIR"
     if [ "$daemon_was_active" = yes ]; then
       undo="$undo; systemctl start bela_daemon"
     fi

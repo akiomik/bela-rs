@@ -75,6 +75,9 @@ CYCLES_TIMEOUT=$((CYCLE_COUNT * 6 + 30))
 # outlast the holder from later than it started.
 HOLD_SECONDS=6
 BUSY_WAIT_SECONDS=8
+# How long to wait before asking a second time whether the board is
+# back.
+RECOVERY_WAIT=2
 
 daemon_was_active=no
 # Whether the board has been touched yet. Until it has there is nothing
@@ -93,10 +96,8 @@ restore() {
   status=$?
   if [ "$board_prepared" = yes ]; then
     # One connection, because an unreachable board makes each of these
-    # cost a full ConnectTimeout. The kill comes first: a probe still
-    # holding the audio device would make the next thing to run here
-    # fail for a reason of its own.
-    undo="pkill -9 -x init_failure; rm -rf $REMOTE_DIR"
+    # cost a full ConnectTimeout.
+    undo="rm -rf $REMOTE_DIR"
     if [ "$daemon_was_active" = yes ]; then
       undo="$undo; systemctl start bela_daemon"
     fi
@@ -189,9 +190,9 @@ record() {
 
 wedged() {
   echo
-  echo "The board no longer gives an audio system, and killing leftover"
-  echo "processes did not bring it back. The probe that did it is the last"
-  echo "one below. Reboot before probing again:"
+  echo "The board no longer gives an audio system, and a second look a"
+  echo "few seconds later did not find it back. The last line below is"
+  echo "where it was noticed. Reboot before probing again:"
   echo
   echo "    ssh $HOST reboot"
   echo
@@ -252,21 +253,13 @@ fi
 record "preflight" "$(oracle_detail)"
 echo "  $(oracle_detail)"
 
-# Kills anything the last probe left running. Matched on the process
-# name rather than the command line: `pkill -f init_failure` also
-# matches the shell running this very command, so it would kill itself
-# before reaching whatever came next.
-kill_leftovers() {
-  remote "pkill -9 -x init_failure; sleep 2" > /dev/null 2>&1 || true
-}
-
 # Makes sure the next probe starts from a board that works, and says so
-# when it cannot. A probe that timed out still holds the audio device,
-# and that would be measured as damage it did not do.
+# when it cannot. A second oracle after a wait, which asks whether the
+# board comes back on its own.
 require_healthy() {
   oracle && return 0
-  echo "  board unhealthy before the probe; killing leftovers and retrying"
-  kill_leftovers
+  echo "  board unhealthy before the probe; waiting and retrying"
+  sleep "$RECOVERY_WAIT"
   oracle
 }
 
@@ -321,7 +314,8 @@ for probe in $PROBES; do
   busy)
     # A holder keeps the audio device while the probe tries to take it,
     # then goes; the probe waits it out and tries again in the same
-    # process. Detached, so the ssh call returns immediately.
+    # process. Detached, so the ssh call returns immediately — and the
+    # one remote process here that no `timeout` bounds, which is #164.
     remote "cd $REMOTE_DIR && nohup ./init_failure render-check $HOLD_SECONDS \
       > holder.log 2>&1 & echo started" > /dev/null
     sleep 2
@@ -357,14 +351,14 @@ exit $(status_of "$log"))"
 
   case "$after" in
   BOARD*)
-    # Distinguish damage that a leftover process explains from damage
-    # that outlives one, which is the whole question.
-    kill_leftovers
+    # Distinguish damage that a wait undoes from damage that outlives
+    # one, which is the whole question.
+    sleep "$RECOVERY_WAIT"
     if oracle; then
-      record "$probe (after pkill)" "recovered: $(oracle_detail)"
-      echo "  -> recovered once leftover processes were killed"
+      record "$probe (after a wait)" "recovered: $(oracle_detail)"
+      echo "  -> recovered on a second look"
     else
-      record "$probe (after pkill)" "still broken: $(oracle_detail)"
+      record "$probe (after a wait)" "still broken: $(oracle_detail)"
       wedged
     fi
     ;;
