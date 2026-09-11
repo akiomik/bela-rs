@@ -315,18 +315,17 @@ mod imp {
         let mut value: PIN_VALUE = 0xdead_beef;
         let ret = unsafe { gpio_read(fd2, &raw mut value) };
         println!("  the very next gpio_read: ret {ret}, *value {value:#x}");
-        // An unexport keeps the level and setting `in` does not pull the
-        // line down, so a HIGH that stayed is a line left driven until
-        // the reboot. The line, not the indicator: sysfs reads one and
-        // says nothing about the other.
         // On whether the write took, as question 11 is: a put-back that
         // failed after a HIGH that failed leaves nothing to put back.
+        // The line, not the indicator: sysfs reads one and says nothing
+        // about the other.
         let put_back = unsafe { gpio_write(fd2, arg::LOW) };
         println!("  gpio_write(fd2, LOW) = {put_back}");
         if wrote == 0 && put_back != 0 {
             eprintln!(
                 "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
-                 ({put_back}); the reboot at the end of the script is what clears it"
+                 ({put_back}). A pass that reaches the block below writes its direction, \
+                 which drives the line low; one that does not leaves it to the reboot."
             );
         }
 
@@ -657,17 +656,10 @@ mod imp {
                 println!("  and the pin is gone, so there is nothing to put back");
                 return;
             }
+            // Two arms, `before` being a direction: the `match` above
+            // returns where it is not.
             let now = direction(LED_RUNNING);
-            if now != before && (before == "in" || before == "out") {
-                let back = if before == "out" {
-                    arg::OUTPUT
-                } else {
-                    arg::INPUT
-                };
-                println!("  restoring its direction to {before}: {}", unsafe {
-                    gpio_set_dir(LED_RUNNING, back)
-                });
-            } else if now == before {
+            if now == before {
                 // Not untouched. libbela's `gpio_set_dir` compares its
                 // argument against a `read(fd, buf, 4)` that leaves the
                 // buffer unterminated, so the `strcmp` never matches and
@@ -678,8 +670,16 @@ mod imp {
                 println!("  its direction still reads {before}, but gpio_setup wrote it:");
                 println!("  that drives the line low, and the PRU takes this pin back");
             } else {
-                println!("  its direction reads {now} and was {before}, which is not a");
-                println!("  direction, so there is nothing to put it back to");
+                println!("  restoring its direction to {before}: {}", unsafe {
+                    gpio_set_dir(
+                        LED_RUNNING,
+                        if before == "out" {
+                            arg::OUTPUT
+                        } else {
+                            arg::INPUT
+                        },
+                    )
+                });
             }
             return;
         }
