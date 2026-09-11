@@ -114,7 +114,8 @@ cleanup() {
     if ! why=$(ssh -o ConnectTimeout=10 "$HOST" \
       "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>&1); then
       echo "WARNING: $HOST was not rebooted, so its GPIO is as this left it and" >&2
-      echo "bela_daemon is still stopped — the reboot is what starts it again." >&2
+      echo "bela_daemon is still stopped; the reboot is what would have started" >&2
+      echo "it again, where it is enabled." >&2
       echo "$why" >&2
       # And into the exit status, or `probe-gpio.sh && next-step` walks
       # onto that board. 7 rather than 1: the questions above were
@@ -272,16 +273,17 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # problem, and it costs the reboot. Eight seconds at most, and it
   # usually returns in two or three. (No quotes in here: this comment is
   # inside the double-quoted ssh string.)
-  # 593 is D15, GPIO0_54, the last of the sixteen digital channels
-  # prepareGPIO exports; 637 is D0, the first. Waiting on the last means
-  # the probe finds both what its gate needs — gpio637, and a pin
-  # outside the four it asks about — where waiting on the first can
-  # leave it refusing because nothing else is up yet. Tied by hand to
-  # the probe's BANK0 + 54, as the 585 below is to BANK0 + 46; come
-  # apart, this burns its eight seconds and the probe then refuses as
-  # though nothing were rendering.
+  # 585 is the underrun LED, and it is the last of the four pins the
+  # probe asks about to appear: prepareGPIO exports the digitals and the
+  # chip selects, and PRU::initialise opens the stop button and this one
+  # after it returns. Waiting on an earlier pin let the probe find 585
+  # and 586 free, take them as its own, and give them back at the end —
+  # unexporting them from a live run without --destructive, which is the
+  # act that gate exists for. Tied by hand to the probe's BANK0 + 46, as
+  # the 585 below is; come apart, this burns its eight seconds and the
+  # probe then refuses as though nothing were rendering.
   for _ in 1 2 3 4 5 6 7 8; do
-    [ -e /sys/class/gpio/gpio593 ] && break
+    [ -e /sys/class/gpio/gpio585 ] && break
     sleep 1
   done
   # Through /proc rather than a signal-0: under a shell which reaps only
