@@ -23,7 +23,7 @@
 # unexport, and a `kill -9` runs none of the probe's own restore code —
 # so no amount of restoring here could be complete, while a reboot is,
 # and costs no code. The board is away for about forty seconds at the
-# end of every run, including a Ctrl-C.
+# end of every run, including a Ctrl-C and a closed terminal.
 set -eu
 
 HOST="root@bela.local"
@@ -88,7 +88,7 @@ cleanup() {
   # kills the reboot ssh below — leaving the board with bela_daemon
   # stopped and its GPIO arbitrary, on the one path that puts both
   # back. SIG_IGN is inherited, so the child is covered too.
-  trap '' INT TERM
+  trap '' INT TERM HUP
   if [ "$INTERRUPTED" -ne 0 ] && [ "$status" -eq 0 ]; then
     status=$INTERRUPTED
   fi
@@ -142,11 +142,13 @@ cleanup() {
       echo "which the reboot is what would have started again, where enabled." >&2
       echo "$why" >&2
       # And into the exit status, or `probe-gpio.sh && next-step` walks
-      # onto that board. 7 rather than 1: the questions above were
-      # answered, and what failed was the step after them.
-      if [ "$status" -eq 0 ]; then
-        status=7
-      fi
+      # onto that board. Unconditionally, not only where the run was
+      # otherwise clean: a pass that failed is in the transcript above
+      # and in its own message, while a board still holding an
+      # arbitrary state with `bela_daemon` stopped is the thing a
+      # caller has to act on, and it was indistinguishable from an
+      # ordinary failed pass while this only fired on a zero.
+      status=7
     fi
   fi
   # A caught signal in POSIX sh runs the handler and then *resumes*, so
@@ -187,6 +189,11 @@ done
 trap cleanup EXIT
 trap 'INTERRUPTED=130; cleanup' INT
 trap 'INTERRUPTED=143; cleanup' TERM
+# And HUP, which a closed terminal or a dropped ssh sends: a shell that
+# dies of a signal it does not trap runs no EXIT trap, so without this
+# the board keeps `bela_daemon` stopped and whatever GPIO the last
+# question left, with no reboot and nothing said.
+trap 'INTERRUPTED=129; cleanup' HUP
 
 echo "Preparing $HOST..."
 # A fresh directory, so a failed reboot from an earlier run cannot leave

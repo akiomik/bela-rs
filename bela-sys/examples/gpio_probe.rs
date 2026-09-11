@@ -337,8 +337,9 @@ mod imp {
         if wrote == 0 && put_back != 0 {
             eprintln!(
                 "LEFT CHANGED: gpio{LED_RUNNING} was written HIGH and would not go back \
-                 ({put_back}). A pass that reaches the block below writes its direction, \
-                 which drives the line low; one that does not leaves it to the reboot."
+                 ({put_back}). A pass that reaches \"the remaining four\" below writes this \
+                 pin's direction, which drives the line low; question 6 can refuse before \
+                 it, and then the line stays high for the reboot."
             );
         }
 
