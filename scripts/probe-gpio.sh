@@ -272,18 +272,27 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # problem, and it costs the reboot. Eight seconds at most, and it
   # usually returns in two or three. (No quotes in here: this comment is
   # inside the double-quoted ssh string.)
-  # 637 is DIGITAL_D0, tied by hand to the probe's BANK1 + 6 as the 585
-  # below is to BANK0 + 46. Come apart, this burns its eight seconds and
-  # the probe then refuses as though nothing were rendering.
+  # 593 is D15, GPIO0_54, the last of the sixteen digital channels
+  # prepareGPIO exports; 637 is D0, the first. Waiting on the last means
+  # the probe finds both what its gate needs — gpio637, and a pin
+  # outside the four it asks about — where waiting on the first can
+  # leave it refusing because nothing else is up yet. Tied by hand to
+  # the probe's BANK0 + 54, as the 585 below is to BANK0 + 46; come
+  # apart, this burns its eight seconds and the probe then refuses as
+  # though nothing were rendering.
   for _ in 1 2 3 4 5 6 7 8; do
-    [ -e /sys/class/gpio/gpio637 ] && break
+    [ -e /sys/class/gpio/gpio593 ] && break
     sleep 1
   done
   # Through /proc rather than a signal-0: under a shell which reaps only
   # at wait, a run that died a second ago is still a zombie a signal-0
   # succeeds on.
-  alive() { [ -n \"\$1\" ] && [ -d /proc/\$1 ] &&
-    ! grep -qE '^State:[[:space:]]*Z' /proc/\$1/status 2>/dev/null; }
+  # The read has to succeed: a process reaped between the directory
+  # test and the grep made grep exit 2, which the negation turned into
+  # alive, and the line that says the run was still up when the probe
+  # finished is what question 12 leans on.
+  alive() { [ -n \"\$1\" ] && st=\$(cat /proc/\$1/status 2>/dev/null) &&
+    ! printf '%s' \"\$st\" | grep -qE '^State:[[:space:]]*Z'; }
   if ! alive \$sine_pid; then
     echo 'sine did not stay up; its output was:'
     cat sine.log

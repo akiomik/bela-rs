@@ -921,7 +921,7 @@ rather than by hand:
 | `gpio_setup(pin, OUTPUT_PIN)` | a descriptor, `3`; `direction` reads `out` |
 | three `gpio_read`s on it | `0`/`0x0`, then `0`/`0x1`, then `-1` with the out-param left at the `0xdeadbeef` it was given |
 | the same three, with an `lseek` back to 0 before each | `0`/`0x0` three times |
-| `gpio_get_value` | `0`, and the true reading, every time |
+| `gpio_get_value` | `0`, and the true reading |
 | `gpio_write` then `gpio_read` | write `0`, the very next read `-1`, out-param again untouched |
 | `gpio_dismiss` | `0`, and the export is gone |
 | `gpio_unexport` after it | `-1`, silently |
