@@ -162,8 +162,8 @@ while a run is up, which is what the safe API in
 probe creates no audio system either, and that is what lets it run
 beside one: the script starts `bela/examples/sine` for it to reach
 past. It is the one that takes the board away: it stops `bela_daemon`,
-leaves the GPIO in whatever state its last question left, and reboots
-the board at the end of every invocation that reached it, Ctrl-C
+leaves the GPIO in whatever state its last question left, and asks the
+board to reboot at the end of every invocation that reached it, Ctrl-C
 included — about forty seconds, after which `bela_daemon` starts again
 if it is enabled, and not otherwise. Restoring instead cannot be made
 complete, a `kill -9` running none of the probe's own code; the

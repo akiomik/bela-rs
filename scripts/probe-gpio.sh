@@ -18,8 +18,8 @@
 # `--destructive` adds question 12 and widens question 11; both contend
 # with a live run, which is why they are opt-in.
 #
-# This leaves the board's GPIO in an arbitrary state, and then reboots
-# it. Exports, directions, levels and LED triggers all survive an
+# This leaves the board's GPIO in an arbitrary state, and then asks it
+# to reboot. Exports, directions, levels and LED triggers all survive an
 # unexport, and a `kill -9` runs none of the probe's own restore code —
 # so no amount of restoring here could be complete, while a reboot is,
 # and costs no code. The board is away for about forty seconds at the
@@ -109,6 +109,12 @@ cleanup() {
     # `--no-block`, so systemctl queues the job and returns instead of
     # taking sshd down under the connection and handing back 255 on
     # every successful run.
+    # A zero from it says the reboot was accepted, not that it
+    # happened: nothing reconnects to check, so a job that is cancelled
+    # or held by an inhibitor would leave the board as this left it
+    # with the script exiting 0. Confirming would mean waiting the
+    # board back up, which is a loop with its own failure modes for a
+    # case nothing here has seen.
     # Its stderr kept and its status not read as "unreachable": the
     # remote command's own status comes back here too, so a board that
     # answered and refused the reboot — inhibited, unit unavailable —
@@ -274,30 +280,34 @@ ssh -o ConnectTimeout=10 "$HOST" "
   #
   # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
   # wrapper, so its being alive says nothing about how far libbela has
-  # got. And for 585, the last of the four pins the probe asks about to
-  # appear — prepareGPIO exports the digitals and the chip selects, and
-  # PRU::initialise opens the stop button and this one after it returns.
-  # On an earlier pin the probe found 585 free, took it as its own and
-  # unexported it at the end, out of a live run and without
-  # --destructive, which is the act that gate exists for. (Not 586:
-  # bela_button.service holds that one from boot, so the probe never
-  # reads it as free.) The 585 here is
-  # tied by hand to the probe's BANK0 + 46.
+  # got. And for 592, the ADC reset, which is the last pin this run
+  # exports at all: prepareGPIO takes the digitals and the chip
+  # selects, then PRU::initialise opens the stop button, the underrun
+  # LED, and this one last. On an earlier pin the probe found the
+  # underrun LED free, took it as its own and unexported it at the end,
+  # out of a live run and without --destructive, which is the act that
+  # gate exists for; and the listing it prints first would be the
+  # twenty-one pins of that window rather than the twenty-two
+  # docs/board-facts.md records. (Never the stop button:
+  # bela_button.service holds that one from boot, so the probe cannot
+  # read it as free.) Tied by hand to BANK0 + 53, and to this run
+  # having analog in, which is what libbela opens it for.
   for _ in 1 2 3 4 5 6 7 8; do
-    [ -e /sys/class/gpio/gpio585 ] && break
+    [ -e /sys/class/gpio/gpio592 ] && break
     sleep 1
   done
   # And a refusal where it never appeared, rather than asking anyway.
   # The probe cannot make this call for itself: its own entry guard is
   # gpio637, which prepareGPIO exports before the PRU firmware is
-  # loaded and so before either LED pin, and it supports a run whose
-  # LEDs are off. So a fall-through here is a probe that finds 584 and
-  # 585 free, records them as its own, and unexports them at the end,
-  # out of a live run and without --destructive.
-  if [ ! -e /sys/class/gpio/gpio585 ]; then
-    echo 'gpio585 never appeared, so what a run holds cannot be told from what'
-    echo 'is free: the run may be slow to start, its LED may be off, or the 585'
-    echo 'here has come apart from the probe. Nothing was asked.'
+  # loaded and so before any of these, and it supports a run whose LEDs
+  # are off. So a fall-through here is a probe that finds pins free
+  # that the run has not reached yet, records them as its own, and
+  # unexports them at the end, out of a live run and without
+  # --destructive.
+  if [ ! -e /sys/class/gpio/gpio592 ]; then
+    echo 'gpio592 never appeared, so what this run holds cannot be told from what'
+    echo 'is free: it may be slow to start, it may have no analog in, or the 592'
+    echo 'here has come apart from libbela. Nothing was asked.'
     exit 6
   fi
   # Through /proc rather than a signal-0: under a shell which reaps only

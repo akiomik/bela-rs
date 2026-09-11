@@ -28,8 +28,8 @@
 //! exports, directions and levels all survive an unexport, and a probe
 //! killed mid-question leaves whatever it was holding. Putting that back
 //! from here cannot be done — a `kill -9` runs none of this code — so
-//! nothing here tries. `scripts/probe-gpio.sh` reboots the board
-//! instead, which puts all of it back and needs no code at all.
+//! nothing here tries. `scripts/probe-gpio.sh` asks the board to
+//! reboot instead, which puts all of it back and needs no code at all.
 
 fn main() {
     imp::main();
