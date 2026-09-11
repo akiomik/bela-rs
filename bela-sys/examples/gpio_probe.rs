@@ -549,9 +549,13 @@ mod imp {
                 // Whether the write took decides whether a restore is
                 // owed, not what it reads back as.
                 if wrote == 0 {
+                    // The one level the read above sampled, not "what it
+                    // held": getting here needs `--destructive` on a pin
+                    // reading `out`, which is a pin the PRU is writing
+                    // every block, so there is no level to hold.
                     let restore = if before == 0 { arg::LOW } else { arg::HIGH };
                     let put_back = unsafe { gpio_set_value(DIGITAL_D0, restore) };
-                    println!("  restoring to what it held ({before}): {put_back}");
+                    println!("  writing back the {before} sampled above: {put_back}");
                     if put_back != 0 {
                         eprintln!(
                             "LEFT CHANGED: gpio{DIGITAL_D0} was written HIGH and would not \

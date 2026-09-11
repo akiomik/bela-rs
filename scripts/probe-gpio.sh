@@ -272,6 +272,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # problem, and it costs the reboot. Eight seconds at most, and it
   # usually returns in two or three. (No quotes in here: this comment is
   # inside the double-quoted ssh string.)
+  # 637 is DIGITAL_D0, tied by hand to the probe's BANK1 + 6 as the 585
+  # below is to BANK0 + 46. Come apart, this burns its eight seconds and
+  # the probe then refuses as though nothing were rendering.
   for _ in 1 2 3 4 5 6 7 8; do
     [ -e /sys/class/gpio/gpio637 ] && break
     sleep 1
