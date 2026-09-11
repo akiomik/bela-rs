@@ -59,7 +59,9 @@ REMOTE_DIR="/tmp/bela-rs-probe-gpio"
 # a second, and the wait for it to claim a pin is bounded at eight, so
 # 8 + 20 + 5 is what has to fit inside 40. Every command that *runs* something
 # is bounded by `timeout`; the short ones carry only `ConnectTimeout`, so
-# a board that answers and then stops answering will hang them.
+# a board that answers and then stops answering will hang them until
+# Ctrl-C. The reboot is the exception both ways: it cannot be Ctrl-C'd,
+# so it carries `ServerAliveInterval` instead.
 RUN_SECONDS=40
 PROBE_TIMEOUT=60
 WITH_RUN_TIMEOUT=20
@@ -122,7 +124,8 @@ cleanup() {
     # away, on the one step whose failure leaves the GPIO as this left
     # it.
     # shellcheck disable=SC2029 # the remote path is meant to expand here
-    if ! why=$(ssh -o ConnectTimeout=10 "$HOST" \
+    if ! why=$(ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 \
+      -o ServerAliveCountMax=3 "$HOST" \
       "rm -rf $REMOTE_DIR; systemctl --no-block reboot" 2>&1); then
       echo "WARNING: $HOST was not rebooted, so its GPIO is as this left it and" >&2
       echo "bela_daemon is still stopped; the reboot is what would have started" >&2
@@ -278,12 +281,21 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # This shell's own business: the wrapper it waits on. Nothing is
   # written down for the handler, which reboots rather than killing.
   #
+  # Through /proc rather than a signal-0: under a shell which reaps only
+  # at wait, a run that died a second ago is still a zombie a signal-0
+  # succeeds on.
+  # The read has to succeed: a process reaped between the directory
+  # test and the grep made grep exit 2, which the negation turned into
+  # alive, and the line that says the run was still up when the probe
+  # finished is what question 12 leans on.
+  alive() { [ -n \"\$1\" ] && st=\$(cat /proc/\$1/status 2>/dev/null) &&
+    ! printf '%s' \"\$st\" | grep -qE '^State:[[:space:]]*Z'; }
   # Wait for a pin, not for a fixed sleep: \$sine_pid is the timeout
   # wrapper, so its being alive says nothing about how far libbela has
   # got. And for 592, the ADC reset, which is the last pin this run
-  # exports at all: prepareGPIO takes the digitals and the chip
-  # selects, then PRU::initialise opens the stop button, the underrun
-  # LED, and this one last. On an earlier pin the probe found the
+  # exports at all: prepareGPIO takes the digitals, the chip selects
+  # and the running LED, then PRU::initialise opens the stop button,
+  # the underrun LED, and this one last. On an earlier pin the probe found the
   # underrun LED free, took it as its own and unexported it at the end,
   # out of a live run and without --destructive, which is the act that
   # gate exists for; and the listing it prints first would be the
@@ -292,7 +304,17 @@ ssh -o ConnectTimeout=10 "$HOST" "
   # bela_button.service holds that one from boot, so the probe cannot
   # read it as free.) Tied by hand to BANK0 + 53, and to this run
   # having analog in, which is what libbela opens it for.
+  # Liveness first: a run that never started is the likeliest way to
+  # get here — the daemon still holding the audio device is what the
+  # WARNING above is for — and without this the wait spends its eight
+  # seconds and then reports a missing pin, which is a dead run
+  # described as a slow one.
   for _ in 1 2 3 4 5 6 7 8; do
+    if ! alive \$sine_pid; then
+      echo 'sine did not stay up; its output was:'
+      cat sine.log
+      exit 4
+    fi
     [ -e /sys/class/gpio/gpio592 ] && break
     sleep 1
   done
@@ -307,22 +329,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   if [ ! -e /sys/class/gpio/gpio592 ]; then
     echo 'gpio592 never appeared, so what this run holds cannot be told from what'
     echo 'is free: it may be slow to start, it may have no analog in, or the 592'
-    echo 'here has come apart from libbela. Nothing was asked.'
-    exit 6
-  fi
-  # Through /proc rather than a signal-0: under a shell which reaps only
-  # at wait, a run that died a second ago is still a zombie a signal-0
-  # succeeds on.
-  # The read has to succeed: a process reaped between the directory
-  # test and the grep made grep exit 2, which the negation turned into
-  # alive, and the line that says the run was still up when the probe
-  # finished is what question 12 leans on.
-  alive() { [ -n \"\$1\" ] && st=\$(cat /proc/\$1/status 2>/dev/null) &&
-    ! printf '%s' \"\$st\" | grep -qE '^State:[[:space:]]*Z'; }
-  if ! alive \$sine_pid; then
-    echo 'sine did not stay up; its output was:'
+    echo 'here has come apart from libbela. It was still up; its output so far:'
     cat sine.log
-    exit 4
+    exit 6
   fi
   timeout -s INT -k 5 $WITH_RUN_TIMEOUT ./gpio_probe --with-run $DESTRUCTIVE
   probe_status=\$?
@@ -339,7 +348,9 @@ ssh -o ConnectTimeout=10 "$HOST" "
   wait \$sine_pid
   sine_status=\$?
   case \$sine_status in
-  124) echo '   ended at 124: its own timeout, the undisturbed end' ;;
+  124) echo '   ended at 124: its own timeout. Undisturbed unless its teardown'
+       echo '   hung past the -k 5 and it was killed, which question 13 below'
+       echo '   shows as pins left behind' ;;
   *) echo '   ended at' \$sine_status '- NOT the undisturbed end' ;;
   esac
   echo '-- the run has now ended; its last lines --'
