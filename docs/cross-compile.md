@@ -246,9 +246,10 @@ ssh -t root@bela.local 'systemctl stop bela_daemon && ./sine'
 ```
 
 Rust binaries cannot be built by the Bela IDE, hence the scp + ssh
-workflow. `bela_daemon` runs the IDE's own program and holds the audio
-hardware, so stop it first; start it again with
-`systemctl start bela_daemon`.
+workflow. A Bela project holds the audio hardware, so stop whatever
+would run one first: `systemctl stop bela_daemon` for the IDE, and
+`bela_startup.service` as well on a board set to run a project at boot.
+Start the daemon again with `systemctl start bela_daemon`.
 
 **Use `ssh -t`.** Without it ssh allocates no terminal, so Ctrl-C only
 kills the local ssh client while the program keeps running on the
