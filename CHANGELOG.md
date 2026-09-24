@@ -8,6 +8,30 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- The cross-compilation guide no longer says `bela_daemon` holds the
+  audio hardware. What holds it is a project, which
+  `bela_startup.service` starts on a board set to run one at boot.
+  `bela_daemon` itself takes nothing: started beside a program that
+  already had the device, it left it alone. The instruction is
+  unchanged — stop it before running a standalone binary — and the
+  measurement behind the correction is in
+  [docs/board-facts.md](docs/board-facts.md) under "Audio thread".
+
+- The "already in use" route to `Error::Init` is documented where it
+  was described as impossible or absent. This board does refuse a
+  second process: libbela turns it away with "Bela is already running
+  in another process" and latches that answer for the life of the
+  refused process. So the error arrives more than one way, and in none
+  of them is the board free until the process holding it exits. That is
+  what `Error::Init`, `Error::AudioSystemPoisoned`, "A failed
+  initialisation is fatal to the process" on `Bela::new`, and
+  `bela/examples/init_failure.rs` now say. The sentence
+  `Error::AudioSystemPoisoned` prints is corrected with them: it used to
+  say libbela was "left with an audio system it will not give back",
+  which is not what a refusal at the door leaves.
+
 ## [0.9.0] - 2026-09-12
 
 ### Added

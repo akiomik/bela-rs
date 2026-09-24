@@ -78,6 +78,13 @@ impl Drop for InitSettings {
 /// [`Error::AudioSystemExists`] rather than reaching into globals the
 /// first one is using — from this thread or any other.
 ///
+/// One per board at a time as well, and for as long as the process
+/// lives: libbela claims the board on the first `Bela_initAudio`, so
+/// other processes get [`Error::Init`] until this one exits, whether or
+/// not its `Bela` is still alive. A process refused that way stays
+/// refused even after the holder goes, so the retry belongs in a fresh
+/// one. See [`new`](Bela::new).
+///
 /// One at a time, and in some processes none at all: once a
 /// `Bela_initAudio` has failed here, every later [`new`](Bela::new)
 /// fails with [`Error::AudioSystemPoisoned`], which that method
@@ -132,29 +139,39 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # A failed initialisation is fatal to the process
     ///
-    /// [`Error::Init`] means `Bela_initAudio` failed partway through,
-    /// and libbela keeps no record of how far it got. Whatever the
-    /// attempt had already taken is still held — up to and including
-    /// the audio hardware, and the CPU monitoring counters this crate
-    /// turns on just before the call when [`Settings::cpu_monitoring`]
-    /// asked for them — and this crate does not call
-    /// `Bela_cleanupAudio` to hand any of it back, because on that path
-    /// the call itself segfaults. That is measured rather than assumed,
-    /// including in the order this method would have to make the call;
-    /// see "Audio thread" in `docs/board-facts.md`.
+    /// [`Error::Init`] means `Bela_initAudio` failed, and this crate
+    /// treats every way it can as unrecoverable: the process-wide claim
+    /// is released as unusable rather than free, and every later
+    /// `Bela::new` here fails with [`Error::AudioSystemPoisoned`]
+    /// without touching libbela. What going ahead would cost differs by
+    /// route, and none of them is worth attempting. After a failure
+    /// inside the call it is a segfault, reported on a Bela Gem as
+    /// `Mcasp::start() called while already running` in every run
+    /// measured. After a refusal at the door it is the same refusal
+    /// again, since libbela has latched it. For a configuration libbela
+    /// will not take — `--analog-out 2` against eight inputs is one
+    /// this board produces — the call has already been through
+    /// `Bela_initRtBackend` and `Bela_turnIntoRtThread` before it
+    /// looks, so it is not a refusal at the door either, and whether
+    /// corrected settings could get through afterwards is untested —
+    /// which is why this crate refuses them with the rest rather than
+    /// leave an application to find out.
     ///
-    /// So the process-wide claim is released as unusable rather than
-    /// free, and every later `Bela::new` in this process fails with
-    /// [`Error::AudioSystemPoisoned`] without touching libbela. That
-    /// refusal is the whole of what this crate can do about it: going
-    /// ahead is not a worse-behaved audio system but a segfault, on a
-    /// Bela Gem reported as `Mcasp::start() called while already
-    /// running` in every run measured.
+    /// What is unusable is this process, and the board is claimed until
+    /// whoever claimed it exits: libbela takes the claim near the top
+    /// of `Bela_initAudio`, before any configuration check, and gives
+    /// it up only when the process ends. So the holder is this process
+    /// whenever the call got past that door, and the process already
+    /// holding the board when it did not. Treat the error as a reason
+    /// to exit — which is what frees the board when this process is
+    /// the holder — and leave retrying to whatever started the
+    /// program.
     ///
-    /// What is unusable is this process, not the board. A new process
-    /// gets a working audio system straight away, with nothing to reset
-    /// in between — so treat this error as a reason to exit, and leave
-    /// retrying to whatever started the program.
+    /// What is measured and what is read from libbela's source is in
+    /// "Audio thread" in `docs/board-facts.md`, which is also where a
+    /// `setup` abort's leavings and the refusal are recorded; the
+    /// configuration this board refuses is under "Analog and digital
+    /// I/O".
     ///
     /// The ordinary way to arrive here is a
     /// [`setup`](BelaApplication::setup) callback returning `false`,
@@ -401,10 +418,13 @@ impl<T: BelaApplication> Bela<T> {
             // Every failure above this point leaves libbela in a state
             // the next attempt can resolve — CPU monitoring can be left
             // initialised, but the next `new` applies or disables it
-            // either way. This one cannot be resolved: `Bela_initAudio`
-            // got partway and no call undoes it, so the claim is
-            // released as unusable rather than free and the next `new`
-            // is refused instead of segfaulting.
+            // either way. This one is not resolved. It got partway and
+            // no call undoes it; or it was refused at the door, for an
+            // answer libbela has latched; or the configuration was one
+            // libbela will not take, which is refused with the other
+            // two as a choice rather than a necessity (the method's
+            // docs say why). So the claim is released as unusable
+            // rather than free.
             claim.poison();
             return Err(Error::Init(ret));
         }
