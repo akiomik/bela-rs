@@ -110,9 +110,10 @@ restore() {
     # One connection, because an unreachable board makes each of these
     # cost a full ConnectTimeout.
     # Nothing here kills what an interrupt leaves running. Left alone it
-    # finishes and tears down cleanly, where a kill would leave the PRU
-    # and pins up (docs/board-facts.md); a later run that meets it first
-    # is told so by the preflight.
+    # ends on its own: the holder after its hold and teardown, a probe
+    # at its next write to the dropped ssh. A kill would leave the PRU
+    # and pins up (docs/board-facts.md). A later run that meets either
+    # first is told so by the preflight.
     undo="rm -rf $REMOTE_DIR"
     if [ "$daemon_was_active" = yes ]; then
       undo="$undo; systemctl start bela_daemon"
