@@ -164,9 +164,12 @@ impl<T: BelaApplication> Bela<T> {
     /// When another process held the board, the board stays that
     /// process's. After any other failure it is this one's, since
     /// libbela claims it before anything else that can fail, and it is
-    /// held for as long as [`Bela`] describes. So treat the error as a
-    /// reason to exit, and leave retrying to whatever started the
-    /// program.
+    /// held for as long as [`Bela`] describes. After a `setup` abort,
+    /// once the board is released, a new process gets a working audio
+    /// system with nothing to reset — no reboot, no restart of
+    /// `bela_daemon` (measured; "Audio thread" in `docs/board-facts.md`).
+    /// So treat the error as a reason to exit, and leave retrying to
+    /// whatever started the program.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         Self::init(application, settings, None)
     }
