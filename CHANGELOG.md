@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `Bela::new` and `Error::AudioSystemPoisoned` no longer say a new
+  process gets a working audio system straight away after
+  `Error::Init`: libbela refuses a second process, and can keep the
+  board claimed until the failed one exits. They say to exit and
+  leave the restart to whatever started the program, since a program
+  the failed one starts or `exec`s into inherits the claim. `AudioSystemPoisoned`'s
+  message says the same.
+
 ## [0.9.0] - 2026-09-12
 
 ### Added

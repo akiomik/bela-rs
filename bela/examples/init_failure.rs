@@ -44,13 +44,8 @@
 //!   reaches the cycle: handing the state back is itself the crash,
 //!   which is what ruled it out.
 //! - `busy-probe <seconds>` — try a cycle while another process is
-//!   using the audio device, wait for it to go, and try again. Not
-//!   every `Error::Init` need be an abort from `setup`; "the hardware
-//!   is already in use" is the other one the API documents, and whether
-//!   *it* poisons the process would have decided whether the refusal
-//!   has to be unconditional. This board does not produce that failure
-//!   at all — it does not refuse a second process — so the refusal is
-//!   unconditional for want of a second route to measure.
+//!   using the audio device, wait for it to go, and try again. See
+//!   "The board refuses a second process" in `docs/board-facts.md`.
 //! - `cycles <count>` — bring an audio system all the way up, render,
 //!   and tear it down again, `count` times.
 //! - `init-cycles <count>` — build an audio system and drop it again
@@ -334,7 +329,9 @@ mod probes {
     }
 
     /// A cycle attempted while another process holds the audio device,
-    /// and another once `wait` has given that process time to go.
+    /// and another once `wait` has given that process time to go. After
+    /// a refused first, the second is refused by this process's own
+    /// poisoned claim and measures nothing (#167).
     pub(crate) fn busy_probe(wait: Duration) {
         report("busy-first", &outcome(cycle()));
         thread::sleep(wait);

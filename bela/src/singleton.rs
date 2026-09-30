@@ -15,12 +15,10 @@
 //! So the claim is taken first, atomically, and everything that touches
 //! the globals happens behind it.
 //!
-//! The claim has a third state, because a failed `Bela_initAudio`
-//! leaves those globals believing an audio system is up and offers no
-//! way to put them back — `Bela_cleanupAudio` segfaults on that path
-//! (`docs/board-facts.md`). A claim released as *poisoned* is never
-//! free again, so the second attempt is refused here instead of
-//! segfaulting inside libbela.
+//! The claim has a third state for a failed `Bela_initAudio`, whose
+//! reasons are at the call in `Bela::init`. A claim released as
+//! *poisoned* is never free again, so the next attempt is refused here
+//! instead of reaching libbela.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -30,8 +28,8 @@ use crate::error::Error;
 const FREE: u8 = 0;
 /// An audio system exists in this process.
 const TAKEN: u8 = 1;
-/// An initialisation failed partway through and libbela cannot be
-/// asked again. Terminal: nothing sets the state back from here.
+/// An initialisation failed and libbela is not asked again.
+/// Terminal: nothing sets the state back from here.
 const POISONED: u8 = 2;
 
 /// What the audio system in this process is currently doing.
@@ -78,11 +76,9 @@ impl Claim {
 
     /// Gives up on the audio system for the rest of the process.
     ///
-    /// For the one case that cannot be undone: `Bela_initAudio` failed
-    /// partway through, so libbela is holding what it managed to take
-    /// and there is no call that will make it let go. Releasing this
-    /// claim as free would let the next `Bela::new` walk into that,
-    /// which on a board means a segfault rather than an error.
+    /// For a failed `Bela_initAudio`. Releasing this claim as free would
+    /// let the next `Bela::new` reach libbela again, which after a
+    /// `setup` abort means a segfault rather than an error.
     ///
     /// The state changes when this claim drops, not here, so a thread
     /// that calls [`take`](Claim::take) in between is told
