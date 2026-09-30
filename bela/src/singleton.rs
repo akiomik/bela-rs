@@ -15,12 +15,10 @@
 //! So the claim is taken first, atomically, and everything that touches
 //! the globals happens behind it.
 //!
-//! The claim has a third state, because a failed `Bela_initAudio` is
-//! not undone: after a `setup` abort those globals still believe an
-//! audio system is up, and `Bela_cleanupAudio` segfaults
-//! (`docs/board-facts.md`). A claim released as *poisoned* is never
-//! free again, so the next attempt is refused here instead of reaching
-//! libbela.
+//! The claim has a third state for a failed `Bela_initAudio`, whose
+//! reasons are at the call in `Bela::init`. A claim released as
+//! *poisoned* is never free again, so the next attempt is refused here
+//! instead of reaching libbela.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -30,7 +28,8 @@ use crate::error::Error;
 const FREE: u8 = 0;
 /// An audio system exists in this process.
 const TAKEN: u8 = 1;
-/// An initialisation failed and libbela is not asked again. Terminal: nothing sets the state back from here.
+/// An initialisation failed and libbela is not asked again.
+/// Terminal: nothing sets the state back from here.
 const POISONED: u8 = 2;
 
 /// What the audio system in this process is currently doing.
@@ -77,10 +76,9 @@ impl Claim {
 
     /// Gives up on the audio system for the rest of the process.
     ///
-    /// For a failed `Bela_initAudio`, which is not undone. Releasing
-    /// this claim as free would let the next `Bela::new` reach libbela
-    /// again, which after a `setup` abort means a segfault rather than
-    /// an error.
+    /// For a failed `Bela_initAudio`. Releasing this claim as free would
+    /// let the next `Bela::new` reach libbela again, which after a
+    /// `setup` abort means a segfault rather than an error.
     ///
     /// The state changes when this claim drops, not here, so a thread
     /// that calls [`take`](Claim::take) in between is told

@@ -149,7 +149,8 @@ impl<T: BelaApplication> Bela<T> {
     /// Treat this error as a reason to exit, and leave starting a new
     /// process to whatever started this one. libbela can keep the board
     /// claimed until this process exits, and a program this process
-    /// starts inherits that claim and is refused the board itself. When
+    /// starts, or `exec`s into, inherits that claim and is refused the
+    /// board itself. When
     /// libbela holds the board, and for how long, is recorded under
     /// "Audio thread" in `docs/board-facts.md`.
     ///

@@ -15,7 +15,7 @@ and this project adheres to
   `Error::Init`: libbela refuses a second process, and can keep the
   board claimed until the failed one exits. They say to exit and
   leave the restart to whatever started the program, since a program
-  the failed one starts inherits the claim. `AudioSystemPoisoned`'s
+  the failed one starts or `exec`s into inherits the claim. `AudioSystemPoisoned`'s
   message says the same.
 
 ## [0.9.0] - 2026-09-12

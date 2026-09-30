@@ -11,8 +11,7 @@ const UNRECOGNISED_OPTION: i32 = b'?' as i32;
 pub enum Error {
     /// `Bela_initAudio` failed with the contained return code.
     ///
-    /// It is not undone, so this is fatal to the process rather than to
-    /// the one attempt:
+    /// Fatal to the process rather than to the one attempt:
     /// every later [`Bela::new`](crate::Bela::new) returns
     /// [`AudioSystemPoisoned`](Self::AudioSystemPoisoned).
     Init(i32),
