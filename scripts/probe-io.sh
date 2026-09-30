@@ -193,9 +193,8 @@ fi
 board_prepared=yes
 remote "systemctl stop bela_daemon; mkdir -p $REMOTE_DIR"
 
-# The remote half. Bounded, because a run that hangs holds the audio
-# device and every later one would fail for that reason instead of
-# reporting its own configuration.
+# The remote half. Bounded: `remote` has no clock of its own, and a
+# run that hangs keeps the board, so every later one is refused.
 cat > "$LOG_DIR/run-remote.sh" <<'REMOTE'
 #!/bin/sh
 # usage: run-remote.sh <timeout-seconds> <probe-arguments...>
