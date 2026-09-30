@@ -1466,9 +1466,18 @@ caller different things.
   USB3 root hub has no ports`, and there is no SerDes node to carry
   SuperSpeed. A gigabit Ethernet adapter cannot be filled.
 - Services: `bela_daemon.service` (IDE/daemon — stop with
-  `systemctl stop bela_daemon` before running standalone binaries; not
-  exercised yet), `bela_button.service` (cape button monitor),
-  `bela-usb-gadgets.service`.
+  `systemctl stop bela_daemon` before running standalone binaries; what
+  starting it does beside one is below), `bela_button.service` (cape
+  button monitor), `bela-usb-gadgets.service`, `bela_startup.service`
+  (described as "Run Bela at boot"; disabled and inactive on this
+  board).
+- **Starting `bela_daemon` beside a run takes nothing from it**
+  (2026-09-12). With `bela/examples/init_failure render-check 20`
+  holding the audio device, `systemctl start bela_daemon` four seconds
+  in returned 0, the daemon came up serving the IDE and the build
+  server and started no project of its own, and the run rendered 55129
+  blocks in its 20 s window — about 2756 a second, the rate it gets
+  alone — with nothing in the daemon's journal about the device.
 - Paths to sync as the cross-compilation sysroot: `/root/Bela/include`,
   `/root/Bela/lib`, `/usr/evl`, `/usr/local/lib` (seasocks),
   `/usr/include`, `/usr/lib/aarch64-linux-gnu`,
