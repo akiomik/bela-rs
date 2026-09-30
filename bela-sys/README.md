@@ -1,3 +1,4 @@
+<!-- Every link is absolute: docs.rs renders this file without resolving relative links. -->
 # bela-sys
 
 Raw FFI bindings to the Bela core API (`libbela`) for Bela Gem on
@@ -23,12 +24,12 @@ rather than a tidy-up. `abi/ne10_abi.c` is the same check from the
 other side, at build time and without a board: it asserts that the
 headers still describe what `src/ne10.rs` declares. NE10 is
 BSD-3-Clause, whose notice is at the top of each of those headers.
-See [docs/fft.md](../docs/fft.md).
+See [docs/fft.md](https://github.com/akiomik/bela-rs/blob/main/docs/fft.md).
 
 The headers are taken **from the board**, not from
 [BelaPlatform/Bela]: the Bela Gem image ships Bela 1.18.0, which is
 newer than any published branch (see
-[docs/board-facts.md](../docs/board-facts.md)).
+[docs/board-facts.md](https://github.com/akiomik/bela-rs/blob/main/docs/board-facts.md)).
 
 ```sh
 scripts/update-vendor.sh --board          # from root@bela.local
@@ -81,7 +82,7 @@ cargo xtask bindgen --sysroot <dir>   # or set BELA_SYSROOT
 ```
 
 The sysroot is the one synced from the board (see
-[docs/cross-compile.md](../docs/cross-compile.md)); bindgen needs it
+[docs/cross-compile.md](https://github.com/akiomik/bela-rs/blob/main/docs/cross-compile.md)); bindgen needs it
 for the libc headers `Bela.h` includes.
 
 The bindgen options live in `xtask/src/generate.rs`, and two of them
@@ -95,7 +96,7 @@ headers declare under any other name is absent. A blocklist then
 removes six the allowlist had taken: the `FILE*` and `va_list` printf
 variants, which would drag glibc internals into the bindings and are
 not usable from Rust anyway.
-[docs/scope.md](../docs/scope.md) lists the rest.
+[docs/scope.md](https://github.com/akiomik/bela-rs/blob/main/docs/scope.md) lists the rest.
 
 ## The MIDI shim
 
@@ -105,7 +106,7 @@ of this crate that is neither generated nor a declaration of Bela's own
 C API: Bela ships a partial C surface in `libraries/Midi/Midi_c.h`, and
 the shim is that file written again with output, port listing, and
 error reporting that distinguishes a port that opened from one that did
-not. [`docs/midi.md`](../docs/midi.md) records why, and what the class
+not. [`docs/midi.md`](https://github.com/akiomik/bela-rs/blob/main/docs/midi.md) records why, and what the class
 does on the audio thread.
 
 `build.rs` compiles it with the `cc` crate when the sysroot carries
@@ -113,7 +114,7 @@ Bela's `libraries/Midi` sources, and skips it — with a warning — when
 it does not, so that a check without a sysroot still works. The
 compiler comes from `BELA_CXX`, or from `BELA_CC` when that ends in
 `gcc`, and the archiver follows the compiler's name; see
-[docs/cross-compile.md](../docs/cross-compile.md). That choice is the
+[docs/cross-compile.md](https://github.com/akiomik/bela-rs/blob/main/docs/cross-compile.md). That choice is the
 one piece of the build script with more than one answer, so it lives in
 `shim_compiler.rs` and is tested from `src/lib.rs` — `cargo test` does
 not build a build script.
@@ -141,7 +142,7 @@ check`/`clippy` for the target work without a sysroot.
 
 A device link also needs `--sysroot`, `-B` and `-Wl,-rpath-link`
 arguments derived from `BELA_SYSROOT` — see
-[docs/cross-compile.md](../docs/cross-compile.md) for what each is for.
+[docs/cross-compile.md](https://github.com/akiomik/bela-rs/blob/main/docs/cross-compile.md) for what each is for.
 `build.rs` publishes them as `links` metadata (`links = "bela"`) rather
 than adding them to its own link line, because they belong to the
 *final* link — the application's — not to this crate's. `bela`
@@ -150,8 +151,8 @@ than adding them to its own link line, because they belong to the
 and an application is not one of `bela-sys`'s.
 
 An application does not read this crate's metadata directly — see the
-[`bela` README](../bela/README.md#downstream-setup) for the
+[`bela` README](https://github.com/akiomik/bela-rs/blob/main/bela/README.md#downstream-setup) for the
 `DEP_BELA_RELAY_LINK_ARGS_*` an application's own `build.rs` reads, and
-[docs/cross-compile.md](../docs/cross-compile.md) for the direct
+[docs/cross-compile.md](https://github.com/akiomik/bela-rs/blob/main/docs/cross-compile.md) for the direct
 `linker =` setting that replaces `scripts/aarch64-bela-linker.sh` for
 anyone depending on the published crates.

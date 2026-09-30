@@ -1,8 +1,9 @@
+<!-- Every link is absolute: docs.rs renders this file without resolving relative links. -->
 # bela
 
 Safe Rust API for real-time audio on [Bela Gem] (PocketBeagle 2,
 `aarch64-unknown-linux-gnu`), built on the raw FFI bindings in
-[`bela-sys`](../bela-sys).
+[`bela-sys`](https://github.com/akiomik/bela-rs/tree/main/bela-sys).
 
 User code implements the `BelaApplication` trait and hands an instance
 to `Bela::run`:
@@ -65,9 +66,9 @@ one of everything:
 
 `Settings::thread_count` chooses how many threads; nothing else about
 an application changes with it. See
-[`examples/parallel.rs`](examples/parallel.rs), which measures that the
+[`examples/parallel.rs`](https://github.com/akiomik/bela-rs/blob/main/bela/examples/parallel.rs), which measures that the
 work really was divided, and
-[`docs/multithreaded-rendering.md`](../docs/multithreaded-rendering.md)
+[`docs/multithreaded-rendering.md`](https://github.com/akiomik/bela-rs/blob/main/docs/multithreaded-rendering.md)
 for what Bela does and how it was measured.
 
 Work that must not happen in `render` — file and network I/O,
@@ -75,7 +76,7 @@ expensive calculations, anything that allocates or blocks — goes into
 an `AuxiliaryTask`, which `render` triggers with a real-time safe
 `schedule()` call. The callback owns its state and shares with `render`
 through atomics or a lock-free queue; see
-[`examples/aux_task.rs`](examples/aux_task.rs).
+[`examples/aux_task.rs`](https://github.com/akiomik/bela-rs/blob/main/bela/examples/aux_task.rs).
 
 Debugging output from the audio thread goes through `rt_println!`,
 which formats into a fixed-size stack buffer and hands it to Bela's
@@ -90,7 +91,7 @@ Whether `render` fits within its block deadline is answered by
 `Settings::cpu_monitoring`, which makes `BlockContext::cpu_usage`
 report how much of each block the audio thread uses, and by `CpuTimer`, which
 measures one section of `render` at a time; see
-[`examples/cpu.rs`](examples/cpu.rs). Without them the first sign of
+[`examples/cpu.rs`](https://github.com/akiomik/bela-rs/blob/main/bela/examples/cpu.rs). Without them the first sign of
 running out of headroom is a dropout.
 
 A built binary stays reconfigurable through Bela's standard
@@ -108,10 +109,10 @@ fn main() -> Result<(), bela::Error> {
 ```
 
 Options of the program's own are parsed by the program, which hands on
-what is left; see [`examples/command_line.rs`](examples/command_line.rs).
+what is left; see [`examples/command_line.rs`](https://github.com/akiomik/bela-rs/blob/main/bela/examples/command_line.rs).
 
-See [`examples/`](examples) for runnable versions and the
-[repository README](../README.md) for project status and
+See [`examples/`](https://github.com/akiomik/bela-rs/tree/main/bela/examples) for runnable versions and the
+[repository README](https://github.com/akiomik/bela-rs/blob/main/README.md) for project status and
 cross-compilation instructions.
 
 ## Testing DSP off the board
@@ -133,15 +134,13 @@ recorded values.
 is a worked version — the trait, both implementations, and tests that
 run against whichever backend the target has.
 [docs/fft.md](https://github.com/akiomik/bela-rs/blob/main/docs/fft.md#testing-dsp-off-the-board)
-explains why it is shaped that way. Both links are absolute because
-this file is read on crates.io, where the repository around it is not
-there.
+explains why it is shaped that way.
 
 ## Downstream setup
 
 Building a device binary needs three compiler-driver arguments derived
 from the Bela sysroot (`--sysroot`, `-B`, `-Wl,-rpath-link`; see
-[docs/cross-compile.md](../docs/cross-compile.md) for what each is
+[docs/cross-compile.md](https://github.com/akiomik/bela-rs/blob/main/docs/cross-compile.md) for what each is
 for). `bela-sys` publishes them and this crate relays them, because
 [`links` metadata reaches only an immediate dependent](https://doc.rust-lang.org/cargo/reference/build-scripts.html#the-links-manifest-key)
 — an application depending on `bela` is not one of `bela-sys`'s. An
@@ -171,7 +170,7 @@ linker = "aarch64-unknown-linux-gnu-gcc"   # or aarch64-linux-gnu-gcc, gcc, ...
 ```
 
 No file to copy from this repository, and no executable bit to
-preserve. See [docs/cross-compile.md](../docs/cross-compile.md) for
+preserve. See [docs/cross-compile.md](https://github.com/akiomik/bela-rs/blob/main/docs/cross-compile.md) for
 compiler installation and the toolchain rules `bela-sys` uses to build
 its MIDI shim with a compiler matching this linker.
 
