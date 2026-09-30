@@ -78,12 +78,14 @@ impl Drop for InitSettings {
 /// [`Error::AudioSystemExists`] rather than reaching into globals the
 /// first one is using — from this thread or any other.
 ///
-/// One per board as well: from the first `Bela::new` on, other
-/// processes get [`Error::Init`] until this one exits, whether or not
-/// its `Bela` is still alive — and until any child it started since
-/// has exited too, because libbela's claim is a descriptor that
-/// children inherit (read from its source; see "Audio thread" in
-/// `docs/board-facts.md`).
+/// One per board as well. Once libbela has let a `Bela::new` in this
+/// process through — one that succeeded, or failed with
+/// [`Error::Init`] for any reason but another process holding the
+/// board — other processes get [`Error::Init`] until this one exits,
+/// whether or not its `Bela` is still alive. Any child started after
+/// that holds the board too, until it exits, because libbela's claim
+/// is a descriptor that children inherit (read from its source; see
+/// "Audio thread" in `docs/board-facts.md`).
 ///
 /// One at a time, and in some processes none at all: once a
 /// `Bela_initAudio` has failed here, every later [`new`](Bela::new)
