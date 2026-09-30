@@ -18,6 +18,12 @@ and this project adheres to
   the failed one starts or `exec`s into inherits the claim. `AudioSystemPoisoned`'s
   message says the same.
 
+### Fixed
+
+- The `bela` and `bela-sys` READMEs link absolutely. docs.rs renders
+  them without resolving relative links, so every link into `docs/`,
+  `examples/` or the other crate led nowhere there.
+
 ## [0.9.0] - 2026-09-12
 
 ### Added
