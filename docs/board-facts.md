@@ -914,21 +914,22 @@ rounds.
   which waits through `Bela::run`, runs with `SigCgt` `0x100004443`,
   SIGINT, SIGHUP and SIGTERM among them, and stops 300 ms after an
   `INT`. `TERM` ends all three in about 100 ms.
-- **A run that ends on a signal leaves the PRU going and its pins
-  exported; the next clean run puts them back** (2026-09-13). After a
-  clean `scripts/probe-init-failure.sh busy` the board is as it was
-  before it: `remoteproc1` offline and one pin exported, the `gpio586`
-  that survives a reboot. End the same run's holder by signal instead
-  — the `INT` of its ceiling, with the holder asked to hold past it, or
-  a kill, measured both ways — and `remoteproc1` is left `running` with
-  22 pins exported, `gpio584` and `gpio585` among them, which is the blue
-  and red LEDs still being driven with nothing on the ARM side to drive
-  them. An interrupted script does neither: its holder finishes the
-  hold and tears down, and the board reads as after a clean run. The
-  audio claim is the one thing that does go with the process,
-  so the board is refused only while that process lives. A later clean
-  run's teardown then unexports the pins and stops the PRU, and the
-  board is back where it began — a reboot is the same thing sooner.
+- **A run that a signal ends before libbela's teardown leaves the PRU
+  going and its pins exported; the next clean run puts them back**
+  (2026-09-13). After a clean `scripts/probe-init-failure.sh busy` the
+  board is as it was before it: `remoteproc1` offline and one pin
+  exported, the `gpio586` that survives a reboot. The holder installs no
+  handler, so a signal ends it outright — the `INT` of its ceiling, with
+  the holder asked to hold past it, or a kill, measured both ways — and
+  `remoteproc1` is left `running` with 22 pins exported, `gpio584` and
+  `gpio585` among them, which is the blue and red LEDs still being
+  driven with nothing on the ARM side to drive them. An interrupted
+  script does neither: its holder finishes the hold and tears down, and
+  the board reads as after a clean run. The audio claim is the one thing
+  that does go with the process, so the board is refused only while that
+  process lives. A later clean run's teardown then unexports the pins
+  and stops the PRU, and the board is back where it began — a reboot is
+  the same thing sooner.
 - **Without `-x` a name does match** (2026-09-12). `pgrep` and `pkill`
   compare the pattern to `comm` as an unanchored regular expression
   unless `-x` is given, and the rename only appends, so `pgrep
