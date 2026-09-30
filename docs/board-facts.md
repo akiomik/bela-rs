@@ -265,14 +265,18 @@ Captured from a verbose on-board build:
   why `bela::stop_requested` documents itself as unusable from a
   callback for anything but a self-requested stop (#133).
 
-- **A failed initialisation poisons its process, and only its
-  process.** Returning `false` from `setup` fails `Bela_initAudio` with
-  1 and leaves libbela's globals in that process still believing the
-  audio system is up. What follows is not arrangement-dependent.
+- **A `setup` abort poisons its process, and holds the board until
+  that process exits.** Returning `false` from `setup` fails
+  `Bela_initAudio` with 1 and leaves libbela's globals in that process
+  still believing the audio system is up. What follows is not
+  arrangement-dependent.
   Measured by `scripts/probe-init-failure.sh`, which runs each probe in
   a process of its own between two full audio cycles in processes of
   their own; each crashing case was repeated three times and was
-  identical every time.
+  identical every time. That the process holds the board is read
+  rather than measured: libbela takes the claim described under "The
+  board refuses a second process" below before any configuration check,
+  and a `setup` abort is well past that.
 
   | after a `setup`-aborted `Bela_initAudio` | what libbela does |
   |---|---|
@@ -343,14 +347,23 @@ Captured from a verbose on-board build:
   reproduce in either shape on image 2026-03-25. What stops a second
   audio system is a *failed* first one, not how many there have been.
 
-- **The board does not refuse a second process.** While one process was
-  rendering, another brought up its own audio system and its `render`
-  ran at the same rate alongside it — 2759 blocks in its 1 s window,
-  against the holder's 16541 in 6 s — and both exited 0. Whether the
-  sound is right was not judged, only that both callbacks ran. So
-  "the audio hardware is unavailable or already in use" is not a
-  failure this board produces by that route, and no `Error::Init` other
-  than the `setup` abort has been measured.
+- **The board refuses a second process** (2026-09-12). While one held
+  an audio system — `init_failure render-check 6`, its 16541 blocks in
+  6 s — a second asking for its own was turned away by libbela with
+  `Error: Bela is already running in another process. Cannot start.`,
+  which reaches the crate as `Error::Init(-1)`. Both processes were
+  counted alive at once. `scripts/probe-init-failure.sh` checks that
+  its probe was refused and that its holder came up, but not that the
+  two overlapped, so a row from it is worth checking that way by hand
+  until [#167](https://github.com/akiomik/bela-rs/issues/167) is done.
+
+  It is a latch rather than a check, read from the source because the
+  one probe that could ask is the one libbela refuses
+  (`Bela_isAlreadyRunning`, `core/RtWrappers.cpp`). The claim is an
+  abstract socket, held for as long as its descriptor is open rather
+  than as long as the audio runs: by the process that took it, and by
+  any child that inherited the descriptor, which is not close-on-exec.
+  A refused process stays refused however long it waits.
 
 ## Codec levels and gain
 
@@ -889,6 +902,38 @@ rounds.
   365 — truncated at the 15 characters `comm` allows. Failing is no
   escape either: `bela/examples/init_failure abort` brings the hardware
   up, fails from `setup`, and runs as `init_failure:12`.
+- **What `SIGINT` does depends on how the run was started, not on what
+  it is** (2026-09-13). Three arrangements of the same
+  `init_failure render-check`, sampled mid-hold:
+  `./init_failure … &` straight from a non-interactive shell runs with
+  `SigIgn` `0x1006` — SIGINT and SIGQUIT ignored, which is what POSIX
+  has a shell do for an asynchronous command — and an `INT` leaves it
+  running to the end of its hold. Under `timeout -s INT`, foreground or
+  backgrounded, it runs with `SigIgn` `0x1000` (SIGPIPE, the Rust
+  runtime's) and ends at the deadline, status 124: `timeout` restores
+  the disposition for the child it is going to signal. A program that
+  installs its own handling is different again — `bela/examples/sine`,
+  which waits through `Bela::run`, runs with `SigCgt` `0x100004443`,
+  SIGINT, SIGHUP and SIGTERM among them, and stops 300 ms after an
+  `INT`. `TERM` ends all three in about 100 ms.
+- **A run that a signal ends before libbela's teardown leaves the PRU
+  going and its pins exported; the next clean run puts them back**
+  (2026-09-13). After a clean `scripts/probe-init-failure.sh busy` the
+  board is as it was before it: `remoteproc1` offline and one pin
+  exported, the `gpio586` that survives a reboot. The holder installs no
+  handler, so a signal ends it outright — the `INT` of its ceiling, with
+  the holder asked to hold past it, or a kill, measured both ways — and
+  `remoteproc1` is left `running` with 22 pins exported, `gpio584` and
+  `gpio585` among them, which is the blue and red LEDs still being
+  driven with nothing on the ARM side to drive them. An interrupted
+  script does neither: nothing signals the detached holder, so it runs
+  out its hold and tears down. That is read from the script, not
+  measured: the one reading after an interrupt came after a later clean
+  run, which puts the board back either way. The audio claim is the one
+  thing that does go with the process, so the board is refused only
+  while that process lives. A later clean run's teardown then unexports
+  the pins and stops the PRU, and the board is back where it began — a
+  reboot is the same thing sooner.
 - **Without `-x` a name does match** (2026-09-12). `pgrep` and `pkill`
   compare the pattern to `comm` as an unanchored regular expression
   unless `-x` is given, and the rename only appends, so `pgrep
