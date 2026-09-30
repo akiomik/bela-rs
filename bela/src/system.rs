@@ -82,10 +82,12 @@ impl Drop for InitSettings {
 /// process through — one that succeeded, or failed with
 /// [`Error::Init`] for any reason but another process holding the
 /// board — other processes get [`Error::Init`] until this one exits,
-/// whether or not its `Bela` is still alive. Any child started after
-/// that holds the board too, until it exits, because libbela's claim
-/// is a descriptor that children inherit (read from its source; see
-/// "Audio thread" in `docs/board-facts.md`).
+/// whether or not its `Bela` is still alive. A program this process
+/// starts after that keeps the board held until it exits, and is
+/// refused it itself, because libbela's claim is a descriptor that
+/// such a program inherits (read from its source; see "Audio thread"
+/// in `docs/board-facts.md`). So a replacement has to be started by a
+/// process that never inherited it, such as whatever started this one.
 ///
 /// One at a time, and in some processes none at all: once a
 /// `Bela_initAudio` has failed here, every later [`new`](Bela::new)
@@ -152,8 +154,10 @@ impl<T: BelaApplication> Bela<T> {
     /// - another process holds the board, and libbela refused this one;
     /// - libbela refused a configuration this crate does not check
     ///   first. Different numbers of analog inputs and outputs is one
-    ///   this board refuses — `--analog-out 2` against the default
-    ///   eight inputs — under "Analog and digital I/O" in
+    ///   this board refuses — two outputs against the default eight
+    ///   inputs, from [`Settings::num_analog_out_channels`] or
+    ///   `--analog-out 2` through [`new_with_args`](Bela::new_with_args)
+    ///   — under "Analog and digital I/O" in
     ///   `docs/board-facts.md`.
     ///
     /// An application refusing the *configuration* rather than
