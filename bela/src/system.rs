@@ -78,8 +78,12 @@ impl Drop for InitSettings {
 /// [`Error::AudioSystemExists`] rather than reaching into globals the
 /// first one is using — from this thread or any other.
 ///
-/// One per board as well: other processes get [`Error::Init`] until
-/// this one exits, whether or not its `Bela` is still alive.
+/// One per board as well: from the first `Bela::new` on, other
+/// processes get [`Error::Init`] until this one exits, whether or not
+/// its `Bela` is still alive — and until any child it started since
+/// has exited too, because libbela's claim is a descriptor that
+/// children inherit (read from its source; see "Audio thread" in
+/// `docs/board-facts.md`).
 ///
 /// One at a time, and in some processes none at all: once a
 /// `Bela_initAudio` has failed here, every later [`new`](Bela::new)
@@ -137,10 +141,12 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// After [`Error::Init`], every later `Bela::new` in this process
     /// fails with [`Error::AudioSystemPoisoned`] without reaching
-    /// libbela, whichever way the call failed:
+    /// libbela, whichever way the call failed. The ways a program can
+    /// expect to meet:
     ///
     /// - a [`setup`](BelaApplication::setup) callback returned `false`,
-    ///   which is the ordinary way;
+    ///   which is the ordinary way, or this crate's own `setup` refused
+    ///   the context, as [`Settings::thread_count`] describes;
     /// - another process holds the board, and libbela refused this one;
     /// - libbela refused a configuration this crate does not check
     ///   first. Different numbers of analog inputs and outputs is one
@@ -153,13 +159,12 @@ impl<T: BelaApplication> Bela<T> {
     /// [`validate_settings`](BelaApplication::validate_settings)
     /// instead, which is asked before any of this happens.
     ///
-    /// The board stays claimed until the process that claimed it exits:
-    /// this one after a `setup` abort or a refused configuration, since
-    /// libbela claims the board before it gets to either, and the
-    /// other process when that was the refusal. So treat the error as a
+    /// When another process held the board, the board stays that
+    /// process's. After any other failure it is this one's, since
+    /// libbela claims it before anything else that can fail, and it is
+    /// held for as long as [`Bela`] describes. So treat the error as a
     /// reason to exit, and leave retrying to whatever started the
-    /// program. What was measured is under "Audio thread" in
-    /// `docs/board-facts.md`.
+    /// program.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         Self::init(application, settings, None)
     }
