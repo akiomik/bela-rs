@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- The cross-compilation guide no longer says `bela_daemon` holds the
+  audio hardware. It does not, measured, but a project it runs from the
+  IDE would, and the board refuses a second process; the instruction to
+  stop it first stands. The measurement is in
+  [docs/board-facts.md](docs/board-facts.md) under "Operations".
+
 ## [0.9.0] - 2026-09-12
 
 ### Added

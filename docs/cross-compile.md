@@ -246,8 +246,12 @@ ssh -t root@bela.local 'systemctl stop bela_daemon && ./sine'
 ```
 
 Rust binaries cannot be built by the Bela IDE, hence the scp + ssh
-workflow. `bela_daemon` runs the IDE's own program and holds the audio
-hardware, so stop it first; start it again with
+workflow. `bela_daemon` does not hold the audio hardware itself, but a
+project it runs from the IDE would, and the board refuses a second
+process while one does (see "Audio thread" and "Operations" in
+[board-facts.md](board-facts.md)). So stop it first; that this also
+ends a project it started is systemd's default for a service, not
+something measured here. Start it again with
 `systemctl start bela_daemon`.
 
 **Use `ssh -t`.** Without it ssh allocates no terminal, so Ctrl-C only
