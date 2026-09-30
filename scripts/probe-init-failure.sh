@@ -79,8 +79,8 @@ BUSY_WAIT_SECONDS=$((HOLD_SECONDS + 4 - HOLDER_HEAD_START))
 BUSY_TIMEOUT=$((BUSY_WAIT_SECONDS + 30))
 HOLDER_CEILING=$((HOLD_SECONDS + ORACLE_TIMEOUT))
 # `remote` has no terminal, so Ctrl-C ends the local ssh and leaves the
-# board-side run to whichever of these ceilings it was given, plus the
-# five seconds probe-remote.sh allows for the kill after it.
+# board-side run to finish, or at worst to the ceiling it was given plus
+# the five seconds probe-remote.sh allows for the kill after it.
 LONGEST_LEFTOVER=0
 for t in "$ORACLE_TIMEOUT" "$CYCLES_TIMEOUT" "$PROBE_TIMEOUT" \
   "$BUSY_TIMEOUT" "$HOLDER_CEILING"; do
@@ -109,8 +109,10 @@ restore() {
   if [ "$board_prepared" = yes ]; then
     # One connection, because an unreachable board makes each of these
     # cost a full ConnectTimeout.
-    # Nothing here kills what an interrupt leaves running: a ceiling
-    # ends it, and the preflight says so when a later run meets it.
+    # Nothing here kills what an interrupt leaves running. Left alone it
+    # finishes and tears down cleanly, where a kill would leave the PRU
+    # and pins up (docs/board-facts.md); a later run that meets it first
+    # is told so by the preflight.
     undo="rm -rf $REMOTE_DIR"
     if [ "$daemon_was_active" = yes ]; then
       undo="$undo; systemctl start bela_daemon"
@@ -281,8 +283,9 @@ if ! oracle; then
   if refused "$LOG_DIR/oracle.log"; then
     echo "  that is another process holding the board, not a broken one." >&2
     echo "  An interrupted run of this script leaves whatever it was" >&2
-    echo "  running for up to $LONGEST_LEFTOVER seconds; otherwise look" >&2
-    echo "  for a project or another operator's run." >&2
+    echo "  running for up to $LONGEST_LEFTOVER seconds at this run's" >&2
+    echo "  settings; otherwise look for a project or another" >&2
+    echo "  operator's run." >&2
   fi
   sed 's/^/        /' "$LOG_DIR/oracle.log" >&2
   exit 1

@@ -265,14 +265,18 @@ Captured from a verbose on-board build:
   why `bela::stop_requested` documents itself as unusable from a
   callback for anything but a self-requested stop (#133).
 
-- **A failed initialisation poisons its process, and only its
-  process.** Returning `false` from `setup` fails `Bela_initAudio` with
-  1 and leaves libbela's globals in that process still believing the
-  audio system is up. What follows is not arrangement-dependent.
+- **A `setup` abort poisons its process, and holds the board until
+  that process exits.** Returning `false` from `setup` fails
+  `Bela_initAudio` with 1 and leaves libbela's globals in that process
+  still believing the audio system is up. What follows is not
+  arrangement-dependent.
   Measured by `scripts/probe-init-failure.sh`, which runs each probe in
   a process of its own between two full audio cycles in processes of
   their own; each crashing case was repeated three times and was
-  identical every time.
+  identical every time. That the process holds the board is read
+  rather than measured: libbela takes the claim described under "The
+  board refuses a second process" below before any configuration check,
+  and a `setup` abort is well past that.
 
   | after a `setup`-aborted `Bela_initAudio` | what libbela does |
   |---|---|
@@ -915,12 +919,13 @@ rounds.
   clean `scripts/probe-init-failure.sh busy` the board is as it was
   before it: `remoteproc1` offline and one pin exported, the `gpio586`
   that survives a reboot. End the same run's holder by signal instead
-  — by the `INT` of its own ceiling, which is what an interrupted
-  script leaves it to, or by a kill, measured both ways — and
-  `remoteproc1` is left `running` with 22
-  pins exported, `gpio584` and `gpio585` among them, which is the blue
+  — the `INT` of its ceiling, with the holder asked to hold past it, or
+  a kill, measured both ways — and `remoteproc1` is left `running` with
+  22 pins exported, `gpio584` and `gpio585` among them, which is the blue
   and red LEDs still being driven with nothing on the ARM side to drive
-  them. The audio claim is the one thing that does go with the process,
+  them. An interrupted script does neither: its holder finishes the
+  hold and tears down, and the board reads as after a clean run. The
+  audio claim is the one thing that does go with the process,
   so the board is refused only while that process lives. A later clean
   run's teardown then unexports the pins and stops the PRU, and the
   board is back where it began — a reboot is the same thing sooner.
