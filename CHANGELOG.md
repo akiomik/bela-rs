@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `Bela` and `Bela::new` document that the board refuses a second
+  process with `Error::Init`, and stays claimed until the process
+  holding it exits; `Bela::new` had said a new process starts straight
+  away. `Bela::new` also lists the other ways to that error.
+  `Error::AudioSystemPoisoned`'s message no longer claims libbela kept
+  an audio system, which a refused process never had.
+
 ## [0.9.0] - 2026-09-12
 
 ### Added

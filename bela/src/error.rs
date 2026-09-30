@@ -11,10 +11,10 @@ const UNRECOGNISED_OPTION: i32 = b'?' as i32;
 pub enum Error {
     /// `Bela_initAudio` failed with the contained return code.
     ///
-    /// The initialisation it failed partway through is not undone, so
-    /// this is fatal to the process rather than to the one attempt:
-    /// every later [`Bela::new`](crate::Bela::new) returns
-    /// [`AudioSystemPoisoned`](Self::AudioSystemPoisoned).
+    /// Fatal to the process rather than to the one attempt: every later
+    /// [`Bela::new`](crate::Bela::new) returns
+    /// [`AudioSystemPoisoned`](Self::AudioSystemPoisoned). See
+    /// [`Bela::new`](crate::Bela::new) for what frees the board.
     Init(i32),
     /// `Bela_startAudio` failed with the contained return code.
     Start(i32),
@@ -74,17 +74,10 @@ pub enum Error {
     /// The C API is a process-wide singleton, so a second one would
     /// share — and reset — the state the first is using.
     AudioSystemExists,
-    /// An earlier `Bela_initAudio` in this process failed partway
-    /// through, and no audio system can be built after that.
+    /// An earlier `Bela_initAudio` in this process failed, and no audio
+    /// system can be built after that.
     ///
-    /// libbela is left believing the audio system is up and offers no
-    /// way to put it back: `Bela_cleanupAudio` segfaults on that path.
-    /// So this is refused rather than attempted — going ahead means a
-    /// segfault inside libbela, which is what the error replaces.
-    ///
-    /// Terminal for the process, and only for the process: the board is
-    /// untouched, so a new one gets a working audio system straight
-    /// away. See [`Bela::new`](crate::Bela::new).
+    /// Terminal for the process; see [`Bela::new`](crate::Bela::new).
     AudioSystemPoisoned,
     /// An argument was not one of Bela's standard command-line options.
     ///
@@ -360,8 +353,8 @@ impl fmt::Display for Error {
             ),
             Self::AudioSystemPoisoned => write!(
                 f,
-                "an earlier Bela_initAudio failed in this process, leaving libbela with an audio \
-                 system it will not give back; start a new process"
+                "an earlier Bela_initAudio failed in this process, and no audio system can be \
+                 built after that; exit and start a new process"
             ),
             Self::CommandLine(code) if *code == UNRECOGNISED_OPTION => write!(
                 f,
