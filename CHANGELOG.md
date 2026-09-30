@@ -10,13 +10,13 @@ and this project adheres to
 
 ### Changed
 
-- `Bela` and `Bela::new` document that the board refuses a second
-  process with `Error::Init`, and stays claimed until the process
-  holding it, and any child that inherited the claim, has exited;
-  `Bela::new` had said a new process starts straight away. `Bela::new`
-  also lists the other ways to that error.
-  `Error::AudioSystemPoisoned`'s message no longer claims libbela kept
-  an audio system, which a refused process never had.
+- `Bela::new` and `Error::AudioSystemPoisoned` no longer say a new
+  process gets a working audio system straight away after
+  `Error::Init`: libbela refuses a second process, and can keep the
+  board claimed until the failed one exits. They say to exit and
+  leave the restart to whatever started the program, since a program
+  the failed one starts inherits the claim. `AudioSystemPoisoned`'s
+  message says the same.
 
 ## [0.9.0] - 2026-09-12
 

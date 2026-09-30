@@ -78,17 +78,6 @@ impl Drop for InitSettings {
 /// [`Error::AudioSystemExists`] rather than reaching into globals the
 /// first one is using — from this thread or any other.
 ///
-/// One per board as well. Once libbela has let a `Bela::new` in this
-/// process through — one that succeeded, or failed with
-/// [`Error::Init`] for any reason but another process holding the
-/// board — other processes get [`Error::Init`] until this one exits,
-/// whether or not its `Bela` is still alive. A program this process
-/// starts after that keeps the board held until it exits, and is
-/// refused it itself, because libbela's claim is a descriptor that
-/// such a program inherits (read from its source; see "Audio thread"
-/// in `docs/board-facts.md`). So a replacement has to be started by a
-/// process that never inherited it, such as whatever started this one.
-///
 /// One at a time, and in some processes none at all: once a
 /// `Bela_initAudio` has failed here, every later [`new`](Bela::new)
 /// fails with [`Error::AudioSystemPoisoned`], which that method
@@ -143,37 +132,34 @@ impl<T: BelaApplication> Bela<T> {
     ///
     /// # A failed initialisation is fatal to the process
     ///
-    /// After [`Error::Init`], every later `Bela::new` in this process
-    /// fails with [`Error::AudioSystemPoisoned`] without reaching
-    /// libbela, whichever way the call failed. The ways a program can
-    /// expect to meet:
+    /// [`Error::Init`] means `Bela_initAudio` failed, and this crate
+    /// does not undo it: after a `setup` abort, `Bela_cleanupAudio`
+    /// itself segfaults, in either order this method could call it.
+    /// That is measured; see "Audio thread" in `docs/board-facts.md`.
+    /// Calling it through [`bela_sys`](crate::bela_sys) to recover
+    /// meets the same segfault.
     ///
-    /// - a [`setup`](BelaApplication::setup) callback returned `false`,
-    ///   which is the ordinary way, or this crate's own `setup` refused
-    ///   the context, as [`Settings::thread_count`] describes;
-    /// - another process holds the board, and libbela refused this one;
-    /// - libbela refused a configuration this crate does not check
-    ///   first. Different numbers of analog inputs and outputs is one
-    ///   this board refuses — two outputs against the default eight
-    ///   inputs, from [`Settings::num_analog_out_channels`] or
-    ///   `--analog-out 2` through [`new_with_args`](Bela::new_with_args)
-    ///   — under "Analog and digital I/O" in
-    ///   `docs/board-facts.md`.
+    /// So the process-wide claim is released as unusable rather than
+    /// free, and every later `Bela::new` in this process fails with
+    /// [`Error::AudioSystemPoisoned`] without touching libbela. Going
+    /// ahead after a `setup` abort is not a worse-behaved audio system
+    /// but a segfault, on a Bela Gem reported as `Mcasp::start() called
+    /// while already running` in every run measured.
     ///
-    /// An application refusing the *configuration* rather than
+    /// Treat this error as a reason to exit, and leave starting a new
+    /// process to whatever started this one. libbela can keep the board
+    /// claimed until this process exits, and a program this process
+    /// starts inherits that claim and is refused the board itself. When
+    /// libbela holds the board, and for how long, is recorded under
+    /// "Audio thread" in `docs/board-facts.md`.
+    ///
+    /// The ordinary way to arrive here is a
+    /// [`setup`](BelaApplication::setup) callback returning `false`,
+    /// which fails the initialisation after the hardware is up. An
+    /// application that is refusing the *configuration* rather than
     /// something it found on the board should say so from
     /// [`validate_settings`](BelaApplication::validate_settings)
     /// instead, which is asked before any of this happens.
-    ///
-    /// When another process held the board, the board stays that
-    /// process's. After any other failure it is this one's, since
-    /// libbela claims it before anything else that can fail, and it is
-    /// held for as long as [`Bela`] describes. After a `setup` abort,
-    /// once the board is released, a new process gets a working audio
-    /// system with nothing to reset — no reboot, no restart of
-    /// `bela_daemon` (measured; "Audio thread" in `docs/board-facts.md`).
-    /// So treat the error as a reason to exit, and leave retrying to
-    /// whatever started the program.
     pub fn new(application: T, settings: &Settings) -> Result<Self, Error> {
         Self::init(application, settings, None)
     }
@@ -412,18 +398,11 @@ impl<T: BelaApplication> Bela<T> {
             // Every failure above this point leaves libbela in a state
             // the next attempt can resolve — CPU monitoring can be left
             // initialised, but the next `new` applies or disables it
-            // either way. This one is not, and it is not undone: after
-            // a `setup` abort `Bela_cleanupAudio` itself segfaults,
-            // whichever side of freeing the application it is called
-            // on, and no other route has been tried. Nor is it retried:
-            // after a `setup` abort another `Bela_initAudio` segfaults
-            // (`Mcasp::start() called while already running`); after a
-            // refusal at the door libbela has latched the refusal;
-            // after a configuration it will not take, or any other
-            // failure, a retry is untested. So every `Error::Init`
-            // releases the claim as unusable rather than free. The
-            // measurements are under "Audio thread" in
-            // `docs/board-facts.md`.
+            // either way. This one is not resolved: after a `setup`
+            // abort no call undoes it and a retry segfaults, and after a
+            // refusal at the door libbela has latched the refusal. Other
+            // failures are treated the same. So the claim is released
+            // as unusable rather than free.
             claim.poison();
             return Err(Error::Init(ret));
         }

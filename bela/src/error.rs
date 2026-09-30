@@ -11,10 +11,10 @@ const UNRECOGNISED_OPTION: i32 = b'?' as i32;
 pub enum Error {
     /// `Bela_initAudio` failed with the contained return code.
     ///
-    /// Fatal to the process rather than to the one attempt: every later
-    /// [`Bela::new`](crate::Bela::new) returns
-    /// [`AudioSystemPoisoned`](Self::AudioSystemPoisoned). See
-    /// [`Bela::new`](crate::Bela::new) for what frees the board.
+    /// It is not undone, so this is fatal to the process rather than to
+    /// the one attempt:
+    /// every later [`Bela::new`](crate::Bela::new) returns
+    /// [`AudioSystemPoisoned`](Self::AudioSystemPoisoned).
     Init(i32),
     /// `Bela_startAudio` failed with the contained return code.
     Start(i32),
@@ -77,7 +77,12 @@ pub enum Error {
     /// An earlier `Bela_initAudio` in this process failed, and no audio
     /// system can be built after that.
     ///
-    /// Terminal for the process; see [`Bela::new`](crate::Bela::new).
+    /// Refused here rather than attempted: after a `setup` abort, going
+    /// ahead means a segfault inside libbela, which is what this error
+    /// replaces.
+    ///
+    /// Terminal for the process: exit, and leave starting a new one to
+    /// whatever started this one. See [`Bela::new`](crate::Bela::new).
     AudioSystemPoisoned,
     /// An argument was not one of Bela's standard command-line options.
     ///
@@ -354,7 +359,7 @@ impl fmt::Display for Error {
             Self::AudioSystemPoisoned => write!(
                 f,
                 "an earlier Bela_initAudio failed in this process, and no audio system can be \
-                 built after that; exit and start a new process"
+                 built after that; exit, and leave the restart to whatever started this process"
             ),
             Self::CommandLine(code) if *code == UNRECOGNISED_OPTION => write!(
                 f,
