@@ -359,9 +359,11 @@ Captured from a verbose on-board build:
 
   It is a latch rather than a check, read from the source because the
   one probe that could ask is the one libbela refuses
-  (`Bela_isAlreadyRunning`, `core/RtWrappers.cpp`): the claim lasts as
-  long as the process that took it, not as long as its audio, and a
-  refused process stays refused however long it waits.
+  (`Bela_isAlreadyRunning`, `core/RtWrappers.cpp`). The claim is an
+  abstract socket, held for as long as its descriptor is open rather
+  than as long as the audio runs: by the process that took it, and by
+  any child that inherited the descriptor, which is not close-on-exec.
+  A refused process stays refused however long it waits.
 
 ## Codec levels and gain
 
@@ -924,12 +926,14 @@ rounds.
   `remoteproc1` is left `running` with 22 pins exported, `gpio584` and
   `gpio585` among them, which is the blue and red LEDs still being
   driven with nothing on the ARM side to drive them. An interrupted
-  script does neither: its holder finishes the hold and tears down, and
-  the board reads as after a clean run. The audio claim is the one thing
-  that does go with the process, so the board is refused only while that
-  process lives. A later clean run's teardown then unexports the pins
-  and stops the PRU, and the board is back where it began — a reboot is
-  the same thing sooner.
+  script does neither: nothing signals the detached holder, so it runs
+  out its hold and tears down. That is read from the script, not
+  measured: the one reading after an interrupt came after a later clean
+  run, which puts the board back either way. The audio claim is the one
+  thing that does go with the process, so the board is refused only
+  while that process lives. A later clean run's teardown then unexports
+  the pins and stops the PRU, and the board is back where it began — a
+  reboot is the same thing sooner.
 - **Without `-x` a name does match** (2026-09-12). `pgrep` and `pkill`
   compare the pattern to `comm` as an unanchored regular expression
   unless `-x` is given, and the rename only appends, so `pgrep
