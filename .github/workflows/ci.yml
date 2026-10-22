@@ -88,8 +88,10 @@ jobs:
       # in Cargo.toml.
       - id: msrv
         run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
+          cache: false
+          build-warnings: ''
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
       # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml, which would
