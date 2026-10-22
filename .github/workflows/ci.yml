@@ -91,7 +91,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
-          build-warnings: ''
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
       # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml, which would
