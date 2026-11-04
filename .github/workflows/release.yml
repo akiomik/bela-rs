@@ -15,7 +15,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: rustup toolchain install
       - name: Check that the tag matches the workspace version
         run: |
@@ -28,7 +28,7 @@ jobs:
       # Exchanges the workflow's OIDC token for a short-lived crates.io
       # token. Requires Trusted Publishing to be configured for both
       # crates on crates.io (Settings -> Trusted Publishing).
-      - uses: rust-lang/crates-io-auth-action@v1
+      - uses: rust-lang/crates-io-auth-action@v1.0.6
         id: auth
       - name: Publish bela-sys, then bela
         env:
