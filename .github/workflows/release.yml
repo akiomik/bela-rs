@@ -32,8 +32,10 @@ jobs:
           fi
       - run: cargo publish --dry-run --locked -p bela-sys -p bela
 
-  # Packs the same commit again and uploads it without compiling, so no
-  # dependency code runs in the job that can request an OIDC token.
+  # Packs the same commit again and uploads it without compiling. Any step
+  # in this job can request the OIDC token, so it runs only actions/checkout,
+  # rust-lang's own tools and the runner image: no dependency code and no
+  # other actions.
   publish:
     name: Publish to crates.io
     needs: verify
