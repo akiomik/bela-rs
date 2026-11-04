@@ -41,11 +41,43 @@ jobs:
       # can reach. Measuring it would report the coverage of the library
       # as lower without saying anything about the library.
       - run: cargo llvm-cov --workspace --exclude xtask --lcov --output-path lcov.info
+      # The upload runs in its own job so that `id-token: write` reaches
+      # only the actions that need it. This job runs
+      # `taiki-e/install-action` and `Swatinem/rust-cache`, which are
+      # maintained by individuals, and any action in a job holding that
+      # permission can request an OIDC token.
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage-upload:
+    name: Upload coverage (host)
+    needs: coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Codecov maps the report's paths onto the files tracked in the
+      # checkout.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: lcov
       - uses: codecov/codecov-action@v7
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
           files: lcov.info
-          fail_ci_if_error: true
+          # A pull request from a fork cannot get an OIDC token, so its
+          # upload goes without one, which Codecov may refuse. Failing on
+          # that would fail a fork's pull request for a reason outside
+          # its control.
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
   clippy-aarch64:
     name: Clippy (aarch64-unknown-linux-gnu)
