@@ -7,15 +7,20 @@ on:
 permissions: {}
 
 jobs:
-  publish:
-    name: Publish to crates.io
+  # Builds both packages the way `cargo publish` would, which runs the build
+  # scripts and proc macros of every dependency. The job therefore gets no
+  # OIDC token and hands nothing to the publish job. Passing both packages
+  # lets cargo verify bela against the bela-sys packaged here, before that
+  # version is on crates.io.
+  verify:
+    name: Verify packages
     runs-on: ubuntu-latest
     permissions:
-      # Required for crates.io Trusted Publishing (OIDC).
-      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup toolchain install
       - name: Check that the tag matches the workspace version
         run: |
@@ -25,6 +30,23 @@ jobs:
             echo "tag v${tag} does not match workspace version ${version}" >&2
             exit 1
           fi
+      - run: cargo publish --dry-run --locked -p bela-sys -p bela
+
+  # Packs the same commit again and uploads it without compiling, so no
+  # dependency code runs in the job that can request an OIDC token.
+  publish:
+    name: Publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for crates.io Trusted Publishing (OIDC).
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
       # Exchanges the workflow's OIDC token for a short-lived crates.io
       # token. Requires Trusted Publishing to be configured for both
       # crates on crates.io (Settings -> Trusted Publishing).
@@ -49,7 +71,7 @@ jobs:
               continue
             fi
             n=0
-            until cargo publish -p "${crate}"; do
+            until cargo publish --locked --no-verify -p "${crate}"; do
               n=$((n + 1))
               if [ "$n" -ge 5 ]; then
                 exit 1
